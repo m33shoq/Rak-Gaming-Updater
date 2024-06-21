@@ -1,0 +1,164 @@
+/* General Reset */
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    background-color: #121212; /* Dark background */
+    color: #E0E0E0; /* Light text */
+    padding: 0; /* Remove padding to eliminate space around edges */
+    margin: 0; /* Ensure there's no margin */
+}
+
+/* Title Bar */
+#title-container {
+    margin: 0;
+    display: flex;
+    align-items: flex-start; /* Align items to the top */
+    justify-content: space-between; /* Keeps items at the edges */
+    width: 100%;
+    padding: 0; /* Remove padding to allow buttons to move to the top right corner */
+    -webkit-app-region: drag;
+}
+
+.header-container {
+    display: flex;
+    align-items: center; /* Vertically centers the items */
+    gap: 5px; /* Adjust the space between the image and the text */
+}
+
+#button-container {
+    display: flex;
+    align-items: flex-start; /* Align buttons to the top */
+    padding: 0; /* Remove padding to ensure buttons are at the very top */
+    height: auto; /* Adjust height to fit the buttons */
+}
+
+/* #title-container button {
+    -webkit-app-region: no-drag;
+    background-color: transparent;
+    border: none;
+    color: #FFFFFF;
+    cursor: pointer;
+    font-size: 20px;
+    padding: 5px 10px;
+    margin: 0;
+} */
+
+#button-container button {
+    color: #FFFFFF;
+    border: none;
+    -webkit-app-region: no-drag;
+    background-color: transparent;
+	width: 30px;
+    height: 30px;
+    line-height: 25px;
+    text-align: center;
+    padding: 10;
+    font-size: 12px;
+	margin-top: 5;
+	padding-top: 5;
+}
+#button-container button:hover {
+	background-color: #333333;
+}
+
+#close-btn:hover {
+    background-color: red !important;
+}
+
+#close-btn:hover {
+    background-color: red;
+}
+
+#title-container img {
+    height: 3em; /* Adjusts the image height to match the text size */
+    vertical-align: middle;
+    margin-right: 10px;
+}
+
+/* Login and Main Container */
+#login-container, #main-container {
+    background-color: #242424; /* Dark shade */
+    padding: 30px;
+    /* border-radius: 8px; */
+    margin-bottom: 20px;
+}
+
+.input-field {
+    width: 100%;
+    padding: 10px;
+    margin-top: 10px;
+    border-radius: 5px;
+    border: 1px solid #333333; /* Subtle border */
+    background-color: #333333; /* Darker element background */
+    color: #FFFFFF;
+}
+
+.rounded-button {
+    background-color: #007ACC; /* Accent color */
+    color: #FFFFFF;
+    padding: 10px 20px;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+    margin-top: 15px;
+    display: block; /* Ensure buttons are block level for full width */
+}
+
+.rounded-button:hover {
+    background-color: #005EA6; /* Darker shade on hover */
+}
+
+.error-text {
+    color: #FF9494; /* Light red for errors */
+    margin-top: 10px;
+}
+
+/* Scroll Frames */
+.scroll-frame {
+    background-color: #1E1E1E; /* Slightly lighter dark shade for contrast */
+    color: #FFFFFF;
+    padding: 10px;
+    margin-top: 15px;
+    overflow-y: auto;
+    max-height: 200px;
+    border-radius: 5px;
+}
+
+/* List Styles */
+ul {
+    list-style-type: none;
+}
+
+li {
+    margin-bottom: 10px;
+}
+
+/* Status and Logs Sections */
+#status, #logs {
+    margin-top: 20px;
+}
+
+/* Smaller Toggle Buttons */
+.rounded-button.toggle-button {
+    padding: 5px 10px; /* Smaller padding */
+    font-size: 0.8rem; /* Smaller font size */
+    margin-left: 10px; /* Space from the text */
+}
+
+/* Flex Container for Inline Alignment */
+.status-header, .logs-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+/* Adjustments for smaller screens or to ensure the button does not wrap */
+.status-header h2, .logs-header h2 {
+    margin-right: 10px;
+    white-space: nowrap; /* Prevent wrapping */
+}

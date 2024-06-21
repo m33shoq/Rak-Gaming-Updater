@@ -85,10 +85,21 @@ document.getElementById('push-update-btn').addEventListener('click', () => {
     const selectedPath = document.getElementById('selected-path').innerText.replace('Selected Path: ', '');
     console.log("Push update button clicked, selected path:", selectedPath);
     if (selectedPath && token) {
-        socket.emit('update', { destination: selectedPath, fileName: 'example.txt', source: 'source/path/example.txt' });
+        socket.emit('update', { destination: selectedPath, fileName: 'example.txt', source: 'source/path/example.txt', token });
     } else {
         alert('Please select a path first or login.');
     }
+});
+
+// Toggle visibility of clients status and logs
+document.getElementById('toggle-clients-btn').addEventListener('click', () => {
+    const clientsStatus = document.getElementById('clients-status');
+    clientsStatus.style.display = clientsStatus.style.display === 'none' ? 'block' : 'none';
+});
+
+document.getElementById('toggle-logs-btn').addEventListener('click', () => {
+    const logsFrame = document.getElementById('logs-frame');
+    logsFrame.style.display = logsFrame.style.display === 'none' ? 'block' : 'none';
 });
 
 // Fetch status and logs periodically
@@ -118,3 +129,11 @@ setInterval(() => {
         console.error('Failed to fetch logs:', err);
     });
 }, 5000);
+
+document.getElementById('minimize-btn').addEventListener('click', () => {
+    ipcRenderer.send('minimize-app');
+});
+
+document.getElementById('close-btn').addEventListener('click', () => {
+    ipcRenderer.send('close-app');
+});

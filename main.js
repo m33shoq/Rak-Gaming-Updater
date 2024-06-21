@@ -20,7 +20,16 @@ function createWindow() {
             nodeIntegration: true,
             contextIsolation: false,
         },
+		icon: path.join(__dirname, 'trayicon.png'),
+		maximizable: false,
+		minimizable: true,
+		fullscreenable: false,
+		resizable: false,
+		frame: false,
     });
+
+    // Set the minimum size of the window
+    mainWindow.setMinimumSize(800, 600);
 
     const url = isDev
         ? 'http://localhost:3000'
@@ -31,8 +40,12 @@ function createWindow() {
         console.error('Failed to load URL:', err);
     });
 
+    // Hide the default menu
+    mainWindow.setMenu(null);
+
     // Open Developer Tools for debugging
-    mainWindow.webContents.openDevTools();
+    // Comment out the next line to disable auto opening of DevTools
+    // mainWindow.webContents.openDevTools();
 
     mainWindow.on('closed', () => (mainWindow = null));
 }
@@ -48,6 +61,13 @@ app.on('ready', () => {
     ]);
     tray.setToolTip('File Update App');
     tray.setContextMenu(contextMenu);
+	tray.on('double-click', () => {
+		if (mainWindow.isVisible()) {
+			mainWindow.hide();
+		} else {
+			mainWindow.show();
+		}
+	});
 
     mainWindow.on('minimize', (event) => {
         event.preventDefault();
@@ -61,6 +81,14 @@ app.on('ready', () => {
         }
         return false;
     });
+
+	ipcMain.on('minimize-app', (event) => {
+		mainWindow.minimize();
+	});
+
+	ipcMain.on('close-app', (event) => {
+		mainWindow.close();
+	});
 
     ipcMain.on('select-update-path', async (event) => {
         const result = await dialog.showOpenDialog(mainWindow, {
