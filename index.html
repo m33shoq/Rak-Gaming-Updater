@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>File Update App</title>
+    <style>
+        body { font-family: Arial, sans-serif; }
+        #container { padding: 20px; }
+        #status, #logs { margin-top: 20px; }
+        #logs { max-height: 200px; overflow-y: auto; border: 1px solid #ddd; padding: 10px; }
+        #login-container { display: none; }
+    </style>
+</head>
+<body>
+    <div id="login-container">
+        <h1>Login</h1>
+        <input type="text" id="username" placeholder="Username">
+        <input type="password" id="password" placeholder="Password">
+        <button id="login-btn">Login</button>
+        <p id="login-error" style="color: red;"></p>
+    </div>
+    <div id="main-container" style="display:none;">
+        <h1>File Update App</h1>
+        <button id="select-path-btn">Select Update Path</button>
+        <p id="selected-path"></p>
+        <button id="push-update-btn">Push Update</button>
+        <div id="status">
+            <h2>Clients Status</h2>
+            <ul id="clients-list"></ul>
+        </div>
+        <div id="logs">
+            <h2>Update Logs</h2>
+            <ul id="logs-list"></ul>
+        </div>
+    </div>
+    <script src="renderer.js"></script>
+</body>
+</html>
