@@ -1,18 +1,16 @@
-const { app, BrowserWindow, ipcMain, Tray, Menu } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, Tray, Menu } = require('electron');
 const path = require('path');
-// Replace the require statement
-let isDev;
+const fetch = require('node-fetch');
 
-// Use an async function to load the module
+let isDev;
 (async () => {
-  const electronIsDev = await import('electron-is-dev');
-  isDev = electronIsDev.default;
+    isDev = (await import('electron-is-dev')).default;
 })();
 
 let mainWindow;
 let tray;
 let updatePath = '';
-let token = ''; // Store the authentication token
+let token = '';
 
 function createWindow() {
     mainWindow = new BrowserWindow({
@@ -24,16 +22,23 @@ function createWindow() {
         },
     });
 
-    mainWindow.loadURL(
-        isDev
-            ? 'http://localhost:3000'
-            : `file://${path.join(__dirname, '../build/index.html')}`
-    );
+    const url = isDev
+        ? 'http://localhost:3000'
+        : `file://${path.join(__dirname, 'index.html')}`;
+
+    console.log(`Loading URL: ${url}`);
+    mainWindow.loadURL(url).catch(err => {
+        console.error('Failed to load URL:', err);
+    });
+
+    // Open Developer Tools for debugging
+    mainWindow.webContents.openDevTools();
 
     mainWindow.on('closed', () => (mainWindow = null));
 }
 
 app.on('ready', () => {
+    console.log('App is ready');
     createWindow();
 
     tray = new Tray(path.join(__dirname, 'trayIcon.png'));

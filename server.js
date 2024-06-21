@@ -20,8 +20,8 @@ const users = JSON.parse(fs.readFileSync('users.json'));
 app.post('/login', (req, res) => {
     const { username, password } = req.body;
     const user = users.find(u => u.username === username);
-
-    if (user && bcrypt.compareSync(password, user.password)) {
+	console.log(user, password, user.password)
+    if (user && password === user.password) { //     if (user && bcrypt.compareSync(password, user.password)) {
         const token = jwt.sign({ username: user.username }, secretKey);
         res.json({ token });
     } else {

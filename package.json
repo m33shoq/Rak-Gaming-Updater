@@ -1,15 +1,50 @@
 {
-  "dependencies": {
-    "bcrypt": "^5.1.1",
-    "electron-is-dev": "^3.0.1",
-    "express": "^4.19.2",
-    "fs": "^0.0.1-security",
-    "http": "^0.0.1-security",
-    "jsonwebtoken": "^9.0.2",
-    "path": "^0.12.7",
-    "socket.io": "^4.7.5"
-  },
-  "devDependencies": {
-    "electron": "^31.0.2"
-  }
+	"name": "rak-gaming-updater",
+	"version": "1.0.0",
+	"main": "main.js",
+	"scripts": {
+		"start": "electron .",
+		"build": "electron-builder"
+	},
+	"build": {
+		"appId": "com.example.rak-gaming-updater",
+		"productName": "Rak Gaming Updater",
+		"directories": {
+		"output": "dist"
+		},
+		"files": [
+		"main.js",
+		"renderer.js",
+		"index.html",
+		"package.json",
+		"node_modules"
+		],
+		"win": {
+		"target": "nsis",
+		"icon": "path/to/your/icon.ico"
+		},
+		"mac": {
+		"target": "dmg",
+		"icon": "path/to/your/icon.icns"
+		},
+		"linux": {
+		"target": "AppImage",
+		"icon": "path/to/your/icon.png"
+		}
+	},
+	"dependencies": {
+		"bcrypt": "^5.1.1",
+		"electron-is-dev": "^3.0.1",
+		"express": "^4.19.2",
+		"fs": "^0.0.1-security",
+		"http": "^0.0.1-security",
+		"jsonwebtoken": "^9.0.2",
+		"path": "^0.12.7",
+		"socket.io": "^4.7.5",
+		"socket.io-client": "^4.7.5"
+	},
+	"devDependencies": {
+		"electron": "^31.0.2",
+		"electron-builder": "^24.13.3"
+	}
 }
