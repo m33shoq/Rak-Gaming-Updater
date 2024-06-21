@@ -21,15 +21,7 @@
 		],
 		"win": {
 		"target": "nsis",
-		"icon": "path/to/your/icon.ico"
-		},
-		"mac": {
-		"target": "dmg",
-		"icon": "path/to/your/icon.icns"
-		},
-		"linux": {
-		"target": "AppImage",
-		"icon": "path/to/your/icon.png"
+		"icon": "trayicon.png"
 		}
 	},
 	"dependencies": {
