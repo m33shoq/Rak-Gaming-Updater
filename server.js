@@ -7,8 +7,9 @@ const path = require('path');
 const bodyParser = require('body-parser');
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
+const { hash } = require('crypto');
 
-const secretKey = 'your-secret-key4';
+const secretKey = 'your-secret-key9';
 let connectedClients = [];
 let updateLogs = [];
 
@@ -66,7 +67,15 @@ io.on('connection', (socket) => {
 	const fileChunks = {};
 
 	socket.on('upload-file-chunk', (data) => {
-		const { chunk, chunkNumber, totalChunks, fileName, relativePath, timestamp } = data;
+		const { chunk, chunkNumber, totalChunks, fileName, relativePath, timestamp, hash } = data;
+
+		socket.emit('ack', {
+			chunkNumber: chunkNumber,
+			fileName: fileName,
+			hash: hash,
+			status: 'received', // You can include additional status information if needed
+		});
+
 
 		// Initialize the file's chunk array if it doesn't exist
 		if (!fileChunks[fileName]) {
@@ -94,22 +103,21 @@ io.on('connection', (socket) => {
 			console.log('File saved:', filePath);
 
 			// Notify other clients about the new file
-			uploadedFiles.push({ fileName, relativePath, timestamp });
-			socket.broadcast.emit('new-file', { fileName, relativePath, timestamp });
-			socket.emit('new-file', { fileName, relativePath, timestamp });
+			uploadedFiles.push({ fileName, relativePath, timestamp, hash });
+			socket.broadcast.emit('new-file', { fileName, relativePath, timestamp, hash });
+			socket.emit('new-file', { fileName, relativePath, timestamp, hash });
 
 			// Clean up the chunks array for this file
 			delete fileChunks[fileName];
 		}
 	});
 
-	socket.on('request-file', (data) => {
-		let fileName = data.fileName;
+	socket.on('request-file', ({fileName, timestamp, relativePath, hash}) => {
 		console.log('File requested:', fileName);
 		const filePath = path.join(__dirname, 'uploads', fileName);
 		if (fs.existsSync(filePath)) {
 			const file = fs.readFileSync(filePath);
-			send_data_in_chunks(socket, { fileName: fileName, file: file, timestamp: data.timestamp, relativePath: data.relativePath});
+			send_data_in_chunks(socket, { fileName, file, timestamp, relativePath, hash});
 		} else {
 			socket.emit('file-not-found', { fileName });
 		}
@@ -134,26 +142,57 @@ http.listen(3000, () => {
 });
 
 
-function send_data_in_chunks(socket, data) {
-	const CHUNK_SIZE = 256 * 1024; // 256KB
-	const fileBuffer = data.file;
-	const totalChunks = Math.ceil(fileBuffer.length / CHUNK_SIZE);
+async function send_data_in_chunks(socket, data) {
+    const CHUNK_SIZE = 32 * 1024; // 32KB
+    const fileBuffer = data.file;
+    const totalChunks = Math.ceil(fileBuffer.length / CHUNK_SIZE);
 
-	const fileName = data.fileName;
-	const relativePath = data.relativePath;
-	const timestamp = data.timestamp;
+    const fileName = data.fileName;
+    const relativePath = data.relativePath;
+    const timestamp = data.timestamp;
 
-	for (let i = 0; i < totalChunks; i++) {
-		let start = i * CHUNK_SIZE;
-		let end = start + CHUNK_SIZE;
-		let chunk = fileBuffer.slice(start, end);
-		socket.emit('file-content-chunk', {
-			chunk: chunk,
-			chunkNumber: i,
-			totalChunks: totalChunks,
-			fileName: fileName,
-			relativePath: relativePath,
-			timestamp: timestamp,
-		});
-	}
+    // Function to send a single chunk and wait for an ACK
+    const sendChunkAndWaitForAck = (chunk, chunkNumber) => {
+        return new Promise((resolve, reject) => {
+            const ackListener = (ackData) => {
+                if (ackData.chunkNumber === chunkNumber && ackData.hash === data.hash && ackData.fileName === fileName) {
+                    socket.off('ack', ackListener); // Remove listener after receiving ACK
+                    resolve();
+                }
+            };
+            socket.on('ack', ackListener);
+
+            socket.emit('file-content-chunk', {
+                chunk: chunk,
+                chunkNumber: chunkNumber,
+                totalChunks: totalChunks,
+                fileName: fileName,
+                relativePath: relativePath,
+                timestamp: timestamp,
+                hash: data.hash
+            });
+
+            // Timeout for ACK
+            setTimeout(() => {
+                socket.off('ack', ackListener); // Ensure to remove listener to prevent memory leak
+                reject(`Timeout waiting for ACK for chunk ${chunkNumber}`);
+            }, 5000); // 5 seconds timeout for ACK
+        });
+    };
+
+    // Send each chunk and wait for ACK
+    for (let i = 0; i < totalChunks; i++) {
+        let start = i * CHUNK_SIZE;
+        let end = start + CHUNK_SIZE;
+        let chunk = fileBuffer.slice(start, end);
+
+        try {
+            await sendChunkAndWaitForAck(chunk, i);
+            console.log(`Chunk ${i} sent and acknowledged`);
+        } catch (error) {
+            console.error(error);
+            // Optionally, implement retry logic here
+            i--; // Retry sending the current chunk
+        }
+    }
 }

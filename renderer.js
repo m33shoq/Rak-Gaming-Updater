@@ -5,8 +5,49 @@ const archiver = require('archiver');
 const unzipper = require('unzipper');
 const path = require('path');
 const { jwtDecode }	 = require('jwt-decode');
+const crypto = require('crypto');
 
 let token = localStorage.getItem('token');
+let isConnected = false;
+
+function generateHashForPath(entryPath) {
+    let hashSum = crypto.createHash('sha256');
+
+    if (fs.statSync(entryPath).isDirectory()) {
+        // Get all entries in the directory
+        const entries = fs.readdirSync(entryPath).sort();
+        // Recursively generate hash for each entry
+        entries.forEach(entry => {
+            const fullPath = path.join(entryPath, entry);
+            const entryHash = generateHashForPath(fullPath);
+            hashSum.update(entryHash);
+        });
+    } else {
+        // It's a file, generate hash as before
+        const fileBuffer = fs.readFileSync(entryPath);
+        hashSum.update(fileBuffer);
+    }
+
+    const finalHash = hashSum.digest('hex');
+    return finalHash;
+}
+
+function shouldDownloadFile(serverFile) {
+    if (!localStorage.getItem('updatePath')) return false;
+
+    const localFilePath = path.join(localStorage.getItem('updatePath'), serverFile.relativePath, serverFile.fileName.replace('.zip', ''));
+    // Check if the file exists
+    if (!fs.existsSync(localFilePath)) {
+        // console.log(`File does not exist: ${localFilePath}, should download`);
+        return true; // If the file doesn't exist, return true to download it
+    }
+
+    const localFileHash = generateHashForPath(localFilePath);
+    const shouldDownload = localFileHash !== serverFile.hash;
+    // console.log(`File: ${localFilePath}, Should Download: ${shouldDownload}`);
+    return shouldDownload;
+}
+
 function isAdmin() {
     const token = localStorage.getItem('token');
     if (!token) return false;
@@ -21,43 +62,84 @@ function isAdmin() {
     }
 }
 
-// Function to toggle the admin tab visibility
+let tab_buttons = {};
+let admin_tabs = {
+	admin: true,
+	status: true,
+}
+function showLogin() {
+    console.log("Displaying login screen");
+    document.querySelectorAll('.tab-content').forEach(tab => tab.style.display = 'none');
+	document.getElementById(`login-container`).style.display = 'block';
+	// hide tab buttons while on login screen
+	document.querySelectorAll('.tab-button').forEach(button => {
+		button.style.display = 'none';
+	});
+}
+
+function showMain() {
+	if (!isConnected) return showLogin();
+    tab_buttons['main'].click();
+}
+
 function showAdmin() {
+	if (!isConnected) return showLogin();
     if (isAdmin()) {
-		document.getElementById('admin-container').style.display = 'block';
-		document.getElementById('main-container').style.display = 'none';
-		document.getElementById('login-container').style.display = 'none';
+		tab_buttons['admin'].click();
+
 	} else {
 		showMain()
     }
 }
 
-// Call the function to ensure the admin tab is correctly shown/hidden on page load
-
-function showLogin() {
-    console.log("Displaying login screen");
-    document.getElementById('login-container').style.display = 'block';
-    document.getElementById('main-container').style.display = 'none';
-	document.getElementById('admin-container').style.display = 'none';
+function showLogs() {
+	if (!isConnected) return showLogin();
+	tab_buttons['logs'].click();
 }
 
-function showMain() {
-    console.log("Displaying main interface");
-    document.getElementById('login-container').style.display = 'none';
-    document.getElementById('main-container').style.display = 'block';
-	document.getElementById('admin-container').style.display = 'none';
-
+function showStatus() {
+	if (!isConnected) return showLogin();
+	tab_buttons['status'].click();
 }
 
-function generateUniqueId(file) {
-    return `${file.fileName}-${file.relativePath}-${file.timestamp}`;
+document.querySelectorAll('.tab-button').forEach(button => {
+	const tabName = button.dataset.tabName
+	console.log("Tab name:", tabName);
+	tab_buttons[tabName] = button;
+	button.addEventListener('click', function() {
+		// update all tabs visibility based on user role
+		document.querySelectorAll('.tab-button').forEach(button => {
+			if (admin_tabs[button.dataset.tabName] && !isAdmin()) {
+				button.style.display = 'none';
+			} else {
+				button.style.display = 'block';
+			}
+		});
+
+		if (tabName === 'admin' && !isAdmin()) {
+			return;
+		}
+
+
+		document.querySelectorAll('.tab-content').forEach(tab => tab.style.display = 'none');
+		document.getElementById(`${tabName}-container`).style.display = 'block';
+
+		// Remove 'active' class from all buttons
+        document.querySelectorAll('.tab-button').forEach(btn => btn.classList.remove('active'));
+        this.classList.add('active');
+		console.log("Switching to tab:", tabName);
+    });
+});
+
+function generateUniqueId({fileName, relativePath, timestamp, hash}) {
+    return `${fileName}-${relativePath}-${timestamp}-${hash}`;
 }
 
 const widgetContainerMap = new Map();
 const filesListMap = new Map();
 
 function addFileToWidget(data) {
-    const widgetContainer = document.getElementById('widget-container');
+    const widgetContainer = document.getElementById('updater-frame');
     const lineItem = document.createElement('div');
     lineItem.className = 'line-item';
 
@@ -78,11 +160,19 @@ function addFileToWidget(data) {
     // Find the button within the newly created structure
     const updateBtn = lineItem.querySelector('.update-btn');
 
-    // Add event listener to the button
-    updateBtn.addEventListener('click', () => {
-        console.log(`Button clicked for ${data.fileName}`);
-        requestFile(data);
-    });
+    // Check if the file should be downloaded
+	if (!shouldDownloadFile(data)) {
+		console.log('Disable button:', data.fileName)
+		updateBtn.disabled = true; // Disable the button if the file is up to date
+		updateBtn.classList.add('disabled-btn'); // Add a class to change the visual appearance
+		updateBtn.textContent = 'Up to date'
+	} else {
+		// Add event listener to the button for files that need to be updated
+		updateBtn.addEventListener('click', () => {
+			console.log(`Button clicked for ${data.fileName}`);
+			requestFile(data);
+		});
+	}
 
     widgetContainer.appendChild(lineItem)
 
@@ -123,7 +213,7 @@ function addFileToAdminWidget(file) {
 
 	deleteBtn.addEventListener('click', () => {
 		console.log(`Deleting file: ${file.fileName}`);
-		socket.emit('delete-file', { fileName: file.fileName, relativePath: file.relativePath, timestamp: file.timestamp});
+		socket.emit('delete-file', { fileName: file.fileName, relativePath: file.relativePath, timestamp: file.timestamp, hash: file.hash});
 	});
 
 	const uniqueId = generateUniqueId(file);
@@ -177,9 +267,10 @@ function initializeSocket() {
     }
 
     socket.on('connect', () => {
+		isConnected = true;
         console.log("Socket connected");
         // wipe the widget container and logs list and files frame
-		document.getElementById('widget-container').innerHTML = '';
+		document.getElementById('updater-frame').innerHTML = '';
 		document.getElementById('logs-list').innerHTML = '';
 		document.getElementById('files-list').innerHTML = '';
 
@@ -190,6 +281,7 @@ function initializeSocket() {
     });
 
     socket.on('disconnect', (reason) => {
+		isConnected = false
 		console.log(`Socket Disconnected: ${reason}`);
         showLogin();
     });
@@ -201,7 +293,12 @@ function initializeSocket() {
 			addFileToAdminWidget(data);
 		}
 		if (localStorage.getItem('autoupdate') === 'true') {
-			requestFile(data);
+			if (shouldDownloadFile(data)) {
+				console.log('Auto updating file:', data.fileName)
+				requestFile(data);
+			} else {
+				console.log('File is up to date:', data.fileName);
+			}
 		}
 	});
 
@@ -209,7 +306,17 @@ function initializeSocket() {
 
 	socket.on('file-content-chunk', (data) => {
 		if (!localStorage.getItem('updatePath')) return
-		const { chunk, chunkNumber, totalChunks, fileName, relativePath, timestamp } = data;
+		const { chunk, chunkNumber, totalChunks, fileName, relativePath, timestamp, hash } = data;
+
+		// After processing the chunk, send an acknowledgment back to the server
+		socket.emit('ack', {
+			chunkNumber: chunkNumber,
+			fileName: fileName,
+			hash: hash,
+			status: 'received', // You can include additional status information if needed
+		});
+
+		console.log(`ACK sent for chunk ${chunkNumber} of file ${fileName}`)
 
 		// Initialize the file's chunk array if it doesn't exist
 		if (!fileChunks[fileName]) {
@@ -218,6 +325,19 @@ function initializeSocket() {
 
 		// Store the chunk in the corresponding position
 		fileChunks[fileName][chunkNumber] = chunk;
+
+		// Calculate the percentage of chunks received
+		const chunksReceived = fileChunks[fileName].filter(chunk => chunk !== null).length;
+		const progressPercent = Math.round((chunksReceived / totalChunks) * 100);
+
+		// Update the button text to show download progress
+		const uniqueId = generateUniqueId(data);
+		const lineItem = widgetContainerMap.get(uniqueId);
+		if (lineItem) {
+			console.log('Updating button text:', progressPercent);
+			const updateBtn = lineItem.querySelector('.update-btn');
+			updateBtn.textContent = `Downloading... ${progressPercent}%`;
+		}
 
 		// Check if all chunks have been received
 		const allChunksReceived = fileChunks[fileName].every((chunk) => chunk !== null);
@@ -236,6 +356,7 @@ function initializeSocket() {
 
 			// decompress the file if it is a zip file
 			if (fileName.endsWith('.zip')) {
+				console.log('Decompressing file:', filePath)
 				fs.writeFileSync(filePath, fileBuffer);
 				fs.createReadStream(filePath)
 					.pipe(unzipper.Extract({ path: uploadsDir }))
@@ -245,7 +366,11 @@ function initializeSocket() {
 					})
 					.on('error', (err) => {
 						console.error('Extraction error:', err);
+					})
+					.on('data', (data) => {
+						console.log('Data:', data);
 					});
+
 			} else {
 				fs.writeFileSync(filePath, fileBuffer);
 				console.log('File saved:', filePath);
@@ -257,6 +382,16 @@ function initializeSocket() {
 			const logItem = document.createElement('li');
 			logItem.innerText = `Updated file: ${data.fileName} at ${new Date().toLocaleString()}`;
 			logsList.appendChild(logItem);
+
+			// TODO: Change update-btn state to 'Up to date'
+			const uniqueId = generateUniqueId(data);
+			const lineItem = widgetContainerMap.get(uniqueId);
+			if (lineItem) {
+				const updateBtn = lineItem.querySelector('.update-btn');
+				updateBtn.disabled = true;
+				updateBtn.classList.add('disabled-btn');
+				updateBtn.textContent = 'Up to date';
+			}
 		}
 	});
 
@@ -280,45 +415,9 @@ function initializeSocket() {
 			removeFileFromAdminWidget(data);
 		}
 	})
-	// hide admin tab if not admin
-	document.querySelectorAll('.tab-button').forEach(button => {
-		if (button.dataset.tabName === 'admin') {
-			if (!isAdmin()) {
-				button.style.display = 'none';
-			}
-		}
-	});
 }
 
 initializeSocket();
-
-document.querySelectorAll('.tab-button').forEach(button => {
-    button.addEventListener('click', function() {
-		const tabName = this.dataset.tabName
-		if (tabName === 'admin' && !isAdmin()) {
-			return;
-		}
-
-		// Remove 'active' class from all buttons
-        document.querySelectorAll('.tab-button').forEach(btn => btn.classList.remove('active'));
-        this.classList.add('active');
-		console.log("Switching to tab:", tabName);
-		document.querySelectorAll('.tab-content').forEach(tab => {
-			if (tab.getAttribute('data-tab') === tabName) {
-				tab.style.display = 'block';
-			}
-			else {
-				tab.style.display = 'none';
-			}
-		});
-
-        if (tabName === 'admin') {
-            showAdmin();
-        } else if (tabName === 'main') {
-            showMain();
-        }
-    });
-});
 
 document.getElementById('login-btn').addEventListener('click', () => {
     const username = document.getElementById('username').value;
@@ -383,20 +482,22 @@ ipcRenderer.on('selected-directory', (event, folderPath) => {
 	if (!localStorage.getItem('relativePath')) return
 	if (folderPath) {
 		console.log("Selected path:", folderPath);
+		const hash = generateHashForPath(folderPath);
 		const stats = fs.statSync(folderPath);
+		console.log("Stats:", stats);
 
 		if (stats.isDirectory()) {
 			// Existing directory logic
-			compressAndSendFolder(folderPath);
+			compressAndSendFolder(folderPath, hash);
 		} else if (stats.isFile()) {
 			const fileExtension = path.extname(folderPath);
 
 			if (fileExtension === '.zip') {
 				// Send the .zip file directly
-				sendFile(folderPath);
+				sendFile(folderPath, hash);
 			} else {
 				// Compress and send the file
-				compressAndSendFile(folderPath);
+				compressAndSendFile(folderPath, hash);
 			}
 		}
 	}
@@ -432,33 +533,63 @@ ipcRenderer.on('relative-path-selected', (event, path) => {
 });
 
 
-function send_data_in_chunks(socket, data) {
-	const CHUNK_SIZE = 256 * 1024; // 256KB
-	const fileBuffer = data.file;
-	const totalChunks = Math.ceil(fileBuffer.length / CHUNK_SIZE);
+async function send_data_in_chunks(socket, data) {
+    const CHUNK_SIZE = 128 * 1024; // Adjusted to match the server.js example
+    const fileBuffer = data.file;
+    const totalChunks = Math.ceil(fileBuffer.length / CHUNK_SIZE);
 
-	const fileName = data.fileName;
-	const relativePath = data.relativePath;
-	const timestamp = data.timestamp;
+    const fileName = data.fileName;
+    const relativePath = data.relativePath;
+    const timestamp = data.timestamp;
+    const hash = data.hash;
 
-	for (let i = 0; i < totalChunks; i++) {
-		let start = i * CHUNK_SIZE;
-		let end = start + CHUNK_SIZE;
-		let chunk = fileBuffer.slice(start, end);
-		socket.emit('upload-file-chunk', {
-			chunk: chunk,
-			chunkNumber: i,
-			totalChunks: totalChunks,
-			fileName: fileName,
-			relativePath: relativePath,
-			timestamp: timestamp,
-		});
-	}
+    const sendChunkAndWaitForAck = (chunk, chunkNumber) => {
+        return new Promise((resolve, reject) => {
+            const ackListener = (ackData) => {
+                if (ackData.chunkNumber === chunkNumber && ackData.hash === hash && ackData.fileName === fileName) {
+                    socket.off('ack', ackListener); // Remove listener after receiving ACK
+                    resolve();
+                }
+            };
+            socket.on('ack', ackListener);
+
+            socket.emit('upload-file-chunk', {
+                chunk: chunk,
+                chunkNumber: chunkNumber,
+                totalChunks: totalChunks,
+                fileName: fileName,
+                relativePath: relativePath,
+                timestamp: timestamp,
+                hash: hash,
+            });
+
+            // Timeout for ACK
+            setTimeout(() => {
+                socket.off('ack', ackListener); // Ensure to remove listener to prevent memory leak
+                reject(`Timeout waiting for ACK for chunk ${chunkNumber}`);
+            }, 5000); // 5 seconds timeout for ACK
+        });
+    };
+
+    for (let i = 0; i < totalChunks; i++) {
+        let start = i * CHUNK_SIZE;
+        let end = start + CHUNK_SIZE;
+        let chunk = fileBuffer.slice(start, end);
+
+        try {
+            await sendChunkAndWaitForAck(chunk, i);
+            console.log(`Chunk ${i} sent and acknowledged`);
+        } catch (error) {
+            console.error(error);
+            i--; // Retry sending the current chunk
+        }
+    }
 }
 
-function compressAndSendFolder(folderPath) {
+function compressAndSendFolder(folderPath, hash) {
     const folderName = path.basename(folderPath);
     const outputPath = path.join(folderPath, '..', `${folderName}.zip`);
+
     console.log("Output path:", outputPath);
     const output = fs.createWriteStream(outputPath);
     const archive = archiver('zip', { zlib: { level: 9 } });
@@ -466,7 +597,7 @@ function compressAndSendFolder(folderPath) {
     output.on('close', function() {
         console.log((archive.pointer() / 1024 / 1024).toFixed(2) + ' MB');
         console.log('Archiver has been finalized and the output file descriptor has closed.');
-        sendFile(outputPath);
+        sendFile(outputPath, hash);
     	fs.unlinkSync(outputPath);
     });
 
@@ -479,14 +610,14 @@ function compressAndSendFolder(folderPath) {
     archive.finalize();
 }
 
-function compressAndSendFile(filePath) {
+function compressAndSendFile(filePath, hash) {
     const fileName = path.basename(filePath);
     const outputPath = path.join(path.dirname(filePath), `${fileName}.zip`);
     const output = fs.createWriteStream(outputPath);
     const archive = archiver('zip', { zlib: { level: 9 } });
 
     output.on('close', function() {
-        sendFile(outputPath);
+        sendFile(outputPath, hash);
     	fs.unlinkSync(outputPath);
     });
 
@@ -499,12 +630,12 @@ function compressAndSendFile(filePath) {
     archive.finalize();
 }
 
-function sendFile(filePath) {
+function sendFile(filePath, hash) {
     console.log("Sending file:", filePath);
     const fileBuffer = fs.readFileSync(filePath);
     const stats = fs.statSync(filePath);
-    const fileTimestamp = stats.mtime.toLocaleString();
-    send_data_in_chunks(socket, { file: fileBuffer, fileName: path.basename(filePath), relativePath: localStorage.getItem('relativePath'), timestamp: fileTimestamp});
+    const timestamp = stats.mtime.toLocaleString();
+    send_data_in_chunks(socket, { file: fileBuffer, fileName: path.basename(filePath), relativePath: localStorage.getItem('relativePath'), timestamp, hash });
 }
 
 

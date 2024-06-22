@@ -88,12 +88,14 @@ body {
 }
 
 /* Login and Main Container */
-#login-container, #main-container, #admin-container {
+.tab-content {
     background-color: #242424; /* Dark shade */
     padding: 30px;
-	padding-top: 10px;
-    /* border-radius: 8px; */
-    margin-bottom: 20px;
+    padding-top: 10px;
+    width: 100vw; /* Set width to 100% of the viewport width */
+    height: 100vh; /* Set height to 100% of the viewport height */
+    margin: 0; /* Remove default margin */
+    box-sizing: border-box; /* Include padding in the element's total width and height */
 }
 
 .input-field {
@@ -126,7 +128,6 @@ body {
     margin-top: 10px;
 }
 
-/* Scroll Frames */
 .scroll-frame {
     background-color: #1E1E1E; /* Slightly lighter dark shade for contrast */
     color: #FFFFFF;
@@ -137,11 +138,20 @@ body {
     border-radius: 5px;
 	border: 1px solid #ccc; /* Optional: adds border */
 }
-#logs-frame {
-	height: 150px;
+#updater-frame {
+	height: 400px;
 }
-#files-frame, #widget-container {
-	height: 300px;
+
+#files-frame {
+	height: 417px;
+}
+
+#logs-frame {
+	height: 445px;
+}
+
+#status-frame {
+	height: 445px;
 }
 
 .line-item {
@@ -237,11 +247,12 @@ li {
     margin-left: 10px; /* Space from the text */
 }
 
-/* Flex Container for Inline Alignment */
 .status-header, .logs-header, .files-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
+    position: relative;
+    top: -20px;
 }
 
 /* Adjustments for smaller screens or to ensure the button does not wrap */
@@ -316,22 +327,46 @@ li {
 }
 
 /* Squared Tab Buttons Style */
+/* Squared Tab Buttons Style */
 .tab-button {
     background-color: #f0f0f0; /* Light grey background */
-    border: 1px solid #dcdcdc; /* Slightly darker border */
-    border-radius: 0; /* Square corners */
-    padding: 10px 20px; /* Padding around text */
-    margin: 5px; /* Space between buttons */
-    cursor: pointer; /* Pointer cursor on hover */
-	-webkit-app-region: no-drag;
+    border: 1px solid #ccc; /* Lighter border for a more subtle look */
+    border-radius: 3px; /* Slightly rounded corners for a modern look */
+    padding: 5px 15px; /* Reduced padding for a more compact appearance */
+    margin: 2px; /* Reduced margin to make buttons closer */
+    cursor: pointer;
+    -webkit-app-region: no-drag;
+    transition: background-color 0.3s, border-color 0.3s, transform 0.3s; /* Added transform to the transition */
+}
+
+.tab-button:hover {
+    background-color: #e0e0e0; /* Slightly darker than the default state for hover effect */
+    transform: scale(1.05); /* Slightly increase the size */
 }
 
 /* Active Tab Button Style */
 .tab-button.active {
-    background-color: #c0c0c0; /* Darker grey for active tab */
+    background-color: #007ACC; /* Accent color for active tab */
+    color: #FFFFFF; /* White text for better contrast */
+    border-color: #005EA6; /* Slightly darker border for depth */
 }
 
 /* Container Style */
 #tab-buttons-container {
-    margin-bottom: 20px; /* Space below the tab buttons */
+    margin-top: 6px;
+	display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.scroll-frame-text {
+	margin: 10px;
+}
+
+.disabled-btn {
+    background-color: #ccc; /* Light grey background */
+    color: #666; /* Dark grey text */
+    cursor: not-allowed; /* Show a 'not-allowed' cursor */
+    border: 1px solid #999; /* Darker border for more contrast */
+    opacity: 0.5; /* Make the button look faded */
 }

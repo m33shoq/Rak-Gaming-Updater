@@ -14,25 +14,24 @@
 		</div>
 		<!-- Tab Buttons Container -->
 		<div id="tab-buttons-container">
-			<button id="main-tab-btn" class="tab-button" data-tab-name="main">Main</button>
-			<button id="admin-tab-btn" class="tab-button" data-tab-name="admin">Admin</button>
-			<!-- Placeholder for future tabs -->
-			<!-- <button id="logs-tab-btn" class="tab-button">Logs</button> -->
-			<!-- <button id="status-tab-btn" class="tab-button">Status</button> -->
+			<button id="main-tab-btn" class="tab-button" data-tab-name="main" style="display:none;">Updater</button>
+			<button id="admin-tab-btn" class="tab-button" data-tab-name="admin" style="display:none;">Pusher</button>
+			<button id="logs-tab-btn" class="tab-button" data-tab-name="logs" style="display:none;">Logs</button>
+			<button id="status-tab-btn" class="tab-button" data-tab-name="status" style="display:none;">Status</button>
 		</div>
 		<div id="button-container">
 			<button id="minimize-btn">―</button>
 			<button id="close-btn">✖</button>
 		</div>
 	</div>
-    <div id="login-container">
+    <div id="login-container" class="tab-content">
         <h1>Login</h1>
         <input type="text" id="username" placeholder="Username" class="input-field">
         <input type="password" id="password" placeholder="Password" class="input-field">
         <button id="login-btn" class="rounded-button">Login</button>
         <p id="login-error" class="error-text"></p>
     </div>
-    <div id="main-container" style="display:none;">
+    <div id="main-container" class="tab-content" style="display:none;">
         <button id="select-path-btn" class="rounded-button">Select WoW Path</button>
         <p id="selected-path"></p>
 		<div class="auto-update-container">
@@ -40,22 +39,9 @@
 			<label>Update Automatically</label>
 		</div>
 
-		<div class="scroll-frame" id="widget-container"></div>
-
-		<div id="logs" class="logs-header">
-			<h2>Update Logs</h2>
-			<!-- <button id="toggle-logs-btn" class="rounded-button toggle-button">Toggle Logs</button> -->
-		</div>
-		<div id="logs-frame" class="scroll-frame">
-			<ul id="logs-list"></ul>
-		</div>
-
-
-
-
+		<div id="updater-frame" class="scroll-frame"></div>
     </div>
-	<div id="admin-container" style="display:none;">
-
+	<div id="admin-container" class="tab-content" style="display:none;">
 		<div id="files" class="files-header">
 			<div id="relativePath" >
 				<button id="set-relative-path-btn" class="rounded-button">Set Relative Path</button>
@@ -69,13 +55,23 @@
 		<div id="files-frame" class="scroll-frame">
 			<ul id="files-list"></ul>
 		</div>
-
-		 <div id="status" class="status-header">
-			<h2>Clients Status</h2>
-			<button id="toggle-clients-btn" class="rounded-button toggle-button">Toggle Clients Status</button>
+	</div>
+	<div id="logs-container" class="tab-content" style="display:none;">
+		<div id="logs" class="logs-header">
+			<h2>Update Logs</h2>
+			<!-- <button id="toggle-logs-btn" class="rounded-button toggle-button">Toggle Logs</button> -->
 		</div>
-		<div id="clients-status" class="scroll-frame">
-			<ul id="clients-list"></ul>
+		<div id="logs-frame" class="scroll-frame">
+			<ul id="logs-list" class="scroll-frame-text"></ul>
+		</div>
+	</div>
+	<div id="status-container" class="tab-content" style="display:none;">
+		<div id="status" class="status-header">
+			<h2>Clients Status</h2>
+			<!-- <button id="toggle-clients-btn" class="rounded-button toggle-button">Toggle Clients Status</button> -->
+		</div>
+		<div id="status-frame" class="scroll-frame">
+			<ul id="clients-list" class="scroll-frame-text"></ul>
 		</div>
 	</div>
     <script src="renderer.js"></script>
