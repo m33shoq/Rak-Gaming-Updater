@@ -1,4 +1,5 @@
 const { app, BrowserWindow, ipcMain, dialog, Tray, Menu } = require('electron');
+const fs = require('fs');
 const path = require('path');
 const fetch = require('node-fetch');
 
@@ -10,6 +11,35 @@ let isDev;
 let mainWindow;
 let tray;
 let token = '';
+
+
+function validateWoWPath(inputPath) {
+    // Normalize the input path to handle different path formats
+    const normalizedPath = path.normalize(inputPath);
+    // Split the path to analyze its components
+    const pathComponents = normalizedPath.split(path.sep);
+
+    // Find the index of the "World of Warcraft" folder in the path
+    const wowIndex = pathComponents.indexOf('World of Warcraft');
+
+    // If "World of Warcraft" is not in the path, the path is invalid
+    if (wowIndex === -1) {
+        return null;
+    }
+
+    // Construct the path up to and including "World of Warcraft"
+    const wowPath = pathComponents.slice(0, wowIndex + 1).join(path.sep);
+
+    // Check if the "_retail_" folder exists within the "World of Warcraft" directory
+    const retailPath = path.join(wowPath, '_retail_');
+    if (fs.existsSync(retailPath)) {
+        // Return the path to "World of Warcraft" if "_retail_" exists within it
+        return wowPath;
+    }
+
+    // Return null if the "_retail_" folder does not exist within the "World of Warcraft" directory
+    return null;
+}
 
 function createWindow() {
     mainWindow = new BrowserWindow({
@@ -90,7 +120,8 @@ app.on('ready', () => {
             properties: ['openDirectory']
         });
         if (result.filePaths.length > 0) {
-            updatePath = result.filePaths[0];
+
+            updatePath = validateWoWPath(result.filePaths[0]);
             event.reply('update-path-selected', updatePath);
         }
     });

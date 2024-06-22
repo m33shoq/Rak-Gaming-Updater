@@ -103,10 +103,13 @@ console.log(localStorage.getItem('updatePath'));
 document.getElementById('selected-path').innerText = `Wow Path: ${localStorage.getItem('updatePath') || 'None'}`;
 
 ipcRenderer.on('update-path-selected', (event, path) => {
-    console.log("WoW path selected:", path);
-    document.getElementById('selected-path').innerText = `WoW Path: ${path}`;
-	localStorage.setItem('updatePath', path);
-	console.log(localStorage.getItem('updatePath'));
+	if (path) {
+		document.getElementById('selected-path').innerText = `WoW Path: ${path}`;
+		localStorage.setItem('updatePath', path);
+	} else {
+		document.getElementById('selected-path').innerText = 'WoW Path: Invalid Path Supplied';
+		localStorage.removeItem('updatePath');
+	}
 });
 
 const autoUpdateCheckbox = document.getElementById('auto-update-checkbox');
