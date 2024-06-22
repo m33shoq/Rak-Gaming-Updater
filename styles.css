@@ -310,3 +310,8 @@ li {
     padding: 5px 10px; /* Adjust vertical padding to reduce space above and below the text */
     font-size: 14px; /* Optional: Adjust font size for better fit in the smaller button */
 }
+
+#add-folder-btn, #add-files-btn {
+    line-height: 15px; /* Centers text vertically */
+    text-align: center; /* Centers text horizontally */
+}

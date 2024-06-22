@@ -160,22 +160,26 @@ app.on('ready', () => {
         }
     });
 
-    ipcMain.on('push-update', (event, data) => {
-        if (!token) {
-            event.reply('push-update-failed', { error: 'User not authenticated' });
-            return;
-        }
-        // Logic to push the update by sending data to the server
-        // Example logic here
-    });
-	ipcMain.on('open-file-dialog', async (event) => {
+
+	ipcMain.on('open-file-dialog-folder', async (event) => {
+		console.log('Opening file dialog: open-file-dialog')
 		const { canceled, filePaths } = await dialog.showOpenDialog({
-		  properties: ['openDirectory']
+			properties: ['openDirectory']
 		});
 		if (!canceled && filePaths.length > 0) {
-		  event.reply('selected-directory', filePaths[0]);
+		  	event.reply('selected-directory', filePaths[0]);
 		}
-	  });
+	});
+
+	ipcMain.on('open-file-dialog-file', async (event) => {
+		console.log('Opening file dialog: open-file-dialog')
+		const { canceled, filePaths } = await dialog.showOpenDialog({
+			properties: ['openFile']
+		});
+		if (!canceled && filePaths.length > 0) {
+		  	event.reply('selected-directory', filePaths[0]);
+		}
+	});
 
 });
 

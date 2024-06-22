@@ -143,7 +143,7 @@ function initializeSocket() {
 
 				const updatePath = localStorage.getItem('updatePath');
 				const filePath = path.join(updatePath, relativePath, fileName);
-				const uploadsDir = path.join(updatePath, relativePath, fileName.replace('.zip', ''));
+				const uploadsDir = path.join(updatePath, relativePath);
 				if (!fs.existsSync(uploadsDir)) {
 					fs.mkdirSync(uploadsDir, { recursive: true });
 				}
@@ -278,42 +278,65 @@ autoUpdateCheckbox.addEventListener('change', function() {
 });
 
 document.getElementById('add-files-btn').addEventListener('click', () => {
-	ipcRenderer.send('open-file-dialog');
-  });
+	ipcRenderer.send('open-file-dialog-file');
+});
+
+document.getElementById('add-folder-btn').addEventListener('click', () => {
+	ipcRenderer.send('open-file-dialog-folder');
+});
 
 ipcRenderer.on('selected-directory', (event, folderPath) => {
 	if (!localStorage.getItem('relativePath')) return
-    if (folderPath) {;
-		console.log("Selected folder path:", folderPath);
-		const folderName = path.basename(folderPath);
-        const outputPath = path.join(folderPath, '..', `${folderName}.zip`);
-		console.log("Output path:", outputPath)
-        const output = fs.createWriteStream(outputPath);
-        const archive = archiver('zip', {
-            zlib: { level: 9 }
-        });
+	if (folderPath) {
+		console.log("Selected path:", folderPath);
+		const stats = fs.statSync(folderPath);
 
-        output.on('close', function() {
-			console.log((archive.pointer() / 1024 / 1024).toFixed(2) + ' MB');
-			console.log('Archiver has been finalized and the output file descriptor has closed.');
-			// Send the file to the server here
-			const fileBuffer = fs.readFileSync(outputPath);
-			const stats = fs.statSync(outputPath); // Get file stats
-			const fileTimestamp = stats.mtime.toLocaleString(); // Use modification time as timestamp
-			send_data_in_chunks(socket, { file: fileBuffer, fileName: `${folderName}.zip`, relativePath: localStorage.getItem('relativePath'), timestamp: fileTimestamp});
-			// socket.emit('upload-file', { file: fileBuffer, fileName: `${folderName}.zip`, relativePath: localStorage.getItem('relativePath'), timestamp: fileTimestamp});
-			// delete the zip file after sending
-			fs.unlinkSync(outputPath);
-		});
+		if (stats.isDirectory()) {
+			// Existing directory logic
+			compressAndSendFolder(folderPath);
+		} else if (stats.isFile()) {
+			const fileExtension = path.extname(folderPath);
 
-        archive.on('error', function(err) {
-            throw err;
-        });
+			if (fileExtension === '.zip') {
+				// Send the .zip file directly
+				sendFile(folderPath);
+			} else {
+				// Compress and send the file
+				compressAndSendFile(folderPath);
+			}
+		}
+	}
+    // if (folderPath) {;
+	// 	console.log("Selected folder path:", folderPath);
+	// 	const folderName = path.basename(folderPath);
+    //     const outputPath = path.join(folderPath, '..', `${folderName}.zip`);
+	// 	console.log("Output path:", outputPath)
+    //     const output = fs.createWriteStream(outputPath);
+    //     const archive = archiver('zip', {
+    //         zlib: { level: 9 }
+    //     });
 
-        archive.directory(folderPath, false);
-        archive.pipe(output);
-        archive.finalize();
-    }
+    //     output.on('close', function() {
+	// 		console.log((archive.pointer() / 1024 / 1024).toFixed(2) + ' MB');
+	// 		console.log('Archiver has been finalized and the output file descriptor has closed.');
+	// 		// Send the file to the server here
+	// 		const fileBuffer = fs.readFileSync(outputPath);
+	// 		const stats = fs.statSync(outputPath); // Get file stats
+	// 		const fileTimestamp = stats.mtime.toLocaleString(); // Use modification time as timestamp
+	// 		send_data_in_chunks(socket, { file: fileBuffer, fileName: `${folderName}.zip`, relativePath: localStorage.getItem('relativePath'), timestamp: fileTimestamp});
+	// 		// socket.emit('upload-file', { file: fileBuffer, fileName: `${folderName}.zip`, relativePath: localStorage.getItem('relativePath'), timestamp: fileTimestamp});
+	// 		// delete the zip file after sending
+	// 		fs.unlinkSync(outputPath);
+	// 	});
+
+    //     archive.on('error', function(err) {
+    //         throw err;
+    //     });
+
+    //     archive.directory(folderPath, folderName);
+    //     archive.pipe(output);
+    //     archive.finalize();
+    // }
 });
 
 document.getElementById('minimize-btn').addEventListener('click', () => {
@@ -410,4 +433,55 @@ function send_data_in_chunks(socket, data) {
 			timestamp: timestamp,
 		});
 	}
+}
+
+function compressAndSendFolder(folderPath) {
+    const folderName = path.basename(folderPath);
+    const outputPath = path.join(folderPath, '..', `${folderName}.zip`);
+    console.log("Output path:", outputPath);
+    const output = fs.createWriteStream(outputPath);
+    const archive = archiver('zip', { zlib: { level: 9 } });
+
+    output.on('close', function() {
+        console.log((archive.pointer() / 1024 / 1024).toFixed(2) + ' MB');
+        console.log('Archiver has been finalized and the output file descriptor has closed.');
+        sendFile(outputPath);
+    	fs.unlinkSync(outputPath);
+    });
+
+    archive.on('error', function(err) {
+        throw err;
+    });
+
+    archive.directory(folderPath, folderName);
+    archive.pipe(output);
+    archive.finalize();
+}
+
+function compressAndSendFile(filePath) {
+    const fileName = path.basename(filePath);
+    const outputPath = path.join(path.dirname(filePath), `${fileName}.zip`);
+    const output = fs.createWriteStream(outputPath);
+    const archive = archiver('zip', { zlib: { level: 9 } });
+
+    output.on('close', function() {
+        sendFile(outputPath);
+    	fs.unlinkSync(outputPath);
+    });
+
+    archive.on('error', function(err) {
+        throw err;
+    });
+
+    archive.file(filePath, { name: fileName });
+    archive.pipe(output);
+    archive.finalize();
+}
+
+function sendFile(filePath) {
+    console.log("Sending file:", filePath);
+    const fileBuffer = fs.readFileSync(filePath);
+    const stats = fs.statSync(filePath);
+    const fileTimestamp = stats.mtime.toLocaleString();
+    send_data_in_chunks(socket, { file: fileBuffer, fileName: path.basename(filePath), relativePath: localStorage.getItem('relativePath'), timestamp: fileTimestamp});
 }
