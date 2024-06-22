@@ -12,6 +12,8 @@ const secretKey = 'your-secret-key';
 let connectedClients = [];
 let updateLogs = [];
 
+let uploadedFiles = [];
+
 app.use(bodyParser.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
@@ -37,6 +39,10 @@ app.get('/logs', (req, res) => {
     res.json({ logs: updateLogs });
 });
 
+app.get('/files', (req, res) => {
+	res.json({ files: uploadedFiles });
+});
+
 io.use((socket, next) => {
     const token = socket.handshake.auth.token;
     if (token) {
@@ -57,23 +63,50 @@ io.on('connection', (socket) => {
         connectedClients = connectedClients.filter(id => id !== socket.id);
     });
 
-    socket.on('update', (data) => {
-        if (socket.user.username !== 'admin') {
-            socket.emit('update-failed', { error: 'Unauthorized' });
-            return;
-        }
 
-        const destPath = path.join(data.destination, data.fileName);
-        fs.copyFile(data.source, destPath, (err) => {
-            if (err) {
-                socket.emit('update-failed', { error: err.message });
-            } else {
-                const log = `Updated ${data.fileName} at ${new Date().toLocaleString()}`;
-                updateLogs.push(log);
-                socket.emit('update-success', { message: log });
-            }
-        });
-    });
+	socket.on('upload-file', (data) => { // fileName file relativePath
+		const uploadsDir = path.join(__dirname, 'uploads');
+		if (!fs.existsSync(uploadsDir)) {
+			fs.mkdirSync(uploadsDir, { recursive: true });
+		}
+
+		const filePath = path.join(uploadsDir, data.fileName);
+		fs.writeFileSync(filePath, data.file);
+		console.log('File saved:', filePath);
+		const timestamp = data.timestamp
+		const fileName = data.fileName;
+		const relativePath = data.relativePath;
+
+
+		// Notify other clients about the new file
+		uploadedFiles.push({ fileName: fileName, relativePath: relativePath, timestamp: timestamp});
+		socket.broadcast.emit('new-file', { fileName: fileName, relativePath: relativePath, timestamp: timestamp});
+		socket.emit('new-file', { fileName: fileName, relativePath: relativePath, timestamp: timestamp});
+	});
+
+	socket.on('request-file', (data) => {
+		let fileName = data.fileName;
+		console.log('File requested:', fileName);
+		const filePath = path.join(__dirname, 'uploads', fileName);
+		if (fs.existsSync(filePath)) {
+			const file = fs.readFileSync(filePath, 'utf-8');
+			socket.emit('file-content', { fileName, file });
+		} else {
+			socket.emit('file-not-found', { fileName });
+		}
+	})
+	socket.on('delete-file', (data) => {
+		// remove from uploadedFiles
+		uploadedFiles = uploadedFiles.filter(file => !(file.fileName === data.fileName && file.relativePath === data.relativePath && file.timestamp === data.timestamp));
+
+		let fileName = data.file_name;
+		console.log('File deleted:', fileName);
+		const filePath = path.join(__dirname, 'uploads', fileName);
+		if (fs.existsSync(filePath)) {
+			fs.unlinkSync(filePath);
+			socket.emit('file-deleted', { fileName });
+		}
+	})
 });
 
 http.listen(3000, () => {

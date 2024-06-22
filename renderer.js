@@ -1,5 +1,8 @@
 const { ipcRenderer } = require('electron');
 const socket = require('socket.io-client')('http://localhost:3000');
+const fs = require('fs');
+const archiver = require('archiver');
+const path = require('path');
 let token = localStorage.getItem('token');
 
 // Example function to check if the user is an admin
@@ -38,20 +41,20 @@ function showMain() {
 	document.getElementById('toggle-panel-btn').textContent = 'Admin Panel';
 }
 
-function addLineToWidget(text) {
+function addLineToWidget(data) {
     const widgetContainer = document.getElementById('widget-container');
     const lineItem = document.createElement('div');
     lineItem.className = 'line-item';
 
     const textNode = document.createElement('span');
-    textNode.innerText = text;
+    textNode.innerText = data.fileName;
 
     const button = document.createElement('button');
     button.innerText = 'Update';
     // Add event listener to button
     button.addEventListener('click', () => {
-        console.log(`Button clicked for ${text}`);
-        // Implement button click functionality here
+        console.log(`Button clicked for ${data.fileName}`);
+        requestFile(data);
     });
 
     lineItem.appendChild(textNode);
@@ -60,6 +63,19 @@ function addLineToWidget(text) {
     widgetContainer.appendChild(lineItem);
 }
 
+
+function requestFilesData() {
+    fetch('http://localhost:3000/files')
+        .then(response => response.json())
+        .then(data => {
+            console.log('Files data:', data);
+            renderFiles(data.files); // Assuming the server responds with an object that has a 'files' property
+			for (let file of data.files) {
+				addLineToWidget(file);
+			}
+        })
+        .catch(error => console.error('Error fetching files data:', error));
+}
 
 function initializeSocket() {
     if (token) {
@@ -75,6 +91,7 @@ function initializeSocket() {
         console.log("Socket connected");
         showMain();
 		showAdmin();
+		requestFilesData();
     });
 
     socket.on('disconnect', () => {
@@ -82,18 +99,23 @@ function initializeSocket() {
         showLogin();
     });
 
-    socket.on('update-success', (data) => {
-        console.log("Update success:", data.message);
-        const logsList = document.getElementById('logs-list');
-        const newLog = document.createElement('li');
-        newLog.innerText = data.message;
-        logsList.appendChild(newLog);
-    });
+	socket.on('new-file', (data) => { // fileName relativePath timestamp
+		console.log('New file available:', data.fileName);
+		addLineToWidget(data);
+		if (isAdmin()) {
+			renderFiles([{ fileName: data.fileName, relativePath: data.relativePath, timestamp: data.timestamp }]);
+		}
+		if (localStorage.getItem('autoupdate') === 'true') {
+			requestFile({ fileName: data.fileName, relativePath: data.relativePath, timestamp: data.timestamp });
+		}
+	});
 
-    socket.on('update-failed', (data) => {
-        console.log("Update failed:", data.error);
-        alert(`Update failed: ${data.error}`);
-    });
+	socket.on('file-content', (data) => {
+		if (data.file && data.fileName && localStorage.getItem('updatePath')) {
+			console.log('Received file:', data.fileName);
+			// const filePath = path.join(localStorage.getItem('updatePath'), data.fileName);
+		}
+	});
 
 	if (isAdmin()) {
 		document.getElementById('toggle-panel-btn').style.display = 'block';
@@ -104,15 +126,6 @@ function initializeSocket() {
 				showMain();
 			}
 		});
-
-		const filesData = [
-			{ fileName: "Report.pdf", relativePath: "/reports/2023/", id: "1", uploadedTime: "2023" },
-			{ fileName: "Buet.xlsx", relativePath: "/budgets/2023/", id: "2",  uploadedTime: "04-02 11:30" },
-			{ fileName: "Budget2.xlsx", relativePath: "/budgets/2023/", id: "2",  uploadedTime: "04-02 11:30" },
-			{ fileName: "Budget3.xlsx", relativePath: "/budgets/2023/", id: "2", uploadedTime: "04-02 11:30" },
-			// Add more file objects as needed
-		];
-		renderFiles(filesData);
 	}
 }
 
@@ -157,6 +170,7 @@ ipcRenderer.on('update-path-selected', (event, path) => {
 	}
 });
 
+
 const autoUpdateCheckbox = document.getElementById('auto-update-checkbox');
 
 // Set the checkbox state based on localStorage value on page load
@@ -168,56 +182,41 @@ autoUpdateCheckbox.addEventListener('change', function() {
 	localStorage.setItem('autoupdate', autoUpdateCheckbox.checked);
 });
 
-// document.getElementById('push-update-btn').addEventListener('click', () => {
-//     const selectedPath = document.getElementById('selected-path').innerText.replace('Selected Path: ', '');
-//     console.log("Push update button clicked, selected path:", selectedPath);
-//     if (selectedPath && token) {
-//         socket.emit('update', { destination: selectedPath, fileName: 'hello world.txt', source: 'hello world.txt', token });
-//     } else {
-//         alert('Please select a path first or login.');
-//     }
-// });
+document.getElementById('add-files-btn').addEventListener('click', () => {
+	ipcRenderer.send('open-file-dialog');
+  });
 
-// Toggle visibility of clients status and logs
-// document.getElementById('toggle-clients-btn').addEventListener('click', () => {
-//     const clientsStatus = document.getElementById('clients-status');
-//     clientsStatus.style.display = clientsStatus.style.display === 'none' ? 'block' : 'none';
-// });
+ipcRenderer.on('selected-directory', (event, folderPath) => {
+	if (!localStorage.getItem('relativePath')) return
+    if (folderPath) {;
+		console.log("Selected folder path:", folderPath);
+		const folderName = path.basename(folderPath);
+        const outputPath = path.join(folderPath, '..', `${folderName}.zip`);
+		console.log("Output path:", outputPath)
+        const output = fs.createWriteStream(outputPath);
+        const archive = archiver('zip', {
+            zlib: { level: 9 }
+        });
 
-// document.getElementById('toggle-logs-btn').addEventListener('click', () => {
-//     const logsFrame = document.getElementById('logs-frame');
-//     logsFrame.style.display = logsFrame.style.display === 'none' ? 'block' : 'none';
-// });
+        output.on('close', function() {
+            console.log(archive.pointer() + ' total bytes');
+            console.log('Archiver has been finalized and the output file descriptor has closed.');
+            // Send the file to the server here
+            const fileBuffer = fs.readFileSync(outputPath);
+            socket.emit('upload-file', { file: fileBuffer, fileName: `${folderName}.zip`, relativePath: localStorage.getItem('relativePath'), timestamp: new Date().toLocaleString()});
+			// delete the zip file after sending
+			fs.unlinkSync(outputPath);
+        });
 
-// Fetch status and logs periodically
-setInterval(() => {
-    console.log("Fetching status and logs");
-	const exampleText = `Line ${Math.floor(Math.random() * 100)}`;
-    addLineToWidget(exampleText);
-    // fetch('http://localhost:3000/status').then(res => res.json()).then(data => {
-    //     const clientsList = document.getElementById('clients-list');
-    //     clientsList.innerHTML = '';
-    //     data.clients.forEach(client => {
-    //         const clientItem = document.createElement('li');
-    //         clientItem.innerText = `Client ${client}`;
-    //         clientsList.appendChild(clientItem);
-    //     });
-    // }).catch(err => {
-    //     console.error('Failed to fetch status:', err);
-    // });
+        archive.on('error', function(err) {
+            throw err;
+        });
 
-    // fetch('http://localhost:3000/logs').then(res => res.json()).then(data => {
-    //     const logsList = document.getElementById('logs-list');
-    //     logsList.innerHTML = '';
-    //     data.logs.forEach(log => {
-    //         const logItem = document.createElement('li');
-    //         logItem.innerText = log;
-    //         logsList.appendChild(logItem);
-    //     });
-    // }).catch(err => {
-    //     console.error('Failed to fetch logs:', err);
-    // });
-}, 5000);
+        archive.directory(folderPath, false);
+        archive.pipe(output);
+        archive.finalize();
+    }
+});
 
 document.getElementById('minimize-btn').addEventListener('click', () => {
     ipcRenderer.send('minimize-app');
@@ -260,13 +259,34 @@ function renderFiles(files) {
 
 		pushBtn.addEventListener('click', () => {
 			console.log(`Pushing file: ${file.fileName}`);
-			// Implement the push functionality here
 		});
 
 		deleteBtn.addEventListener('click', () => {
 			console.log(`Deleting file: ${file.fileName}`);
-			// Implement the delete functionality here
-			filesList.removeChild(div); // Remove the file item from the list
+			socket.emit('delete-file', { fileName: file.fileName, relativePath: file.relativePath, timestamp: file.timestamp});
+			filesList.removeChild(div);
 		});
 	});
 }
+
+
+function requestFile(data) {
+	console.log("Requesting file:", data.fileName);
+	socket.emit('request-file', data);
+}
+
+document.getElementById('relative-path').innerText = `Relative Path: ${localStorage.getItem('relativePath') || 'None'}`;
+document.getElementById('set-relative-path-btn').addEventListener('click', () => {
+	console.log("Select WoW path button clicked");
+	ipcRenderer.send('select-relative-path');
+});
+
+ipcRenderer.on('relative-path-selected', (event, path) => {
+	if (path) {
+		document.getElementById('relative-path').innerText = `Relative Path: ${path}`;
+		localStorage.setItem('relativePath', path);
+	} else {
+		document.getElementById('relative-path').innerText = 'Relative Path: Invalid Path Supplied';
+		localStorage.removeItem('relativePath');
+	}
+});

@@ -43,7 +43,7 @@ function validateWoWPath(inputPath) {
 
 function createWindow() {
     mainWindow = new BrowserWindow({
-        width: 800,
+        width: 1400,
         height: 600,
         webPreferences: {
             nodeIntegration: true,
@@ -58,7 +58,7 @@ function createWindow() {
     });
 
     // Set the minimum size of the window
-    mainWindow.setMinimumSize(800, 600);
+    mainWindow.setMinimumSize(1400, 600);
     mainWindow.setMenu(null);
 
     const url = isDev
@@ -70,7 +70,7 @@ function createWindow() {
         console.error('Failed to load URL:', err);
     });
 
-    // mainWindow.webContents.openDevTools();
+    mainWindow.webContents.openDevTools();
 
     mainWindow.on('closed', () => (mainWindow = null));
 }
@@ -125,6 +125,21 @@ app.on('ready', () => {
             event.reply('update-path-selected', updatePath);
         }
     });
+	ipcMain.on('select-relative-path', async (event) => {
+		const result = await dialog.showOpenDialog(mainWindow, {
+			properties: ['openDirectory']
+		});
+		if (result.filePaths.length > 0) {
+			let pathToWow = validateWoWPath(result.filePaths[0]);
+			if (!pathToWow) {
+				event.reply('relative-path-selected', null);
+				return;
+			}
+			let relativePath = path.relative(pathToWow, result.filePaths[0]);
+			console.log('Relative path:', relativePath)
+			event.reply('relative-path-selected', relativePath);
+		}
+	})
 
     ipcMain.on('login', async (event, { username, password }) => {
         try {
@@ -153,6 +168,15 @@ app.on('ready', () => {
         // Logic to push the update by sending data to the server
         // Example logic here
     });
+	ipcMain.on('open-file-dialog', async (event) => {
+		const { canceled, filePaths } = await dialog.showOpenDialog({
+		  properties: ['openDirectory']
+		});
+		if (!canceled && filePaths.length > 0) {
+		  event.reply('selected-directory', filePaths[0]);
+		}
+	  });
+
 });
 
 app.on('window-all-closed', () => {

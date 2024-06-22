@@ -257,6 +257,10 @@ li {
     display: inline-block;
 }
 
+#set-relative-path-btn, #relative-path {
+    display: inline-block;
+}
+
 .auto-update-container {
 	display: flex;
 	align-items: center;
