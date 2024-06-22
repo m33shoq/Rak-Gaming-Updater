@@ -8,7 +8,7 @@ const bodyParser = require('body-parser');
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 
-const secretKey = 'your-secret-key';
+const secretKey = 'your-secret-key4';
 let connectedClients = [];
 let updateLogs = [];
 
@@ -23,8 +23,8 @@ app.post('/login', (req, res) => {
     const { username, password } = req.body;
     const user = users.find(u => u.username === username);
 	console.log(user, password, user.password)
-    if (user && password === user.password) { //     if (user && bcrypt.compareSync(password, user.password)) {
-        const token = jwt.sign({ username: user.username }, secretKey);
+    if (user && bcrypt.compareSync(password, user.password)) {
+        const token = jwt.sign({ username: user.username, role: user.role }, secretKey);
         res.json({ token });
     } else {
         res.status(401).json({ error: 'Invalid credentials' });
@@ -102,28 +102,6 @@ io.on('connection', (socket) => {
 			delete fileChunks[fileName];
 		}
 	});
-
-
-
-	// socket.on('upload-file', (data) => { // fileName file relativePath
-	// 	const uploadsDir = path.join(__dirname, 'uploads');
-	// 	if (!fs.existsSync(uploadsDir)) {
-	// 		fs.mkdirSync(uploadsDir, { recursive: true });
-	// 	}
-
-	// 	const filePath = path.join(uploadsDir, data.fileName);
-	// 	fs.writeFileSync(filePath, data.file);
-	// 	console.log('File saved:', filePath);
-	// 	const timestamp = data.timestamp
-	// 	const fileName = data.fileName;
-	// 	const relativePath = data.relativePath;
-
-
-	// 	// Notify other clients about the new file
-	// 	uploadedFiles.push({ fileName: fileName, relativePath: relativePath, timestamp: timestamp});
-	// 	socket.broadcast.emit('new-file', { fileName: fileName, relativePath: relativePath, timestamp: timestamp});
-	// 	socket.emit('new-file', { fileName: fileName, relativePath: relativePath, timestamp: timestamp});
-	// });
 
 	socket.on('request-file', (data) => {
 		let fileName = data.fileName;

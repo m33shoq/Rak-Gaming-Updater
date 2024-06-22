@@ -4,14 +4,21 @@ const fs = require('fs');
 const archiver = require('archiver');
 const unzipper = require('unzipper');
 const path = require('path');
+const { jwtDecode }	 = require('jwt-decode');
 
 let token = localStorage.getItem('token');
-
-// Example function to check if the user is an admin
 function isAdmin() {
-    // Implement your logic to determine if the user is an admin
-    // This could involve checking a user object, a token, etc.
-    return true; // Placeholder return value
+    const token = localStorage.getItem('token');
+    if (!token) return false;
+
+    try {
+        const decoded = jwtDecode(token);
+		console.log(`User role: ${decoded.role}`)
+        return decoded.role === 'admin';
+    } catch (error) {
+        console.error('Error decoding token', error);
+        return false;
+    }
 }
 
 // Function to toggle the admin tab visibility
@@ -20,7 +27,6 @@ function showAdmin() {
 		document.getElementById('admin-container').style.display = 'block';
 		document.getElementById('main-container').style.display = 'none';
 		document.getElementById('login-container').style.display = 'none';
-		document.getElementById('toggle-panel-btn').textContent = 'Main Panel';
 	} else {
 		showMain()
     }
@@ -40,52 +46,133 @@ function showMain() {
     document.getElementById('login-container').style.display = 'none';
     document.getElementById('main-container').style.display = 'block';
 	document.getElementById('admin-container').style.display = 'none';
-	document.getElementById('toggle-panel-btn').textContent = 'Admin Panel';
+
 }
 
-function addLineToWidget(data) {
+function generateUniqueId(file) {
+    return `${file.fileName}-${file.relativePath}-${file.timestamp}`;
+}
+
+const widgetContainerMap = new Map();
+const filesListMap = new Map();
+
+function addFileToWidget(data) {
     const widgetContainer = document.getElementById('widget-container');
     const lineItem = document.createElement('div');
     lineItem.className = 'line-item';
 
-    const textNode = document.createElement('span');
-    textNode.innerText = data.fileName;
+    // Create the inner HTML structure to include file name, relative path, and timestamp
+    lineItem.innerHTML = `
+        <div class="file-info-container">
+            <div class="file-name-path">
+                <span>${data.fileName}\n
+				${data.relativePath}</span>
+            </div>
+            <div class="uploaded-time-container">
+                <span>${data.timestamp}</span>
+            </div>
+            <button class="update-btn">Update</button>
+        </div>
+    `;
 
-    const button = document.createElement('button');
-    button.innerText = 'Update';
-    // Add event listener to button
-    button.addEventListener('click', () => {
+    // Find the button within the newly created structure
+    const updateBtn = lineItem.querySelector('.update-btn');
+
+    // Add event listener to the button
+    updateBtn.addEventListener('click', () => {
         console.log(`Button clicked for ${data.fileName}`);
         requestFile(data);
     });
 
-    lineItem.appendChild(textNode);
-    lineItem.appendChild(button);
+    widgetContainer.appendChild(lineItem)
 
-    widgetContainer.appendChild(lineItem);
+	const uniqueId = generateUniqueId(data);
+	widgetContainerMap.set(uniqueId, lineItem);
 }
 
+function removeFileFromWidget(data) {
+	const uniqueId = generateUniqueId(data);
+	const lineItem = widgetContainerMap.get(uniqueId);
+	if (lineItem) {
+		lineItem.parentNode.removeChild(lineItem);
+		lineItem.remove();
+		widgetContainerMap.delete(uniqueId);
+	}
+}
+
+function addFileToAdminWidget(file) {
+    const filesList = document.getElementById('files-list');
+
+	const div = document.createElement('div');
+	div.innerHTML = `
+		<div class="file-info-container">
+			<div class="file-name-path">
+				<span>${file.fileName}\n
+				${file.relativePath}</span>
+			</div>
+			<div class="uploaded-time-container">
+				<span>${file.timestamp}</span>
+			</div>
+			<button class="delete-btn">Delete</button>
+		</div>
+	`;
+	div.classList.add('line-item');
+	filesList.appendChild(div);
+
+	const deleteBtn = div.querySelector('.delete-btn');
+
+	deleteBtn.addEventListener('click', () => {
+		console.log(`Deleting file: ${file.fileName}`);
+		socket.emit('delete-file', { fileName: file.fileName, relativePath: file.relativePath, timestamp: file.timestamp});
+	});
+
+	const uniqueId = generateUniqueId(file);
+	filesListMap.set(uniqueId, div);
+}
+
+function removeFileFromAdminWidget(file) {
+	const uniqueId = generateUniqueId(file);
+	const lineItem = filesListMap.get(uniqueId);
+	if (lineItem) {
+		lineItem.parentNode.removeChild(lineItem);
+		lineItem.remove();
+		filesListMap.delete(uniqueId);
+	}
+}
 
 function requestFilesData() {
     fetch('http://localhost:3000/files')
         .then(response => response.json())
         .then(data => {
             console.log('Files data:', data);
-            renderFiles(data.files); // Assuming the server responds with an object that has a 'files' property
 			for (let file of data.files) {
-				addLineToWidget(file);
+				addFileToWidget(file);
+			}
+			if (isAdmin()) {
+				for (let file of data.files) {
+					addFileToAdminWidget(file);
+				}
 			}
         })
         .catch(error => console.error('Error fetching files data:', error));
 }
 
+function socket_connect(socket) {
+    console.log("Attempting to connect to the server");
+	try {
+        socket.connect();
+    } catch (error) {
+		console.log("Failed to connect:", error)
+        console.error("Failed to connect:", error);
+		document.getElementById('login-error').innerText = 'Failed to connect to the server';
+    }
+}
+
 function initializeSocket() {
     if (token) {
-        // console.log("Token found, connecting with token:", token);
         socket.auth = { token };
-        socket.connect();
+        socket_connect(socket);
     } else {
-        // console.log("No token found, showing login");
         showLogin();
     }
 
@@ -95,7 +182,6 @@ function initializeSocket() {
 		document.getElementById('widget-container').innerHTML = '';
 		document.getElementById('logs-list').innerHTML = '';
 		document.getElementById('files-list').innerHTML = '';
-
 
 		showMain();
 		showAdmin();
@@ -110,73 +196,68 @@ function initializeSocket() {
 
 	socket.on('new-file', (data) => { // fileName relativePath timestamp
 		console.log('New file available:', data.fileName);
-		addLineToWidget(data);
+		addFileToWidget(data);
 		if (isAdmin()) {
-			renderFiles([{ fileName: data.fileName, relativePath: data.relativePath, timestamp: data.timestamp }]);
+			addFileToAdminWidget(data);
 		}
 		if (localStorage.getItem('autoupdate') === 'true') {
-			requestFile({ fileName: data.fileName, relativePath: data.relativePath, timestamp: data.timestamp });
+			requestFile(data);
 		}
 	});
 
 	const fileChunks = {};
 
 	socket.on('file-content-chunk', (data) => {
-		// if (data.fileName && localStorage.getItem('updatePath')) {
-			const { chunk, chunkNumber, totalChunks, fileName, relativePath, timestamp } = data;
+		if (!localStorage.getItem('updatePath')) return
+		const { chunk, chunkNumber, totalChunks, fileName, relativePath, timestamp } = data;
 
-			// Initialize the file's chunk array if it doesn't exist
-			if (!fileChunks[fileName]) {
-				fileChunks[fileName] = new Array(totalChunks).fill(null);
+		// Initialize the file's chunk array if it doesn't exist
+		if (!fileChunks[fileName]) {
+			fileChunks[fileName] = new Array(totalChunks).fill(null);
+		}
+
+		// Store the chunk in the corresponding position
+		fileChunks[fileName][chunkNumber] = chunk;
+
+		// Check if all chunks have been received
+		const allChunksReceived = fileChunks[fileName].every((chunk) => chunk !== null);
+
+		if (allChunksReceived) {
+			// Combine all chunks
+			const fileBuffer = Buffer.concat(fileChunks[fileName]);
+
+
+			const updatePath = localStorage.getItem('updatePath');
+			const filePath = path.join(updatePath, relativePath, fileName);
+			const uploadsDir = path.join(updatePath, relativePath);
+			if (!fs.existsSync(uploadsDir)) {
+				fs.mkdirSync(uploadsDir, { recursive: true });
 			}
 
-			// Store the chunk in the corresponding position
-			fileChunks[fileName][chunkNumber] = chunk;
-
-			// Check if all chunks have been received
-			const allChunksReceived = fileChunks[fileName].every((chunk) => chunk !== null);
-
-			if (allChunksReceived) {
-				// Combine all chunks
-				const fileBuffer = Buffer.concat(fileChunks[fileName]);
-
-
-				const updatePath = localStorage.getItem('updatePath');
-				const filePath = path.join(updatePath, relativePath, fileName);
-				const uploadsDir = path.join(updatePath, relativePath);
-				if (!fs.existsSync(uploadsDir)) {
-					fs.mkdirSync(uploadsDir, { recursive: true });
-				}
-
-				// decompress the file if it is a zip file
-				console.log(fileName, fileName.endsWith('.zip'));
-				if (fileName.endsWith('.zip')) {
-					fs.writeFileSync(filePath, fileBuffer);
-					fs.createReadStream(filePath)
-						.pipe(unzipper.Extract({ path: uploadsDir }))
-						.on('close', () => {
-							console.log('File saved:', uploadsDir);
-							fs.unlinkSync(filePath);
-						})
-						.on('error', (err) => {
-							console.error('Extraction error:', err);
-						});
-				} else {
-					fs.writeFileSync(filePath, fileBuffer);
-					console.log('File saved:', filePath);
-				}
-
-
-
-				// Clean up the chunks array for this file
-				delete fileChunks[fileName];
-
-				const logsList = document.getElementById('logs-list');
-				const logItem = document.createElement('li');
-				logItem.innerText = `Updated file: ${data.fileName} at ${new Date().toLocaleString()}`;
-				logsList.appendChild(logItem);
+			// decompress the file if it is a zip file
+			if (fileName.endsWith('.zip')) {
+				fs.writeFileSync(filePath, fileBuffer);
+				fs.createReadStream(filePath)
+					.pipe(unzipper.Extract({ path: uploadsDir }))
+					.on('close', () => {
+						console.log('File saved:', uploadsDir);
+						fs.unlinkSync(filePath);
+					})
+					.on('error', (err) => {
+						console.error('Extraction error:', err);
+					});
+			} else {
+				fs.writeFileSync(filePath, fileBuffer);
+				console.log('File saved:', filePath);
 			}
-		// }
+
+			delete fileChunks[fileName];
+
+			const logsList = document.getElementById('logs-list');
+			const logItem = document.createElement('li');
+			logItem.innerText = `Updated file: ${data.fileName} at ${new Date().toLocaleString()}`;
+			logsList.appendChild(logItem);
+		}
 	});
 
 	socket.on('file-not-found', (data) => {
@@ -194,37 +275,50 @@ function initializeSocket() {
 		logItem.innerText = `Deleted file: ${data.fileName} at ${new Date().toLocaleString()}`;
 		logsList.appendChild(logItem);
 
-		// Remove the file from the widget container and files list
-		const widgetContainer = document.getElementById('widget-container');
-		const filesList = document.getElementById('files-list');
-		for (let child of widgetContainer.children) {
-			if (child.innerText.includes(data.fileName)) {
-				widgetContainer.removeChild(child);
-				break;
-			}
+		removeFileFromWidget(data);
+		if (isAdmin()) {
+			removeFileFromAdminWidget(data);
 		}
-		for (let child of filesList.children) {
-			if (child.innerText.includes(data.fileName)) {
-				filesList.removeChild(child);
-				break;
-			}
-		}
-
 	})
-
-	if (isAdmin()) {
-		document.getElementById('toggle-panel-btn').style.display = 'block';
-		document.getElementById('toggle-panel-btn').addEventListener('click', () => {
-			if (document.getElementById('admin-container').style.display === 'none') {
-				showAdmin();
-			} else {
-				showMain();
+	// hide admin tab if not admin
+	document.querySelectorAll('.tab-button').forEach(button => {
+		if (button.dataset.tabName === 'admin') {
+			if (!isAdmin()) {
+				button.style.display = 'none';
 			}
-		});
-	}
+		}
+	});
 }
 
 initializeSocket();
+
+document.querySelectorAll('.tab-button').forEach(button => {
+    button.addEventListener('click', function() {
+		const tabName = this.dataset.tabName
+		if (tabName === 'admin' && !isAdmin()) {
+			return;
+		}
+
+		// Remove 'active' class from all buttons
+        document.querySelectorAll('.tab-button').forEach(btn => btn.classList.remove('active'));
+        this.classList.add('active');
+		console.log("Switching to tab:", tabName);
+		document.querySelectorAll('.tab-content').forEach(tab => {
+			if (tab.getAttribute('data-tab') === tabName) {
+				tab.style.display = 'block';
+			}
+			else {
+				tab.style.display = 'none';
+			}
+		});
+
+        if (tabName === 'admin') {
+            showAdmin();
+        } else if (tabName === 'main') {
+            showMain();
+        }
+    });
+});
 
 document.getElementById('login-btn').addEventListener('click', () => {
     const username = document.getElementById('username').value;
@@ -238,7 +332,7 @@ ipcRenderer.on('login-success', (event, data) => {
     token = data.token;
     localStorage.setItem('token', token);
     socket.auth = { token };
-    socket.connect();
+    socket_connect(socket);
     showMain();
 });
 
@@ -306,37 +400,6 @@ ipcRenderer.on('selected-directory', (event, folderPath) => {
 			}
 		}
 	}
-    // if (folderPath) {;
-	// 	console.log("Selected folder path:", folderPath);
-	// 	const folderName = path.basename(folderPath);
-    //     const outputPath = path.join(folderPath, '..', `${folderName}.zip`);
-	// 	console.log("Output path:", outputPath)
-    //     const output = fs.createWriteStream(outputPath);
-    //     const archive = archiver('zip', {
-    //         zlib: { level: 9 }
-    //     });
-
-    //     output.on('close', function() {
-	// 		console.log((archive.pointer() / 1024 / 1024).toFixed(2) + ' MB');
-	// 		console.log('Archiver has been finalized and the output file descriptor has closed.');
-	// 		// Send the file to the server here
-	// 		const fileBuffer = fs.readFileSync(outputPath);
-	// 		const stats = fs.statSync(outputPath); // Get file stats
-	// 		const fileTimestamp = stats.mtime.toLocaleString(); // Use modification time as timestamp
-	// 		send_data_in_chunks(socket, { file: fileBuffer, fileName: `${folderName}.zip`, relativePath: localStorage.getItem('relativePath'), timestamp: fileTimestamp});
-	// 		// socket.emit('upload-file', { file: fileBuffer, fileName: `${folderName}.zip`, relativePath: localStorage.getItem('relativePath'), timestamp: fileTimestamp});
-	// 		// delete the zip file after sending
-	// 		fs.unlinkSync(outputPath);
-	// 	});
-
-    //     archive.on('error', function(err) {
-    //         throw err;
-    //     });
-
-    //     archive.directory(folderPath, folderName);
-    //     archive.pipe(output);
-    //     archive.finalize();
-    // }
 });
 
 document.getElementById('minimize-btn').addEventListener('click', () => {
@@ -346,48 +409,6 @@ document.getElementById('minimize-btn').addEventListener('click', () => {
 document.getElementById('close-btn').addEventListener('click', () => {
     ipcRenderer.send('close-app');
 });
-
-
-
-function renderFiles(files) {
-    const filesList = document.getElementById('files-list');
-    // filesList.innerHTML = ''; // Clear existing list items
-
-    files.forEach(file => {
-		const div = document.createElement('div');
-		div.innerHTML = `
-			<div class="file-info-container">
-				<div class="file-name-path">
-					<span>${file.fileName}\n
-					${file.relativePath}</span>
-				</div>
-				<div class="uploaded-time-container">
-					<span>${file.timestamp}</span>
-				</div>
-				<button class="delete-btn">Delete</button>
-			</div>
-		`;
-		// <button class="push-btn">Push</button>
-		// Use 'line-item' class instead of 'file-item'
-		div.classList.add('line-item');
-		filesList.appendChild(div);
-
-		// Attach event listeners to buttons
-		// const pushBtn = div.querySelector('.push-btn');
-		const deleteBtn = div.querySelector('.delete-btn');
-
-		// pushBtn.addEventListener('click', () => {
-		// 	console.log(`Pushing file: ${file.fileName}`);
-		// });
-
-		deleteBtn.addEventListener('click', () => {
-			console.log(`Deleting file: ${file.fileName}`);
-			socket.emit('delete-file', { fileName: file.fileName, relativePath: file.relativePath, timestamp: file.timestamp});
-			filesList.removeChild(div);
-		});
-	});
-}
-
 
 function requestFile(data) {
 	console.log("Requesting file:", data.fileName);
@@ -485,3 +506,5 @@ function sendFile(filePath) {
     const fileTimestamp = stats.mtime.toLocaleString();
     send_data_in_chunks(socket, { file: fileBuffer, fileName: path.basename(filePath), relativePath: localStorage.getItem('relativePath'), timestamp: fileTimestamp});
 }
+
+

@@ -140,9 +140,8 @@ body {
 #logs-frame {
 	height: 150px;
 }
-#files-frame {
+#files-frame, #widget-container {
 	height: 300px;
-
 }
 
 .line-item {
@@ -314,4 +313,25 @@ li {
 #add-folder-btn, #add-files-btn {
     line-height: 15px; /* Centers text vertically */
     text-align: center; /* Centers text horizontally */
+}
+
+/* Squared Tab Buttons Style */
+.tab-button {
+    background-color: #f0f0f0; /* Light grey background */
+    border: 1px solid #dcdcdc; /* Slightly darker border */
+    border-radius: 0; /* Square corners */
+    padding: 10px 20px; /* Padding around text */
+    margin: 5px; /* Space between buttons */
+    cursor: pointer; /* Pointer cursor on hover */
+	-webkit-app-region: no-drag;
+}
+
+/* Active Tab Button Style */
+.tab-button.active {
+    background-color: #c0c0c0; /* Darker grey for active tab */
+}
+
+/* Container Style */
+#tab-buttons-container {
+    margin-bottom: 20px; /* Space below the tab buttons */
 }
