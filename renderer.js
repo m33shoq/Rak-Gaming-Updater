@@ -14,6 +14,29 @@ function showMain() {
     document.getElementById('main-container').style.display = 'block';
 }
 
+function addLineToWidget(text) {
+    const widgetContainer = document.getElementById('widget-container');
+    const lineItem = document.createElement('div');
+    lineItem.className = 'line-item';
+
+    const textNode = document.createElement('span');
+    textNode.innerText = text;
+
+    const button = document.createElement('button');
+    button.innerText = 'Update';
+    // Add event listener to button
+    button.addEventListener('click', () => {
+        console.log(`Button clicked for ${text}`);
+        // Implement button click functionality here
+    });
+
+    lineItem.appendChild(textNode);
+    lineItem.appendChild(button);
+
+    widgetContainer.appendChild(lineItem);
+}
+
+
 function initializeSocket() {
     if (token) {
         console.log("Token found, connecting with token:", token);
@@ -85,7 +108,7 @@ document.getElementById('push-update-btn').addEventListener('click', () => {
     const selectedPath = document.getElementById('selected-path').innerText.replace('Selected Path: ', '');
     console.log("Push update button clicked, selected path:", selectedPath);
     if (selectedPath && token) {
-        socket.emit('update', { destination: selectedPath, fileName: 'example.txt', source: 'source/path/example.txt', token });
+        socket.emit('update', { destination: selectedPath, fileName: 'hello world.txt', source: 'hello world.txt', token });
     } else {
         alert('Please select a path first or login.');
     }
@@ -105,29 +128,31 @@ document.getElementById('toggle-logs-btn').addEventListener('click', () => {
 // Fetch status and logs periodically
 setInterval(() => {
     console.log("Fetching status and logs");
-    fetch('http://localhost:3000/status').then(res => res.json()).then(data => {
-        const clientsList = document.getElementById('clients-list');
-        clientsList.innerHTML = '';
-        data.clients.forEach(client => {
-            const clientItem = document.createElement('li');
-            clientItem.innerText = `Client ${client}`;
-            clientsList.appendChild(clientItem);
-        });
-    }).catch(err => {
-        console.error('Failed to fetch status:', err);
-    });
+	const exampleText = `Line ${Math.floor(Math.random() * 100)}`;
+    addLineToWidget(exampleText);
+    // fetch('http://localhost:3000/status').then(res => res.json()).then(data => {
+    //     const clientsList = document.getElementById('clients-list');
+    //     clientsList.innerHTML = '';
+    //     data.clients.forEach(client => {
+    //         const clientItem = document.createElement('li');
+    //         clientItem.innerText = `Client ${client}`;
+    //         clientsList.appendChild(clientItem);
+    //     });
+    // }).catch(err => {
+    //     console.error('Failed to fetch status:', err);
+    // });
 
-    fetch('http://localhost:3000/logs').then(res => res.json()).then(data => {
-        const logsList = document.getElementById('logs-list');
-        logsList.innerHTML = '';
-        data.logs.forEach(log => {
-            const logItem = document.createElement('li');
-            logItem.innerText = log;
-            logsList.appendChild(logItem);
-        });
-    }).catch(err => {
-        console.error('Failed to fetch logs:', err);
-    });
+    // fetch('http://localhost:3000/logs').then(res => res.json()).then(data => {
+    //     const logsList = document.getElementById('logs-list');
+    //     logsList.innerHTML = '';
+    //     data.logs.forEach(log => {
+    //         const logItem = document.createElement('li');
+    //         logItem.innerText = log;
+    //         logsList.appendChild(logItem);
+    //     });
+    // }).catch(err => {
+    //     console.error('Failed to fetch logs:', err);
+    // });
 }, 5000);
 
 document.getElementById('minimize-btn').addEventListener('click', () => {
