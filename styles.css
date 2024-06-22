@@ -175,16 +175,14 @@ body {
     height: 100%; /* Adjust based on your needs, ensures the container takes full height */
 }
 
-.buttons-container {
+.delete-btn {
     justify-self: end; /* Keeps the buttons aligned to the right */
     grid-column: 3; /* Keeps the buttons in the third column */
     display: flex;
     flex-direction: column;
     gap: 10px;
-}
-
-.buttons-container button {
-    margin-left: 10px; /* Maintains spacing between buttons */
+    align-items: center; /* Centers the button text horizontally */
+    justify-content: center; /* Centers the button text vertically */
 }
 
 .line-item:hover {

@@ -63,34 +63,75 @@ io.on('connection', (socket) => {
         connectedClients = connectedClients.filter(id => id !== socket.id);
     });
 
+	const fileChunks = {};
 
-	socket.on('upload-file', (data) => { // fileName file relativePath
-		const uploadsDir = path.join(__dirname, 'uploads');
-		if (!fs.existsSync(uploadsDir)) {
-			fs.mkdirSync(uploadsDir, { recursive: true });
+	socket.on('upload-file-chunk', (data) => {
+		const { chunk, chunkNumber, totalChunks, fileName, relativePath, timestamp } = data;
+
+		// Initialize the file's chunk array if it doesn't exist
+		if (!fileChunks[fileName]) {
+			fileChunks[fileName] = new Array(totalChunks).fill(null);
 		}
 
-		const filePath = path.join(uploadsDir, data.fileName);
-		fs.writeFileSync(filePath, data.file);
-		console.log('File saved:', filePath);
-		const timestamp = data.timestamp
-		const fileName = data.fileName;
-		const relativePath = data.relativePath;
+		// Store the chunk in the corresponding position
+		fileChunks[fileName][chunkNumber] = chunk;
 
+		// Check if all chunks have been received
+		const allChunksReceived = fileChunks[fileName].every((chunk) => chunk !== null);
 
-		// Notify other clients about the new file
-		uploadedFiles.push({ fileName: fileName, relativePath: relativePath, timestamp: timestamp});
-		socket.broadcast.emit('new-file', { fileName: fileName, relativePath: relativePath, timestamp: timestamp});
-		socket.emit('new-file', { fileName: fileName, relativePath: relativePath, timestamp: timestamp});
+		if (allChunksReceived) {
+			// Combine all chunks
+			const fileBuffer = Buffer.concat(fileChunks[fileName]);
+
+			// Save the combined file
+			const uploadsDir = path.join(__dirname, 'uploads');
+			if (!fs.existsSync(uploadsDir)) {
+				fs.mkdirSync(uploadsDir, { recursive: true });
+			}
+
+			const filePath = path.join(uploadsDir, fileName);
+			fs.writeFileSync(filePath, fileBuffer);
+			console.log('File saved:', filePath);
+
+			// Notify other clients about the new file
+			uploadedFiles.push({ fileName, relativePath, timestamp });
+			socket.broadcast.emit('new-file', { fileName, relativePath, timestamp });
+			socket.emit('new-file', { fileName, relativePath, timestamp });
+
+			// Clean up the chunks array for this file
+			delete fileChunks[fileName];
+		}
 	});
+
+
+
+	// socket.on('upload-file', (data) => { // fileName file relativePath
+	// 	const uploadsDir = path.join(__dirname, 'uploads');
+	// 	if (!fs.existsSync(uploadsDir)) {
+	// 		fs.mkdirSync(uploadsDir, { recursive: true });
+	// 	}
+
+	// 	const filePath = path.join(uploadsDir, data.fileName);
+	// 	fs.writeFileSync(filePath, data.file);
+	// 	console.log('File saved:', filePath);
+	// 	const timestamp = data.timestamp
+	// 	const fileName = data.fileName;
+	// 	const relativePath = data.relativePath;
+
+
+	// 	// Notify other clients about the new file
+	// 	uploadedFiles.push({ fileName: fileName, relativePath: relativePath, timestamp: timestamp});
+	// 	socket.broadcast.emit('new-file', { fileName: fileName, relativePath: relativePath, timestamp: timestamp});
+	// 	socket.emit('new-file', { fileName: fileName, relativePath: relativePath, timestamp: timestamp});
+	// });
 
 	socket.on('request-file', (data) => {
 		let fileName = data.fileName;
 		console.log('File requested:', fileName);
 		const filePath = path.join(__dirname, 'uploads', fileName);
 		if (fs.existsSync(filePath)) {
-			const file = fs.readFileSync(filePath, 'utf-8');
-			socket.emit('file-content', { fileName, file });
+			const file = fs.readFileSync(filePath);
+			send_data_in_chunks(socket, { fileName: fileName, file: file, timestamp: data.timestamp, relativePath: data.relativePath});
 		} else {
 			socket.emit('file-not-found', { fileName });
 		}
@@ -99,12 +140,13 @@ io.on('connection', (socket) => {
 		// remove from uploadedFiles
 		uploadedFiles = uploadedFiles.filter(file => !(file.fileName === data.fileName && file.relativePath === data.relativePath && file.timestamp === data.timestamp));
 
-		let fileName = data.file_name;
+		let fileName = data.fileName;
 		console.log('File deleted:', fileName);
 		const filePath = path.join(__dirname, 'uploads', fileName);
 		if (fs.existsSync(filePath)) {
 			fs.unlinkSync(filePath);
-			socket.emit('file-deleted', { fileName });
+			socket.emit('file-deleted', data);
+			socket.broadcast.emit('file-deleted', data);
 		}
 	})
 });
@@ -112,3 +154,28 @@ io.on('connection', (socket) => {
 http.listen(3000, () => {
     console.log('Server listening on port 3000');
 });
+
+
+function send_data_in_chunks(socket, data) {
+	const CHUNK_SIZE = 256 * 1024; // 256KB
+	const fileBuffer = data.file;
+	const totalChunks = Math.ceil(fileBuffer.length / CHUNK_SIZE);
+
+	const fileName = data.fileName;
+	const relativePath = data.relativePath;
+	const timestamp = data.timestamp;
+
+	for (let i = 0; i < totalChunks; i++) {
+		let start = i * CHUNK_SIZE;
+		let end = start + CHUNK_SIZE;
+		let chunk = fileBuffer.slice(start, end);
+		socket.emit('file-content-chunk', {
+			chunk: chunk,
+			chunkNumber: i,
+			totalChunks: totalChunks,
+			fileName: fileName,
+			relativePath: relativePath,
+			timestamp: timestamp,
+		});
+	}
+}

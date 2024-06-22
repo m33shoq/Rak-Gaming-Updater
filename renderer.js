@@ -2,7 +2,9 @@ const { ipcRenderer } = require('electron');
 const socket = require('socket.io-client')('http://localhost:3000');
 const fs = require('fs');
 const archiver = require('archiver');
+const unzipper = require('unzipper');
 const path = require('path');
+
 let token = localStorage.getItem('token');
 
 // Example function to check if the user is an admin
@@ -89,13 +91,20 @@ function initializeSocket() {
 
     socket.on('connect', () => {
         console.log("Socket connected");
-        showMain();
+        // wipe the widget container and logs list and files frame
+		document.getElementById('widget-container').innerHTML = '';
+		document.getElementById('logs-list').innerHTML = '';
+		document.getElementById('files-list').innerHTML = '';
+
+
+		showMain();
 		showAdmin();
+
 		requestFilesData();
     });
 
-    socket.on('disconnect', () => {
-        console.log("Socket disconnected");
+    socket.on('disconnect', (reason) => {
+		console.log(`Socket Disconnected: ${reason}`);
         showLogin();
     });
 
@@ -110,12 +119,98 @@ function initializeSocket() {
 		}
 	});
 
-	socket.on('file-content', (data) => {
-		if (data.file && data.fileName && localStorage.getItem('updatePath')) {
-			console.log('Received file:', data.fileName);
-			// const filePath = path.join(localStorage.getItem('updatePath'), data.fileName);
-		}
+	const fileChunks = {};
+
+	socket.on('file-content-chunk', (data) => {
+		// if (data.fileName && localStorage.getItem('updatePath')) {
+			const { chunk, chunkNumber, totalChunks, fileName, relativePath, timestamp } = data;
+
+			// Initialize the file's chunk array if it doesn't exist
+			if (!fileChunks[fileName]) {
+				fileChunks[fileName] = new Array(totalChunks).fill(null);
+			}
+
+			// Store the chunk in the corresponding position
+			fileChunks[fileName][chunkNumber] = chunk;
+
+			// Check if all chunks have been received
+			const allChunksReceived = fileChunks[fileName].every((chunk) => chunk !== null);
+
+			if (allChunksReceived) {
+				// Combine all chunks
+				const fileBuffer = Buffer.concat(fileChunks[fileName]);
+
+
+				const updatePath = localStorage.getItem('updatePath');
+				const filePath = path.join(updatePath, relativePath, fileName);
+				const uploadsDir = path.join(updatePath, relativePath, fileName.replace('.zip', ''));
+				if (!fs.existsSync(uploadsDir)) {
+					fs.mkdirSync(uploadsDir, { recursive: true });
+				}
+
+				// decompress the file if it is a zip file
+				console.log(fileName, fileName.endsWith('.zip'));
+				if (fileName.endsWith('.zip')) {
+					fs.writeFileSync(filePath, fileBuffer);
+					fs.createReadStream(filePath)
+						.pipe(unzipper.Extract({ path: uploadsDir }))
+						.on('close', () => {
+							console.log('File saved:', uploadsDir);
+							fs.unlinkSync(filePath);
+						})
+						.on('error', (err) => {
+							console.error('Extraction error:', err);
+						});
+				} else {
+					fs.writeFileSync(filePath, fileBuffer);
+					console.log('File saved:', filePath);
+				}
+
+
+
+				// Clean up the chunks array for this file
+				delete fileChunks[fileName];
+
+				const logsList = document.getElementById('logs-list');
+				const logItem = document.createElement('li');
+				logItem.innerText = `Updated file: ${data.fileName} at ${new Date().toLocaleString()}`;
+				logsList.appendChild(logItem);
+			}
+		// }
 	});
+
+	socket.on('file-not-found', (data) => {
+		console.log('File not found:', data);
+		const logsList = document.getElementById('logs-list');
+		const logItem = document.createElement('li');
+		logItem.innerText = `File not found: ${data} at ${new Date().toLocaleString()}`;
+		logsList.appendChild(logItem);
+	});
+
+	socket.on('file-deleted', (data) => {
+		console.log('File deleted:', data.fileName);
+		const logsList = document.getElementById('logs-list');
+		const logItem = document.createElement('li');
+		logItem.innerText = `Deleted file: ${data.fileName} at ${new Date().toLocaleString()}`;
+		logsList.appendChild(logItem);
+
+		// Remove the file from the widget container and files list
+		const widgetContainer = document.getElementById('widget-container');
+		const filesList = document.getElementById('files-list');
+		for (let child of widgetContainer.children) {
+			if (child.innerText.includes(data.fileName)) {
+				widgetContainer.removeChild(child);
+				break;
+			}
+		}
+		for (let child of filesList.children) {
+			if (child.innerText.includes(data.fileName)) {
+				filesList.removeChild(child);
+				break;
+			}
+		}
+
+	})
 
 	if (isAdmin()) {
 		document.getElementById('toggle-panel-btn').style.display = 'block';
@@ -199,14 +294,17 @@ ipcRenderer.on('selected-directory', (event, folderPath) => {
         });
 
         output.on('close', function() {
-            console.log(archive.pointer() + ' total bytes');
-            console.log('Archiver has been finalized and the output file descriptor has closed.');
-            // Send the file to the server here
-            const fileBuffer = fs.readFileSync(outputPath);
-            socket.emit('upload-file', { file: fileBuffer, fileName: `${folderName}.zip`, relativePath: localStorage.getItem('relativePath'), timestamp: new Date().toLocaleString()});
+			console.log((archive.pointer() / 1024 / 1024).toFixed(2) + ' MB');
+			console.log('Archiver has been finalized and the output file descriptor has closed.');
+			// Send the file to the server here
+			const fileBuffer = fs.readFileSync(outputPath);
+			const stats = fs.statSync(outputPath); // Get file stats
+			const fileTimestamp = stats.mtime.toLocaleString(); // Use modification time as timestamp
+			send_data_in_chunks(socket, { file: fileBuffer, fileName: `${folderName}.zip`, relativePath: localStorage.getItem('relativePath'), timestamp: fileTimestamp});
+			// socket.emit('upload-file', { file: fileBuffer, fileName: `${folderName}.zip`, relativePath: localStorage.getItem('relativePath'), timestamp: fileTimestamp});
 			// delete the zip file after sending
 			fs.unlinkSync(outputPath);
-        });
+		});
 
         archive.on('error', function(err) {
             throw err;
@@ -230,7 +328,7 @@ document.getElementById('close-btn').addEventListener('click', () => {
 
 function renderFiles(files) {
     const filesList = document.getElementById('files-list');
-    filesList.innerHTML = ''; // Clear existing list items
+    // filesList.innerHTML = ''; // Clear existing list items
 
     files.forEach(file => {
 		const div = document.createElement('div');
@@ -241,25 +339,23 @@ function renderFiles(files) {
 					${file.relativePath}</span>
 				</div>
 				<div class="uploaded-time-container">
-					<span>${file.uploadedTime}</span>
+					<span>${file.timestamp}</span>
 				</div>
-				<div class="buttons-container">
-					<button class="push-btn">Push</button>
-					<button class="delete-btn">Delete</button>
-				</div>
+				<button class="delete-btn">Delete</button>
 			</div>
 		`;
+		// <button class="push-btn">Push</button>
 		// Use 'line-item' class instead of 'file-item'
 		div.classList.add('line-item');
 		filesList.appendChild(div);
 
 		// Attach event listeners to buttons
-		const pushBtn = div.querySelector('.push-btn');
+		// const pushBtn = div.querySelector('.push-btn');
 		const deleteBtn = div.querySelector('.delete-btn');
 
-		pushBtn.addEventListener('click', () => {
-			console.log(`Pushing file: ${file.fileName}`);
-		});
+		// pushBtn.addEventListener('click', () => {
+		// 	console.log(`Pushing file: ${file.fileName}`);
+		// });
 
 		deleteBtn.addEventListener('click', () => {
 			console.log(`Deleting file: ${file.fileName}`);
@@ -290,3 +386,28 @@ ipcRenderer.on('relative-path-selected', (event, path) => {
 		localStorage.removeItem('relativePath');
 	}
 });
+
+
+function send_data_in_chunks(socket, data) {
+	const CHUNK_SIZE = 256 * 1024; // 256KB
+	const fileBuffer = data.file;
+	const totalChunks = Math.ceil(fileBuffer.length / CHUNK_SIZE);
+
+	const fileName = data.fileName;
+	const relativePath = data.relativePath;
+	const timestamp = data.timestamp;
+
+	for (let i = 0; i < totalChunks; i++) {
+		let start = i * CHUNK_SIZE;
+		let end = start + CHUNK_SIZE;
+		let chunk = fileBuffer.slice(start, end);
+		socket.emit('upload-file-chunk', {
+			chunk: chunk,
+			chunkNumber: i,
+			totalChunks: totalChunks,
+			fileName: fileName,
+			relativePath: relativePath,
+			timestamp: timestamp,
+		});
+	}
+}

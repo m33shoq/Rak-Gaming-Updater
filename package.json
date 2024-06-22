@@ -36,7 +36,8 @@
 		"jsonwebtoken": "^9.0.2",
 		"path": "^0.12.7",
 		"socket.io": "^4.7.5",
-		"socket.io-client": "^4.7.5"
+		"socket.io-client": "^4.7.5",
+		"unzipper": "^0.12.1"
 	},
 	"devDependencies": {
 		"electron": "^31.0.2",
