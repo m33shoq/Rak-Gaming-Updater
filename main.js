@@ -9,7 +9,6 @@ let isDev;
 
 let mainWindow;
 let tray;
-let updatePath = '';
 let token = '';
 
 function createWindow() {
@@ -30,6 +29,7 @@ function createWindow() {
 
     // Set the minimum size of the window
     mainWindow.setMinimumSize(800, 600);
+    mainWindow.setMenu(null);
 
     const url = isDev
         ? 'http://localhost:3000'
@@ -40,11 +40,6 @@ function createWindow() {
         console.error('Failed to load URL:', err);
     });
 
-    // Hide the default menu
-    mainWindow.setMenu(null);
-
-    // Open Developer Tools for debugging
-    // Comment out the next line to disable auto opening of DevTools
     // mainWindow.webContents.openDevTools();
 
     mainWindow.on('closed', () => (mainWindow = null));
@@ -57,7 +52,7 @@ app.on('ready', () => {
     tray = new Tray(path.join(__dirname, 'trayIcon.png'));
     const contextMenu = Menu.buildFromTemplate([
         { label: 'Show App', click: () => mainWindow.show() },
-        { label: 'Quit', click: () => app.quit() },
+        { label: 'Quit', click: () => { app.isQuiting = true; app.quit(); }},
     ]);
     tray.setToolTip('File Update App');
     tray.setContextMenu(contextMenu);

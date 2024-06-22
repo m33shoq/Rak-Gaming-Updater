@@ -39,11 +39,11 @@ function addLineToWidget(text) {
 
 function initializeSocket() {
     if (token) {
-        console.log("Token found, connecting with token:", token);
+        // console.log("Token found, connecting with token:", token);
         socket.auth = { token };
         socket.connect();
     } else {
-        console.log("No token found, showing login");
+        // console.log("No token found, showing login");
         showLogin();
     }
 
@@ -95,35 +95,51 @@ ipcRenderer.on('login-failed', (event, error) => {
 });
 
 document.getElementById('select-path-btn').addEventListener('click', () => {
-    console.log("Select update path button clicked");
+    console.log("Select WoW path button clicked");
     ipcRenderer.send('select-update-path');
 });
 
+console.log(localStorage.getItem('updatePath'));
+document.getElementById('selected-path').innerText = `Wow Path: ${localStorage.getItem('updatePath') || 'None'}`;
+
 ipcRenderer.on('update-path-selected', (event, path) => {
-    console.log("Update path selected:", path);
-    document.getElementById('selected-path').innerText = `Selected Path: ${path}`;
+    console.log("WoW path selected:", path);
+    document.getElementById('selected-path').innerText = `WoW Path: ${path}`;
+	localStorage.setItem('updatePath', path);
+	console.log(localStorage.getItem('updatePath'));
 });
 
-document.getElementById('push-update-btn').addEventListener('click', () => {
-    const selectedPath = document.getElementById('selected-path').innerText.replace('Selected Path: ', '');
-    console.log("Push update button clicked, selected path:", selectedPath);
-    if (selectedPath && token) {
-        socket.emit('update', { destination: selectedPath, fileName: 'hello world.txt', source: 'hello world.txt', token });
-    } else {
-        alert('Please select a path first or login.');
-    }
+const autoUpdateCheckbox = document.getElementById('auto-update-checkbox');
+
+// Set the checkbox state based on localStorage value on page load
+autoUpdateCheckbox.checked = localStorage.getItem('autoupdate') === 'true';
+
+// Add event listener for checkbox state change
+autoUpdateCheckbox.addEventListener('change', function() {
+	// Store the checkbox state in localStorage
+	localStorage.setItem('autoupdate', autoUpdateCheckbox.checked);
 });
+
+// document.getElementById('push-update-btn').addEventListener('click', () => {
+//     const selectedPath = document.getElementById('selected-path').innerText.replace('Selected Path: ', '');
+//     console.log("Push update button clicked, selected path:", selectedPath);
+//     if (selectedPath && token) {
+//         socket.emit('update', { destination: selectedPath, fileName: 'hello world.txt', source: 'hello world.txt', token });
+//     } else {
+//         alert('Please select a path first or login.');
+//     }
+// });
 
 // Toggle visibility of clients status and logs
-document.getElementById('toggle-clients-btn').addEventListener('click', () => {
-    const clientsStatus = document.getElementById('clients-status');
-    clientsStatus.style.display = clientsStatus.style.display === 'none' ? 'block' : 'none';
-});
+// document.getElementById('toggle-clients-btn').addEventListener('click', () => {
+//     const clientsStatus = document.getElementById('clients-status');
+//     clientsStatus.style.display = clientsStatus.style.display === 'none' ? 'block' : 'none';
+// });
 
-document.getElementById('toggle-logs-btn').addEventListener('click', () => {
-    const logsFrame = document.getElementById('logs-frame');
-    logsFrame.style.display = logsFrame.style.display === 'none' ? 'block' : 'none';
-});
+// document.getElementById('toggle-logs-btn').addEventListener('click', () => {
+//     const logsFrame = document.getElementById('logs-frame');
+//     logsFrame.style.display = logsFrame.style.display === 'none' ? 'block' : 'none';
+// });
 
 // Fetch status and logs periodically
 setInterval(() => {
