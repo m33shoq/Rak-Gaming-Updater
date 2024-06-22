@@ -12,6 +12,8 @@
 			<img src="trayicon.png" alt="Tray Icon" style="vertical-align: middle;">
 			<h1>Rak Gaming Updater</h1>
 		</div>
+		<!-- Toggle Button for Main and Admin Panels -->
+		<button id="toggle-panel-btn" class="rounded-button" style="display: none;">Switch to Admin</button>
 		<div id="button-container">
 			<button id="minimize-btn">―</button>
 			<button id="close-btn">✖</button>
@@ -41,19 +43,30 @@
 		<div id="logs-frame" class="scroll-frame">
 			<ul id="logs-list"></ul>
 		</div>
-        <!-- <div id="status" class="status-header">
+
+
+
+
+    </div>
+	<div id="admin-container" style="display:none;">
+		<!-- <h1>Admin Panel</h1> -->
+		<!-- <button id="push-update-btn" class="rounded-button">Push Update</button> -->
+		<div id="files" class="files-header">
+			<h2>Files</h2>
+			<button id="add-files-btn" class="rounded-button toggle-button">Add Files</button>
+		</div>
+		<div id="files-frame" class="scroll-frame">
+			<ul id="files-list"></ul>
+		</div>
+
+		 <div id="status" class="status-header">
 			<h2>Clients Status</h2>
 			<button id="toggle-clients-btn" class="rounded-button toggle-button">Toggle Clients Status</button>
 		</div>
 		<div id="clients-status" class="scroll-frame">
 			<ul id="clients-list"></ul>
-		</div> -->
-
-
-
-        <!-- <button id="push-update-btn" class="rounded-button">Push Update</button> -->
-
-    </div>
+		</div>
+	</div>
     <script src="renderer.js"></script>
 </body>
 </html>

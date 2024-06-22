@@ -88,7 +88,7 @@ body {
 }
 
 /* Login and Main Container */
-#login-container, #main-container {
+#login-container, #main-container, #admin-container {
     background-color: #242424; /* Dark shade */
     padding: 30px;
 	padding-top: 10px;
@@ -140,6 +140,10 @@ body {
 #logs-frame {
 	height: 150px;
 }
+#files-frame {
+	height: 300px;
+
+}
 
 .line-item {
     display: flex;
@@ -147,6 +151,42 @@ body {
     align-items: center;
     padding: 8px 8px 8px 8px;
 }
+.file-info-container {
+    display: grid;
+    grid-template-columns: 1.5fr auto auto; /* Defines a 3-column layout */
+    align-items: left; /* Aligns items vertically in the center */
+    gap: 10px; /* Adjust the gap between grid items */
+	width: 100%;
+	vertical-align: middle;
+	justify-content: space-between;
+}
+
+.file-name-path {
+	white-space: pre-line;
+    justify-self: start; /* Ensures file name and path align to the left */
+	line-height: 0.7em;
+	height: 3em;
+	place-items: center;
+}
+
+.uploaded-time-container {
+    display: grid; /* Enables grid layout */
+    place-items: center; /* Centers items both horizontally and vertically */
+    height: 100%; /* Adjust based on your needs, ensures the container takes full height */
+}
+
+.buttons-container {
+    justify-self: end; /* Keeps the buttons aligned to the right */
+    grid-column: 3; /* Keeps the buttons in the third column */
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.buttons-container button {
+    margin-left: 10px; /* Maintains spacing between buttons */
+}
+
 .line-item:hover {
    background-color: #333333;
 }
@@ -196,12 +236,12 @@ li {
 /* Smaller Toggle Buttons */
 .rounded-button.toggle-button {
     padding: 5px 10px; /* Smaller padding */
-    font-size: 0.8rem; /* Smaller font size */
+    /* font-size: 0.8rem; */
     margin-left: 10px; /* Space from the text */
 }
 
 /* Flex Container for Inline Alignment */
-.status-header, .logs-header {
+.status-header, .logs-header, .files-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
@@ -259,3 +299,12 @@ li {
 	/* color: #333; */
 	/* cursor: pointer; */
   }
+
+  #toggle-panel-btn {
+    -webkit-app-region: no-drag;
+    position: relative;
+    bottom: 5px; /* Keeps the button's upward position */
+    height: 30px; /* Adjust this value to decrease the button's height */
+    padding: 5px 10px; /* Adjust vertical padding to reduce space above and below the text */
+    font-size: 14px; /* Optional: Adjust font size for better fit in the smaller button */
+}

@@ -2,16 +2,40 @@ const { ipcRenderer } = require('electron');
 const socket = require('socket.io-client')('http://localhost:3000');
 let token = localStorage.getItem('token');
 
+// Example function to check if the user is an admin
+function isAdmin() {
+    // Implement your logic to determine if the user is an admin
+    // This could involve checking a user object, a token, etc.
+    return true; // Placeholder return value
+}
+
+// Function to toggle the admin tab visibility
+function showAdmin() {
+    if (isAdmin()) {
+		document.getElementById('admin-container').style.display = 'block';
+		document.getElementById('main-container').style.display = 'none';
+		document.getElementById('login-container').style.display = 'none';
+		document.getElementById('toggle-panel-btn').textContent = 'Main Panel';
+	} else {
+		showMain()
+    }
+}
+
+// Call the function to ensure the admin tab is correctly shown/hidden on page load
+
 function showLogin() {
     console.log("Displaying login screen");
     document.getElementById('login-container').style.display = 'block';
     document.getElementById('main-container').style.display = 'none';
+	document.getElementById('admin-container').style.display = 'none';
 }
 
 function showMain() {
     console.log("Displaying main interface");
     document.getElementById('login-container').style.display = 'none';
     document.getElementById('main-container').style.display = 'block';
+	document.getElementById('admin-container').style.display = 'none';
+	document.getElementById('toggle-panel-btn').textContent = 'Admin Panel';
 }
 
 function addLineToWidget(text) {
@@ -50,6 +74,7 @@ function initializeSocket() {
     socket.on('connect', () => {
         console.log("Socket connected");
         showMain();
+		showAdmin();
     });
 
     socket.on('disconnect', () => {
@@ -69,6 +94,26 @@ function initializeSocket() {
         console.log("Update failed:", data.error);
         alert(`Update failed: ${data.error}`);
     });
+
+	if (isAdmin()) {
+		document.getElementById('toggle-panel-btn').style.display = 'block';
+		document.getElementById('toggle-panel-btn').addEventListener('click', () => {
+			if (document.getElementById('admin-container').style.display === 'none') {
+				showAdmin();
+			} else {
+				showMain();
+			}
+		});
+
+		const filesData = [
+			{ fileName: "Report.pdf", relativePath: "/reports/2023/", id: "1", uploadedTime: "2023" },
+			{ fileName: "Buet.xlsx", relativePath: "/budgets/2023/", id: "2",  uploadedTime: "04-02 11:30" },
+			{ fileName: "Budget2.xlsx", relativePath: "/budgets/2023/", id: "2",  uploadedTime: "04-02 11:30" },
+			{ fileName: "Budget3.xlsx", relativePath: "/budgets/2023/", id: "2", uploadedTime: "04-02 11:30" },
+			// Add more file objects as needed
+		];
+		renderFiles(filesData);
+	}
 }
 
 initializeSocket();
@@ -181,3 +226,47 @@ document.getElementById('minimize-btn').addEventListener('click', () => {
 document.getElementById('close-btn').addEventListener('click', () => {
     ipcRenderer.send('close-app');
 });
+
+
+
+function renderFiles(files) {
+    const filesList = document.getElementById('files-list');
+    filesList.innerHTML = ''; // Clear existing list items
+
+    files.forEach(file => {
+		const div = document.createElement('div');
+		div.innerHTML = `
+			<div class="file-info-container">
+				<div class="file-name-path">
+					<span>${file.fileName}\n
+					${file.relativePath}</span>
+				</div>
+				<div class="uploaded-time-container">
+					<span>${file.uploadedTime}</span>
+				</div>
+				<div class="buttons-container">
+					<button class="push-btn">Push</button>
+					<button class="delete-btn">Delete</button>
+				</div>
+			</div>
+		`;
+		// Use 'line-item' class instead of 'file-item'
+		div.classList.add('line-item');
+		filesList.appendChild(div);
+
+		// Attach event listeners to buttons
+		const pushBtn = div.querySelector('.push-btn');
+		const deleteBtn = div.querySelector('.delete-btn');
+
+		pushBtn.addEventListener('click', () => {
+			console.log(`Pushing file: ${file.fileName}`);
+			// Implement the push functionality here
+		});
+
+		deleteBtn.addEventListener('click', () => {
+			console.log(`Deleting file: ${file.fileName}`);
+			// Implement the delete functionality here
+			filesList.removeChild(div); // Remove the file item from the list
+		});
+	});
+}
