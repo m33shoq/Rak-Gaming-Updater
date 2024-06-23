@@ -369,4 +369,5 @@ li {
     cursor: not-allowed; /* Show a 'not-allowed' cursor */
     border: 1px solid #999; /* Darker border for more contrast */
     opacity: 0.5; /* Make the button look faded */
+	cursor: not-allowed;
 }

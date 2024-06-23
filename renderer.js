@@ -534,7 +534,7 @@ ipcRenderer.on('relative-path-selected', (event, path) => {
 
 
 async function send_data_in_chunks(socket, data) {
-    const CHUNK_SIZE = 128 * 1024; // Adjusted to match the server.js example
+    const CHUNK_SIZE = 32 * 1024; // 32KB
     const fileBuffer = data.file;
     const totalChunks = Math.ceil(fileBuffer.length / CHUNK_SIZE);
 

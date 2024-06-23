@@ -7,23 +7,35 @@ const path = require('path');
 const bodyParser = require('body-parser');
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
-const { hash } = require('crypto');
+const cors = require('cors');
 
-const secretKey = 'your-secret-key9';
+const PORT = process.env.PORT || 3000;
+const secretKey = 'your-secret-key10';
 let connectedClients = [];
 let updateLogs = [];
 
 let uploadedFiles = [];
+function generateUniqueId({fileName, relativePath, timestamp, hash}) {
+    return `${fileName}-${hash}`;
+}
 
 app.use(bodyParser.json());
 app.use(express.static(path.join(__dirname, 'public')));
+app.use(cors());
 
 const users = JSON.parse(fs.readFileSync('users.json'));
+
+app.get('/', (req, res) => {
+	res.send('Hello World!');
+  });
+
+app.get('/index.html', function(req, res) {
+	res.sendFile(path.join(__dirname, '/index.html'));
+});
 
 app.post('/login', (req, res) => {
     const { username, password } = req.body;
     const user = users.find(u => u.username === username);
-	console.log(user, password, user.password)
     if (user && bcrypt.compareSync(password, user.password)) {
         const token = jwt.sign({ username: user.username, role: user.role }, secretKey);
         res.json({ token });
@@ -92,13 +104,16 @@ io.on('connection', (socket) => {
 			// Combine all chunks
 			const fileBuffer = Buffer.concat(fileChunks[fileName]);
 
+			// Assuming generateUniqueID is a function that returns a unique string
+			const uniqueFileName = generateUniqueId({fileName, relativePath, timestamp, hash}) + path.extname(fileName); // Append original file extension
+
 			// Save the combined file
 			const uploadsDir = path.join(__dirname, 'uploads');
 			if (!fs.existsSync(uploadsDir)) {
 				fs.mkdirSync(uploadsDir, { recursive: true });
 			}
 
-			const filePath = path.join(uploadsDir, fileName);
+			const filePath = path.join(uploadsDir, uniqueFileName); // Use uniqueFileName instead of fileName
 			fs.writeFileSync(filePath, fileBuffer);
 			console.log('File saved:', filePath);
 
@@ -114,7 +129,8 @@ io.on('connection', (socket) => {
 
 	socket.on('request-file', ({fileName, timestamp, relativePath, hash}) => {
 		console.log('File requested:', fileName);
-		const filePath = path.join(__dirname, 'uploads', fileName);
+		const uniqueFileName = generateUniqueId({fileName, timestamp, relativePath, hash}) + path.extname(fileName);
+		const filePath = path.join(__dirname, 'uploads', uniqueFileName);
 		if (fs.existsSync(filePath)) {
 			const file = fs.readFileSync(filePath);
 			send_data_in_chunks(socket, { fileName, file, timestamp, relativePath, hash});
@@ -124,21 +140,27 @@ io.on('connection', (socket) => {
 	})
 	socket.on('delete-file', (data) => {
 		// remove from uploadedFiles
-		uploadedFiles = uploadedFiles.filter(file => !(file.fileName === data.fileName && file.relativePath === data.relativePath && file.timestamp === data.timestamp));
+		uploadedFiles = uploadedFiles.filter(file => !(file.fileName === data.fileName && file.relativePath === data.relativePath && file.timestamp === data.timestamp && file.hash === data.hash));
 
-		let fileName = data.fileName;
-		console.log('File deleted:', fileName);
-		const filePath = path.join(__dirname, 'uploads', fileName);
-		if (fs.existsSync(filePath)) {
-			fs.unlinkSync(filePath);
-			socket.emit('file-deleted', data);
-			socket.broadcast.emit('file-deleted', data);
+		const isDuplicateFilePresent = uploadedFiles.some(file => file.fileName === data.fileName && file.hash === data.hash);
+		if (!isDuplicateFilePresent) {
+			// Proceed with deletion only if no duplicate file is found
+			let fileName = generateUniqueId(data) + path.extname(data.fileName);
+			console.log('File deleted:', fileName);
+			const filePath = path.join(__dirname, 'uploads', fileName);
+			if (fs.existsSync(filePath)) {
+				fs.unlinkSync(filePath);
+			}
+		} else {
+			console.log('File not deleted due to a duplicate in uploadedFiles:', data.fileName);
 		}
+		socket.emit('file-deleted', data);
+		socket.broadcast.emit('file-deleted', data);
 	})
 });
 
-http.listen(3000, () => {
-    console.log('Server listening on port 3000');
+http.listen(PORT, () => {
+    console.log('Server listening on port ' + PORT);
 });
 
 

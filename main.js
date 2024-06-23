@@ -2,15 +2,41 @@ const { app, BrowserWindow, ipcMain, dialog, Tray, Menu } = require('electron');
 const fs = require('fs');
 const path = require('path');
 const fetch = require('node-fetch');
+let Store;
+let store;
+
+(async () => {
+  const module = await import('electron-store');
+  Store = module.default;
+  store = new Store();
+})();
+const validator = require('validator');
+
+// Use dotenv or a similar package to manage environment variables
+require('dotenv').config();
 
 let isDev;
 (async () => {
     isDev = (await import('electron-is-dev')).default;
 })();
 
+console.log('Is Dev:', isDev);
+
 let mainWindow;
 let tray;
-let token = '';
+
+// Securely store the token
+function storeToken(token) {
+    store.set('authToken', token);
+}
+
+function getToken() {
+    return store.get('authToken', '');
+}
+
+function sanitizeInput(input) {
+    return validator.escape(input);
+}
 
 
 function validateWoWPath(inputPath) {
@@ -61,9 +87,10 @@ function createWindow() {
     mainWindow.setMinimumSize(1400, 600);
     mainWindow.setMenu(null);
 
-    const url = isDev
-        ? 'http://localhost:3000'
-        : `file://${path.join(__dirname, 'index.html')}`;
+    const url = 'https://rak-gaming-annoucer-bot-93b48b086bae.herokuapp.com/index.html'
+		//isDev
+        // ? 'http://localhost:3000'
+        // : `file://${path.join(__dirname, 'index.html')}`;
 
     console.log(`Loading URL: ${url}`);
     mainWindow.loadURL(url).catch(err => {
@@ -143,21 +170,32 @@ app.on('ready', () => {
 
     ipcMain.on('login', async (event, { username, password }) => {
         try {
-            const response = await fetch('http://localhost:3000/login', {
+			const loginUrl = process.env.LOGIN_URL || 'http://localhost:3000/login';
+			const sanitizedUsername = sanitizeInput(username); // Implement sanitizeInput to sanitize user inputs
+        	const sanitizedPassword = sanitizeInput(password);
+
+
+            const response = await fetch(loginUrl, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ username, password })
+                body: JSON.stringify({ username: sanitizedUsername, password: sanitizedPassword })
             });
+
+			if (!response.ok) {
+				throw new Error('Network response was not ok');
+			}
+
             const data = await response.json();
             if (data.token) {
-                token = data.token;
-                event.reply('login-success', { token });
+                storeToken(data.token);
+                event.reply('login-success', { token: data.token });
             } else {
                 event.reply('login-failed', { error: 'Invalid credentials' });
             }
         } catch (err) {
-            event.reply('login-failed', { error: 'Error logging in' });
-        }
+			console.error('Login error:', err);
+			event.reply('login-failed', { error: 'Error logging in' });
+		}
     });
 
 
