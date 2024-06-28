@@ -1,46 +1,62 @@
 {
 	"name": "rak-gaming-updater",
-	"version": "1.0.0",
-	"main": "main.js",
+	"description": "Rak Gaming Updater Application",
+	"version": "1.0.39",
+	"author": "m33shoq",
+	"main": "./src/main.js",
 	"scripts": {
 		"start": "electron .",
-		"build": "electron-builder"
+		"build": "electron-builder",
+		"publish": "electron-builder --publish always"
 	},
 	"build": {
-		"appId": "com.example.rak-gaming-updater",
+		"appId": "com.rak-gaming-updater",
 		"productName": "Rak Gaming Updater",
 		"directories": {
 			"output": "dist"
 		},
+		"publish": [
+			{
+				"provider": "github",
+				"owner": "m33shoq",
+				"repo": "RakGamingUpdater-Releases",
+				"releaseType": "release"
+			}
+		],
 		"files": [
-			"main.js",
-			"renderer.js",
-			"index.html",
+			"./src/preload.js",
+			"./src/main.js",
+			"./src/index.html",
+			"./src/styles.css",
+			"./src/renderer.js",
 			"package.json",
-			"node_modules"
+			"node_modules",
+			"./src/icon.png",
+			"./src/taskbaricon.png"
+		],
+		"extraResources": [
+			"node_modules/regedit/vbs/*"
 		],
 		"win": {
 			"target": "nsis",
-			"icon": "trayicon.png",
+			"icon": "./src/taskbaricon.png",
 			"signingHashAlgorithms": []
 		}
 	},
 	"dependencies": {
-		"@electron/remote": "^2.1.2",
-		"bcrypt": "^5.1.1",
+		"adm-zip": "^0.5.14",
 		"cors": "^2.8.5",
-		"electron-is-dev": "^3.0.1",
-		"electron-remote": "^1.3.0",
+		"crc": "^4.3.2",
+		"dotenv": "^16.4.5",
+		"electron-log": "^5.1.5",
 		"electron-store": "^10.0.0",
-		"express": "^4.19.2",
+		"electron-updater": "^6.2.1",
 		"fs": "^0.0.1-security",
-		"http": "^0.0.1-security",
-		"jsonwebtoken": "^9.0.2",
 		"jwt-decode": "^4.0.0",
+		"node-fetch": "^3.3.2",
 		"path": "^0.12.7",
-		"socket.io": "^4.7.5",
+		"regedit": "^5.1.3",
 		"socket.io-client": "^4.7.5",
-		"unzipper": "^0.12.1",
 		"validator": "^13.12.0"
 	},
 	"devDependencies": {

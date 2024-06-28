@@ -1,6 +1,5 @@
+node_modules/
+dist/
 .env
-node_modules/*
-dist/*
-users.json
-uploads/*
-# gen_pass.js
+changelog.txt
+src/server-stress-test.js

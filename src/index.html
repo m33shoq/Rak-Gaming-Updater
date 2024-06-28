@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<meta http-equiv="Content-Security-Policy" content="default-src 'self'">
+	<title>Rak Gaming Updater</title>
+	<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+	<div id="title-container">
+		<div class="header-container">
+			<img src="icon.png" alt="Tray Icon" id="headericon">
+			<h1>Rak Gaming Updater</h1>
+		</div>
+		<!-- Tab Buttons Container -->
+		<div id="tab-buttons-container">
+			<button id="main-tab-btn" class="tab-button" data-tab-name="main">Updater</button>
+			<button id="admin-tab-btn" class="tab-button" data-tab-name="admin">Pusher</button>
+			<button id="settings-tab-btn" class="tab-button" data-tab-name="settings">Settings</button>
+			<button id="status-tab-btn" class="tab-button" data-tab-name="status">Status</button>
+		</div>
+		<div id="button-container">
+			<button id="minimize-btn">―</button>
+			<button id="close-btn">✖</button>
+		</div>
+	</div>
+    <div id="login-container" class="tab-content">
+			<h1>Login</h1>
+			<input type="text" id="username" placeholder="Username" class="input-field">
+			<input type="password" id="password" placeholder="Password" class="input-field">
+			<button id="login-btn" class="rounded-button">Login</button>
+			<p id="login-error" class="error-text"></p>
+			<p id="disconnect-reason" class="error-text"></p>
+    </div>
+    <div id="main-container" class="tab-content">
+      <button id="select-path-btn" class="rounded-button">Select WoW Path</button>
+      <p id="selected-path"></p>
+      <div id="upater-frame-header">
+        <div class="checkbox-container">
+          <input type="checkbox" id="auto-update-checkbox" name="auto-update">
+          <label>Update Automatically</label>
+        </div>
+        <div id="updater-frame-header-buttons">
+          <button id="refresh-btn" class="rounded-button">Refresh</button>
+        </div>
+      </div>
+		  <div id="updater-frame" class="scroll-frame"></div>
+    </div>
+	<div id="admin-container" class="tab-content">
+		<div id="files" class="files-header">
+			<div id="relativePath" >
+				<button id="set-relative-path-btn" class="rounded-button">Set Relative Path</button>
+			<p id="relative-path"></p>
+			</div>
+			<div id="'files-header-buttons'">
+				<button id="add-folder-btn" class="rounded-button toggle-button">Add Folder</button>
+				<button id="add-files-btn" class="rounded-button toggle-button">Add File</button>
+			</div>
+		</div>
+		<div id="files-frame" class="scroll-frame">
+			<ul id="files-list"></ul>
+		</div>
+	</div>
+	<div id="settings-container" class="tab-content">
+		<p id="version">Version</p>
+		<div class="checkbox-container">
+			<input type="checkbox" id="start-with-windows-checkbox" name="auto-update">
+			<label>Start with Windows</label>
+		</div>
+		<div class="checkbox-container">
+			<input type="checkbox" id="start-minimized-checkbox" name="auto-update">
+			<label>Start minimized</label>
+		</div>
+			<!-- <div class="checkbox-container">
+				<input type="checkbox" id="auto-update-checkbox" name="auto-update">
+				<label>???????</label>
+			</div> -->
+		<div id="logs" class="logs-header">
+			<h2>Logs</h2>
+		</div>
+		<div id="logs-frame" class="scroll-frame">
+			<ul id="logs-list" class="scroll-frame-text"></ul>
+		</div>
+	</div>
+	<div id="status-container" class="tab-content">
+		<div id="status" class="status-header">
+			<h2>Clients Status</h2>
+			<!-- <button id="toggle-clients-btn" class="rounded-button toggle-button">Toggle Clients Status</button> -->
+		</div>
+		<div id="status-frame" class="scroll-frame">
+			<ul id="clients-list" class="scroll-frame-text"></ul>
+		</div>
+	</div>
+    <script src="renderer.js"></script>
+</body>
+</html>

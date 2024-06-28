@@ -1,0 +1,969 @@
+const { app, BrowserWindow, ipcMain, dialog, Tray, Menu, nativeImage, protocol, shell, Notification } = require('electron');
+const { autoUpdater } = require('electron-updater');
+const log = require('electron-log/main');
+require('dotenv').config();
+const URL = process.env.ELECTRON_USE_DEV_URL === '1' ? 'http://localhost:3000' : `https://rak-gaming-annoucer-bot-93b48b086bae.herokuapp.com`;
+log.info('URL:', URL);
+const socket = require('socket.io-client')(URL, { autoConnect: false });
+const AdmZip = require('adm-zip');
+const { jwtDecode }	 = require('jwt-decode')
+const fs = require('fs');
+const path = require('path');
+const validator = require('validator');
+const crc32 = require('crc').crc32;
+const { setExternalVBSLocation, promisified } = require('regedit');
+
+let fetch
+let store;
+
+(async () => {
+  const fetchModule = await import('node-fetch');
+  fetch = fetchModule.default;
+
+  const storeModule = await import('electron-store')
+  const Store = storeModule.default;
+  store = new Store({
+		defaults: {
+			authToken: null,
+			updatePath: null,
+			relativePath: null,
+			autoupdate: true,
+			startWithWindows: true,
+			startMinimized: true,
+		}
+	});
+
+	function updateStartWithWindows() {
+		if (store.get('startWithWindows')) {
+			app.setLoginItemSettings({
+				openAtLogin: true,
+				args: ['--hidden'],
+			});
+		} else {
+			app.setLoginItemSettings({
+				openAtLogin: false,
+			});
+		}
+	}
+	updateStartWithWindows();
+
+	ipcMain.on('set-start-with-windows', (event, value) => {
+		store.set('startWithWindows', value);
+		updateStartWithWindows();
+	});
+
+
+	startProcess()
+})();
+
+const preload = path.join(__dirname, 'preload.js')
+const taskBarIconPath = path.join(__dirname, 'taskbaricon.png')
+const notificationIconPath = path.join(__dirname, 'icon.png')
+const html = path.join(__dirname, 'index.html')
+
+const taskBarIcon = nativeImage.createFromPath(taskBarIconPath);
+const notificationIcon = nativeImage.createFromPath(notificationIconPath);
+
+protocol.registerSchemesAsPrivileged([
+  { scheme: "app", privileges: { secure: true, standard: true } },
+]);
+
+autoUpdater.autoDownload = true;
+autoUpdater.autoInstallOnAppQuit = true;
+autoUpdater.allowPrerelease = false;
+log.transports.file.level = 'info';
+autoUpdater.logger = log;
+
+log.initialize({ preload: true });
+log.info('App starting...');
+
+let mainWindow;
+let tray;
+
+function renderer_log(message) {
+	mainWindow?.webContents?.send('log', message);
+}
+
+let lastReceivedData = {
+	newFile: {},
+	downloadedFile: {},
+}; // Last received data
+let lastDataTimestamp = {
+	newFile: 0,
+	downloadedFile: 0,
+}; // Timestamp of the last received data
+const DATA_RECEIVE_THRESHOLD = 2000; // 2 seconds threshold
+
+function startProcess() {
+	if (!store || !app.isReady() || mainWindow) return;
+	createWindow();
+	autoUpdater.checkForUpdates().then((UpdateCheckResults) => {
+		log.info('Update check results:', UpdateCheckResults);
+	})
+}
+
+function createWindow() {
+	const startMinimized = process.argv.includes('--hidden') && store.get('startMinimized');
+	log.info('Creating window', { startMinimized });
+	mainWindow = new BrowserWindow({
+		width: 850,
+		height: 600,
+		icon: taskBarIcon,
+		maximizable: false,
+		minimizable: true,
+		resizable: false,
+		fullscreenable: false,
+		frame: false,
+		backgroundColor: "#00000000",
+    titleBarStyle: "hidden",
+		webPreferences: {
+			preload: preload,
+			nodeIntegration: false,
+			contextIsolation: true,
+			enableRemoteModule: false,
+			webSecurity: true,
+			allowRunningInsecureContent: false,
+      sandbox: true,
+		},
+		skipTaskbar: startMinimized,
+		show: !startMinimized,
+	});
+
+	mainWindow?.webContents.setWindowOpenHandler(({ url }) => {
+    if (url.startsWith("https:")) {
+      void shell.openExternal(url);
+    }
+    return { action: "deny" };
+  });
+
+	mainWindow?.once('ready-to-show', () => {
+		renderer_log(`Ready to show. Start args: ${process.argv.join(' ')}`)
+		log.info(`Ready to show. Start args: ${process.argv.join(' ')}`);
+
+		// mainWindow?.webContents.openDevTools({ mode: "detach" });
+	});
+
+	mainWindow?.setMenu(null);
+
+	log.info(`Loading File: ${html}`);
+	mainWindow?.loadFile(html)
+
+	mainWindow?.on('closed', () => (mainWindow = null));
+
+	tray = new Tray(taskBarIcon);
+	const contextMenu = Menu.buildFromTemplate([
+		{ label: 'Show', click: () => mainWindow?.show() },
+		{ label: 'Quit', click: () => { app.isQuiting = true; app.quit(); }},
+	]);
+	tray?.setToolTip('Rak Gaming Updater');
+	tray?.setContextMenu(contextMenu);
+	tray?.setIgnoreDoubleClickEvents(true);
+
+	tray?.on("right-click", () => tray?.popUpContextMenu(contextMenu));
+	tray?.on("click", () => {
+    if (mainWindow?.isVisible()) {
+      mainWindow?.hide();
+
+      if (process.platform === "darwin") {
+        app.dock.hide();
+      }
+    } else {
+      mainWindow?.show();
+
+      if (process.platform === "darwin") {
+        void app.dock.show();
+      }
+    }
+  });
+
+	mainWindow?.webContents.on("will-navigate", (event) => {
+    if (mainWindow?.webContents.getURL() !== winURL) {
+      event.preventDefault();
+    }
+  });
+
+	mainWindow?.on('show', () => {
+		mainWindow?.setSkipTaskbar(false);
+	});
+
+	mainWindow?.on('minimize', (event) => {
+		mainWindow?.setSkipTaskbar(true);
+		event.preventDefault();
+		mainWindow?.hide();
+	});
+
+	mainWindow?.on('close', (event) => {
+		if (!app.isQuiting) {
+			event.preventDefault();
+			mainWindow?.hide();
+		}
+		return false;
+	});
+}
+
+if (!app.requestSingleInstanceLock()) {
+	log.info('Second instance detected, quitting');
+	app.quit();
+} else {
+	app.on("second-instance", (event, argv) => {
+		log.info('Second instance started');
+		// Someone tried to run a second instance, focus our window instead
+		if (mainWindow) {
+			if (!mainWindow?.isVisible()) {
+				log.info('Second instance, forcing show of first window')
+				mainWindow?.show();
+			}
+			mainWindow?.focus();
+		}
+	});
+
+	app.whenReady().then(() => {
+		log.info('App is ready');
+		startProcess()
+	});
+}
+
+app.on('window-all-closed', () => {
+	if (process.platform !== 'darwin') {
+		app.quit();
+	}
+});
+
+app.on("activate", () => {
+  if (mainWindow === null) {
+    createWindow();
+
+    if (process.platform === "darwin") {
+      void app.dock.show();
+    }
+  }
+});
+
+// important for notifications on Windows
+app.setAppUserModelId("com.rak-gaming-updater");
+app.setAsDefaultProtocolClient("rak-gaming-updater");
+
+
+// Protocol handler for macOS
+app.on("open-url", (event, url) => {
+  event.preventDefault();
+});
+
+// Ctrl+Shift+I to open devTools, Ctrl+Shift+R to reload
+app.on("web-contents-created", (webContentsCreatedEvent, webContents) => {
+  webContents.on("before-input-event", (beforeInputEvent, input) => {
+    const { code, alt, control, shift, meta } = input;
+
+    // Shortcut: toggle devTools
+    if (shift && control && !alt && !meta && code === "KeyI") {
+      mainWindow?.webContents.openDevTools({ mode: "detach" });
+    }
+
+    // Shortcut: window reload
+    // if (shift && control && !alt && !meta && code === "KeyR") {
+    //   mainWindow.reload();
+    // }
+  });
+});
+
+// Auto-updater events
+// let installNagAlreadyShown;
+autoUpdater.on('update-available', (info) => {
+	renderer_log(`Update available Version: ${info.version} Release Date: ${info.releaseDate}`);
+
+	// if (!installNagAlreadyShown) {
+		new Notification({
+			title: 'Update available',
+			body: `Rak Gaming Updater ${info.version} is avalilable.\nDownloading...`,
+			icon: notificationIcon,
+		}).show();
+	// }
+	// installNagAlreadyShown = true;
+
+});
+
+autoUpdater.on('update-not-available', () => {
+	renderer_log('Application is up to date');
+});
+
+autoUpdater.on('error', (err) => {
+  renderer_log('Error in auto-updater. ' + err);
+});
+
+autoUpdater.on('download-progress', (progress) => {
+	// Convert bytes per second to megabytes per second and format to 2 decimal places
+	const speedInMbps = (progress.bytesPerSecond / (1024 * 1024)).toFixed(2);
+	// Convert transferred and total bytes to megabytes and format to 2 decimal places
+	const transferredInMB = (progress.transferred / (1024 * 1024)).toFixed(2);
+	const totalInMB = (progress.total / (1024 * 1024)).toFixed(2);
+	// Format the percent to 2 decimal places
+	const percentFormatted = progress.percent.toFixed(2);
+
+	renderer_log(`Download speed: ${speedInMbps} MB/s - Downloaded ${percentFormatted}% (${transferredInMB}/${totalInMB} MB)`);
+	mainWindow?.setProgressBar(progress.percent / 100);
+});
+
+
+autoUpdater.on('update-downloaded', () => {
+  log.info('Update downloaded; will install in 5 seconds');
+	renderer_log('Update downloaded; will install in 5 seconds')
+
+	mainWindow?.setProgressBar(-1);
+
+  setTimeout(() => { // Shenanigans to make sure the app closes properly
+		app.isQuiting = true;
+		if (mainWindow) {
+      mainWindow?.close();
+    }
+    autoUpdater.quitAndInstall(true, true);
+		setTimeout(() => {
+			app.quit();
+		}, 1000);
+  }, 5000);
+});
+
+function isEqual(data1, data2) {
+	return JSON.stringify(data1) === JSON.stringify(data2);
+}
+
+function sanitizeInput(input) {
+	let res = validator.escape(input);
+	res = res.trim()
+	return res;
+}
+
+setExternalVBSLocation("resources/node_modules/regedit/vbs"); // to allow packaged app to access registry
+async function wowDefaultPath() {
+  if (process.platform === "win32") {
+    // log.info('Checking default WoW path on Windows');
+    const key = "HKLM\\SOFTWARE\\WOW6432Node\\Blizzard Entertainment\\World of Warcraft";
+
+    try {
+      const results = await promisified.list([key]);
+      const value = results[key].values.InstallPath.value;
+      // log.info('Registry WoW Path:', value, typeof value);
+      if (typeof value === "string") {
+        let path = validateWoWPath(value);
+        // log.info('Validated WoW Path:', path);
+        return path;
+      } else {
+        // log.error('WoW path is not a string:', value);
+        // Optionally, prompt the user for input or provide a default path
+        return null;
+      }
+    } catch (e) {
+      log.error('Error accessing registry for WoW path:', JSON.stringify(e));
+      // Show an error dialog to the user or log the error
+      // Optionally, prompt the user to manually select the WoW installation path
+      return null;
+    }
+  }
+  return null;
+}
+
+function validateWoWPath(inputPath) {
+	// Normalize the input path to handle different path formats
+	const normalizedPath = path.normalize(inputPath);
+	// Split the path to analyze its components
+	const pathComponents = normalizedPath.split(path.sep);
+
+	// Find the index of the "World of Warcraft" folder in the path
+	const wowIndex = pathComponents.indexOf('World of Warcraft');
+
+	// If "World of Warcraft" is not in the path, the path is invalid
+	if (wowIndex === -1) {
+			return null;
+	}
+
+	// Construct the path up to and including "World of Warcraft"
+	const wowPath = pathComponents.slice(0, wowIndex + 1).join(path.sep);
+
+	// Check if the "_retail_" folder exists within the "World of Warcraft" directory
+	const retailPath = path.join(wowPath, '_retail_');
+	if (fs.existsSync(retailPath)) {
+			// Return the path to "World of Warcraft" if "_retail_" exists within it
+			return wowPath;
+	}
+
+	// Return null if the "_retail_" folder does not exist within the "World of Warcraft" directory
+	return null;
+}
+
+async function getWoWPath() {
+	let path = store.get('updatePath');
+	if (!path) {
+		path = await wowDefaultPath();
+	}
+	return path;
+}
+
+ipcMain.handle('get-wow-path', async () => {
+	return await getWoWPath();
+});
+
+async function onFilePathSelected(folderPath) {
+	log.info('Selected path:', folderPath, '|relative path:', store.get('relativePath'));
+	if (!store.get('relativePath'))  {
+		log.info('Relative path not set, skipping');
+		renderer_log('Relative path not set, skipping');
+		return
+	}
+	if (folderPath) {
+		const hash = await generateHashForPath(folderPath);
+		const stats = fs.statSync(folderPath);
+		let emptyData = { hash, timestamp: stats.mtime.getTime() / 1000, fileName: path.basename(folderPath)};
+		if (stats.isDirectory()) {
+			// Existing directory logic
+			compressAndSend(folderPath, true, emptyData);
+		} else if (stats.isFile()) {
+			const fileExtension = path.extname(folderPath);
+			log.info('File extension:', fileExtension);
+			renderer_log('File extension:', fileExtension);
+
+
+			if (fileExtension === '.zip') {
+				// Before sending the .zip we must unzip it to check the hash and name of the package
+				const { fileName, hash, timestamp } = await processZipBeforeSending(folderPath);
+				log.info('Processed zip:', fileName, hash, timestamp);
+				emptyData = { fileName, hash, timestamp }
+
+				// Send the .zip file directly
+				sendFile(folderPath, emptyData);
+			} else {
+				// Compress and send the file
+				compressAndSend(folderPath, false, emptyData);
+			}
+		}
+	} else {
+		log.info('No path selected');
+		renderer_log('No path selected');
+
+	}
+}
+
+ipcMain.handle('check-for-login', async () => {
+	const token = store.get('authToken');
+	log.info('Checking for login:', token);
+	if (token) {
+		try {
+			const decoded = jwtDecode(token);
+			return { username: decoded.username, role: decoded.role };
+		} catch (error) {
+			console.error('Error decoding token:', error);
+			return null;
+		}
+	}
+	return null;
+});
+
+ipcMain.on('store-set', (event, key, value) => store.set(key, value));
+ipcMain.handle('store-get', (event, key) => store.get(key));
+
+ipcMain.handle('get-app-version', () => {
+	return app.getVersion();
+});
+
+ipcMain.on('minimize-app', (event) => {
+	mainWindow?.minimize();
+});
+
+ipcMain.on('close-app', (event) => {
+	mainWindow?.close();
+});
+
+ipcMain.handle('select-update-path', async () => {
+	const result = await dialog.showOpenDialog(mainWindow, {
+		properties: ['openDirectory']
+	});
+	if (result.filePaths.length > 0) {
+		updatePath = validateWoWPath(result.filePaths[0]);
+		return updatePath;
+	}
+});
+ipcMain.handle('select-relative-path', async () => {
+	const result = await dialog.showOpenDialog(mainWindow, {
+		properties: ['openDirectory']
+	});
+	if (result.filePaths.length > 0) {
+		let pathToWow = validateWoWPath(result.filePaths[0]);
+		if (!pathToWow) {
+			return null;
+		}
+		let relativePath = path.relative(pathToWow, result.filePaths[0]);
+		log.info('Relative path:', relativePath)
+		return relativePath;
+	}
+})
+
+ipcMain.handle('login', async (event, { username, password }) => {
+	try {
+		const loginUrl = `${URL}/login`;
+		const sanitizedUsername = sanitizeInput(username); // Implement sanitizeInput to sanitize user inputs
+		const sanitizedPassword = sanitizeInput(password);
+
+
+		const response = await fetch(loginUrl, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ username: sanitizedUsername, password: sanitizedPassword })
+		});
+
+		if (!response.ok) {
+			return {success: false, error: `Server responded with status ${response.status}: ${await response.text()}`}
+		}
+
+		const data = await response.json();
+		if (data.token) {
+			store.set('authToken', data.token);
+			log.info('Login successful');
+			return {success: true, error: null};
+		} else {
+			log.info('Login failed invalid credentials');
+			return {success: false, error: "invalid credentials"};
+		}
+		} catch (err) {
+			log.info('Login error:', err);
+			console.error('Login error:', err);
+			return {success: false, error: `error logging in: ${err.code}`};
+		}
+});
+
+ipcMain.handle('should-download-file', (event, serverFile) => {
+	return shouldDownloadFile(serverFile);
+});
+
+
+ipcMain.handle('request-files-data', async (event) => {
+	return await fetch(`${URL}/files`)
+	.then(response => response.json())
+	.catch(error => console.error('Error fetching files data:', error));
+});
+
+// ipcMain.handle('request-active-users', async (event) => {
+// 	const token = store.get('authToken'); // Replace this with your actual token
+
+// 	try {
+// 		const response = await fetch(URL+'/active-users', {
+// 			method: 'GET',
+// 			headers: {
+// 				'Authorization': `Bearer ${token}`
+// 			}
+// 		});
+
+// 		if (!response.ok) {
+// 			throw new Error(`HTTP error! status: ${response.status}`);
+// 		}
+
+// 		return await response.json();
+// 	} catch (error) {
+// 		console.error('Error fetching active users:', error);
+// 		// Handle the error appropriately in your application
+// 	}
+// });
+
+
+ipcMain.on('connect', () => {
+	log.info('Connecting to server');
+	const token = store.get('authToken');
+	socket.auth = { token };
+	socket.connect();
+});
+
+ipcMain.on('request-file', (event, data) => {
+	socket.emit('request-file', data);
+});
+
+
+socket.on('connect', () => {
+	log.info('Connected to server');
+	mainWindow?.webContents.send('connect');
+});
+
+// in case of something cursed happens we try to reconnect every 1 sec for 15 times
+const totalReconnectAttempts = 15;
+let manualReconnectAttempt = 0;
+let reconnectScheduled = false;
+socket.on('connect_error', (error) => {
+	log.info('Connection error',error);
+	mainWindow?.webContents.send('connect-error', error)
+	const token = store.get('authToken');
+
+if (!socket.active && !reconnectScheduled && token && manualReconnectAttempt < totalReconnectAttempts) {
+		reconnectScheduled = true;
+		socket.auth = { token };
+		setTimeout(() => {
+			reconnectScheduled = false;
+			manualReconnectAttempt++;
+			socket.connect();
+		}), 5000;
+	}
+});
+
+socket.on('disconnect', (reason, details) => {
+	log.info('Disconnected from server', reason, details);
+	mainWindow?.webContents.send('disconnect', details && details.description || reason);
+});
+
+socket.on('new-file', (data) => {
+	const now = Date.now();
+	if (now - lastDataTimestamp.newFile < DATA_RECEIVE_THRESHOLD && isEqual(data, lastReceivedData.newFile)) {
+			log.info('Duplicate data received, ignoring.');
+			return;
+	}
+	lastDataTimestamp.newFile = now;
+	lastReceivedData.newFile = data;
+	log.info('New file:', data);
+	mainWindow?.webContents.send('new-file', data);
+});
+
+socket.on('file-not-found', (data) => {
+	mainWindow?.webContents.send('file-not-found', data);
+});
+
+socket.on('file-deleted', (data) => {
+	log.info('File deleted:', data);
+	mainWindow?.webContents.send('file-deleted', data);
+});
+
+ipcMain.on('delete-file', (event, data) => {
+	log.info('Deleting file:', data);
+	socket.emit('delete-file', data);
+});
+
+socket.on('new-release', (data) => {
+	log.info('New release:', data);
+	renderer_log('New release available');
+	for (let i=1; i<10; i++) {
+		setTimeout(() => {
+			autoUpdater.checkForUpdates().then((UpdateCheckResults) => {
+				log.info('Update check results:', UpdateCheckResults);
+			});
+		}, i * 45 * 1000);
+	}
+});
+
+socket.on('connected-clients', (data) => {
+	log.info('Connected clients:', data);
+	mainWindow?.webContents.send('connected-clients', data);
+});
+
+socket.on('error', (error) => {
+	console.error('Socket error:', error);
+});
+
+ipcMain.on('open-file-dialog-folder', async () => {
+	log.info('Opening file dialog: open-file-dialog')
+	const { canceled, filePaths } = await dialog.showOpenDialog({
+		properties: ['openDirectory']
+	});
+	if (!canceled && filePaths.length > 0) {
+		onFilePathSelected(filePaths[0])
+	}
+});
+
+ipcMain.on('open-file-dialog-file', async () => {
+	log.info('Opening file dialog: open-file-dialog')
+	const { canceled, filePaths } = await dialog.showOpenDialog({
+		properties: ['openFile']
+	});
+	if (!canceled && filePaths.length > 0) {
+		onFilePathSelected(filePaths[0]);
+	}
+});
+
+socket.on('not-enough-permissions', (data) => {
+	log.info('Not enough permissions:', data);
+	renderer_log('Not enough permissions:', data);
+});
+
+const fileChunks = {};
+socket.on('file-content-chunk', async (data) => {
+	if (!await getWoWPath()) return
+	const { chunk, chunkNumber, totalChunks, fileName, relativePath, timestamp, hash } = data;
+
+	// Initialize the file's chunk array if it doesn't exist
+	if (!fileChunks[hash]) {
+		fileChunks[hash] = new Array(totalChunks).fill(null);
+	}
+
+	// check if chank was already sent
+	if (fileChunks[hash][chunkNumber] !== null) {
+		log.info(`Chunk ${chunkNumber} already received, skipping...`);
+		return;
+	}
+	fileChunks[hash][chunkNumber] = chunk;
+
+	// Calculate the percentage of chunks received
+	const chunksReceived = fileChunks[hash].filter(chunk => chunk !== null).length;
+	const progressPercent = Math.round((chunksReceived / totalChunks) * 100);
+	mainWindow?.webContents.send('file-chunk-received', { progressPercent, fileName, relativePath, timestamp, hash });
+
+
+	// Check if all chunks have been received
+	const allChunksReceived = fileChunks[hash].every((chunk) => chunk !== null);
+
+	socket.emit('ack', {chunkNumber, fileName, hash});
+	// log.info(`ACK sent for chunk ${chunkNumber} of file ${fileName}`)
+
+	if (!allChunksReceived) return
+
+	const now = Date.now();
+	if (now - lastDataTimestamp.downloadedFile < DATA_RECEIVE_THRESHOLD && isEqual({fileName, relativePath, timestamp, hash}, lastReceivedData.downloadedFile)) {
+		log.info('Duplicate data received, ignoring.');
+		return;
+	}
+
+	lastDataTimestamp.downloadedFile = now;
+	lastReceivedData.downloadedFile = data;
+
+	// Combine all chunks
+	const fileBuffer = Buffer.concat(fileChunks[hash]);
+
+	const updatePath = await getWoWPath();
+	const temp_zip_file_path = path.join(updatePath, relativePath, fileName + '.zip'); // wow + relative + .zip
+	const exptected_output_folder = path.join(updatePath, relativePath, fileName); // wow + relative + foler/file
+	const target_path = path.join(updatePath, relativePath); // wow + relative
+
+	// ensure the target path exists
+	if (!fs.existsSync(target_path)) {
+		fs.promises.mkdir(target_path, { recursive: true });
+	}
+	// ensure expected output folder is empty
+	if (fs.existsSync(exptected_output_folder)) {
+		await fs.promises.rm(exptected_output_folder, { recursive: true });
+	}
+
+	log.info('Decompressing file:', temp_zip_file_path)
+	const zip = new AdmZip(fileBuffer);
+
+	zip.extractAllToAsync(target_path, true, false, (error) => {
+		if (error) {
+			log.error('Error extracting file:', error);
+			console.error('Error extracting file:', error);
+			return;
+		}
+		mainWindow?.webContents.send('file-downloaded', { fileName, relativePath, timestamp, hash });
+		setTimeout(() => {
+			delete fileChunks[hash];
+		}, 2000); // Delay deletion of chunks in case server will duplicate some chunks
+	});
+});
+
+async function generateHashForPath(entryPath) {
+    const stats = await fs.promises.stat(entryPath);
+    if (stats.isDirectory()) {
+        // Get all entries in the directory
+        const entries = await fs.promises.readdir(entryPath);
+        const sortedEntries = entries.sort();
+        const hashes = await Promise.all(sortedEntries.map(async (entry) => {
+            const fullPath = path.join(entryPath, entry);
+            return generateHashForPath(fullPath); // Recursively generate hash for each entry
+        }));
+        const combinedHash = hashes.join(''); // Combine hashes
+        return crc32(combinedHash).toString(16);
+    } else {
+        // It's a file, generate hash as before
+        const fileBuffer = await fs.promises.readFile(entryPath);
+        return crc32(fileBuffer).toString(16);
+    }
+}
+
+async function shouldDownloadFile(serverFile) {
+	if (!await getWoWPath()) return false;
+
+	const localFilePath = path.join(await getWoWPath(), serverFile.relativePath, serverFile.fileName.replace(/\.zip$/, ''));
+	log.info(`Checking file: ${localFilePath}`);
+	// Check if the file exists
+	if (!fs.existsSync(localFilePath)) {
+		log.info(`File does not exist: ${localFilePath}, should download`);
+		return true; // If the file doesn't exist, return true to download it
+	}
+
+	const localFileHash = await generateHashForPath(localFilePath);
+	log.info(`Local File Hash: ${localFileHash}, Server File Hash: ${serverFile.hash}`);
+	const shouldDownload = localFileHash !== serverFile.hash;
+	return shouldDownload;
+}
+
+async function send_data_in_chunks(socket, data) {
+	log.info('Sending data in chunks:', data.fileName, data.relativePath, data.timestamp, data.hash );
+	const CHUNK_SIZE = 256 * 1024; // 256KB
+	const fileBuffer = data.file;
+	const totalChunks = Math.ceil(fileBuffer.length / CHUNK_SIZE);
+
+	const fileName = data.fileName;
+	const relativePath = data.relativePath;
+	const timestamp = data.timestamp;
+	const hash = data.hash;
+
+	const sendChunkAndWaitForAck = (chunk, chunkNumber) => {
+		return new Promise((resolve, reject) => {
+			const ackListener = (ackData) => {
+				if (ackData.chunkNumber === chunkNumber && ackData.hash === hash && ackData.fileName === fileName) {
+						socket.off('ack', ackListener); // Remove listener after receiving ACK
+						resolve();
+				}
+			};
+			socket.on('ack', ackListener);
+
+			socket.emit('upload-file-chunk', {
+				chunk: chunk,
+				chunkNumber: chunkNumber,
+				totalChunks: totalChunks,
+				fileName: fileName,
+				relativePath: relativePath,
+				timestamp: timestamp,
+				hash: hash,
+			});
+
+			// Timeout for ACK
+			setTimeout(() => {
+				socket.off('ack', ackListener); // Ensure to remove listener to prevent memory leak
+				reject(`Timeout waiting for ACK for chunk ${chunkNumber}`);
+			}, 5000); // 5 seconds timeout for ACK
+		});
+	};
+
+	for (let i = 0; i < totalChunks; i++) {
+		let start = i * CHUNK_SIZE;
+		let end = start + CHUNK_SIZE;
+		let chunk = fileBuffer.slice(start, end);
+
+		try {
+			await sendChunkAndWaitForAck(chunk, i);
+			log.info(`Chunk ${i} sent and acknowledged`);
+		} catch (error) {
+			console.error(error);
+			i--; // Retry sending the current chunk
+		}
+	}
+}
+
+// filePath is the location of current zip file
+// decompress zip to check hash and proper name for the package
+// extract it to /tmp and check the hash and name of the first file/foler in directory
+// delete /tmp after the processing
+// return { name, hash, timestamp }
+async function processZipBeforeSending(filePath) {
+	try {
+		log.info('Processing zip before sending:', filePath);
+		renderer_log('Processing zip before sending:', filePath);
+		const tmpExtractPath = path.join(__dirname, '..', '/tmp');
+		const tmpCopyPath = path.join(__dirname, '..', '/tmp', path.basename(filePath));
+
+		// log.info('Extracting file:', tmpCopyPath);
+		// log.info('Extracting to:', tmpExtractPath);
+
+		if (!fs.existsSync(tmpExtractPath)) {
+			await fs.promises.mkdir(tmpExtractPath, { recursive: true });
+		}
+		await fs.promises.copyFile(filePath, tmpCopyPath);
+
+		const zip = new AdmZip(tmpCopyPath);
+		zip.extractAllTo(tmpExtractPath, true);
+
+		// Delete the copied zip file
+		await fs.promises.rm(tmpCopyPath, { recursive: true });
+
+		const extractedFiles = await fs.promises.readdir(tmpExtractPath);
+
+		log.info('Extracted files:', extractedFiles);
+		const targetFile = path.join(tmpExtractPath, extractedFiles[0]);
+
+		const fileName = path.basename(targetFile);
+		const hash = await generateHashForPath(targetFile);
+		const stats = fs.statSync(targetFile);
+		const timestamp = stats.mtime.getTime() / 1000;
+		await fs.promises.rm(tmpExtractPath, { recursive: true });
+
+		return { fileName, hash, timestamp };
+	} catch (error) {
+		log.error('Error processing zip before sending:', error);
+		renderer_log('Error processing zip before sending:', error);
+	}
+}
+
+
+async function compressAndSend(folderPath, isFolder,{ fileName, hash, timestamp }) {
+	const outputPath = `${folderPath}.zip`;
+	const zip = new AdmZip();
+
+	if (isFolder) {
+			zip.addLocalFolder(folderPath, fileName);
+	} else {
+			zip.addLocalFile(folderPath);
+	}
+
+	// Save the zip file
+	await zip.writeZipPromise(outputPath);
+
+	log.info("File compressed and saved:", outputPath);
+
+	// Send the file
+	await sendFile(outputPath, { fileName, hash, timestamp });
+
+	// Clean up the zip file after sending
+	fs.unlink(outputPath, (err) => {
+		if (err) {
+			console.error("Error deleting zip file:", err);
+		}
+	});
+}
+
+
+async function sendFile(filePath, { fileName, hash, timestamp }) {
+	fileName = fileName.replace(/\.zip$/, '');
+	log.info("Sending file:", filePath, { fileName, hash, timestamp });
+	const fileBuffer = await fs.promises.readFile(filePath);
+	const stats = fs.statSync(filePath);
+	timestamp = timestamp || stats.mtime.getTime() / 1000;
+	send_data_in_chunks(socket, { file: fileBuffer, fileName, relativePath: store.get('relativePath'), timestamp, hash });
+}
+
+/*
+data = {
+	fileName: string,
+	relativePath: string,
+	timestamp: number,
+	hash: string,
+}
+
+Эталоном даты считаеться дата которая храниться на сервере
+Есть 3 кейса отправки даты на сервер
+1. Обычный файл
+2. Папка
+3. Архив
+
+На сервере файл всегда храниться в виде архива, поэтому .zip можно опустить
+
+Примеры:
+1. file.lua
+	Отправляеться на сервер как file.lua.zip
+	{
+		fileName: file.lua
+		relativePath: _retail_/Interface/Addons/
+		timestamp: 1631712000
+		hash: 123456
+	}
+
+2. MyAddon
+	Отправляеться на сервер как MyAddon.zip
+	{
+		fileName: MyAddon
+		relativePath: _retail_/Interface/Addons/
+		timestamp: 1631712000
+		hash: 123456
+	}
+
+3. MyAddon.zip
+	Отправкляеться на сервер как MyAddon.zip
+	{
+		fileName: MyAddon
+		relativePath: _retail_/Interface/Addons/
+		timestamp: 1631712000
+		hash: 123456
+	}
+	Перед отправкой разархивируеться для определения имени файла и хеша
+	Имя файла соотвествует имени первого файла/папки? в архиве
+
+*/
