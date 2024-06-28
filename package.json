@@ -1,7 +1,7 @@
 {
 	"name": "rak-gaming-updater",
 	"description": "Rak Gaming Updater Application",
-	"version": "1.0.39",
+	"version": "1.1.0",
 	"author": "m33shoq",
 	"main": "./src/main.js",
 	"scripts": {
