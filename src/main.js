@@ -851,8 +851,8 @@ async function processZipBeforeSending(filePath) {
 		const tmpExtractPath = path.join(__dirname, '..', '/tmp');
 		const tmpCopyPath = path.join(__dirname, '..', '/tmp', path.basename(filePath));
 
-		// log.info('Extracting file:', tmpCopyPath);
-		// log.info('Extracting to:', tmpExtractPath);
+		log.info('Extracting file:', tmpCopyPath);
+		log.info('Extracting to:', tmpExtractPath);
 
 		if (!fs.existsSync(tmpExtractPath)) {
 			await fs.promises.mkdir(tmpExtractPath, { recursive: true });
