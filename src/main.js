@@ -27,7 +27,7 @@ let store;
 			authToken: null,
 			updatePath: null,
 			relativePath: null,
-			autoupdate: true,
+			autoupdate: false,
 			startWithWindows: true,
 			startMinimized: true,
 		}
@@ -56,6 +56,12 @@ let store;
 	startProcess()
 })();
 
+log.initialize({ preload: true });
+log.info('App starting...');
+
+__dirname = path.dirname(__filename);
+log.info('File:', __filename, 'Dir:', __dirname);
+
 const preload = path.join(__dirname, 'preload.js')
 const taskBarIconPath = path.join(__dirname, 'taskbaricon.png')
 const notificationIconPath = path.join(__dirname, 'icon.png')
@@ -74,8 +80,7 @@ autoUpdater.allowPrerelease = false;
 log.transports.file.level = 'info';
 autoUpdater.logger = log;
 
-log.initialize({ preload: true });
-log.info('App starting...');
+
 
 let mainWindow;
 let tray;
@@ -755,11 +760,12 @@ async function generateHashForPath(entryPath) {
         // Get all entries in the directory
         const entries = await fs.promises.readdir(entryPath);
         const sortedEntries = entries.sort();
-        const hashes = await Promise.all(sortedEntries.map(async (entry) => {
-            const fullPath = path.join(entryPath, entry);
-            return generateHashForPath(fullPath); // Recursively generate hash for each entry
-        }));
-        const combinedHash = hashes.join(''); // Combine hashes
+				let combinedHash = '';
+        for (let entry of sortedEntries) {
+					const fullPath = path.join(entryPath, entry);
+					const entryHash = await generateHashForPath(fullPath); // Process each entry sequentially
+					combinedHash += entryHash; // Concatenate hashes
+			}
         return crc32(combinedHash).toString(16);
     } else {
         // It's a file, generate hash as before
@@ -848,8 +854,9 @@ async function processZipBeforeSending(filePath) {
 	try {
 		log.info('Processing zip before sending:', filePath);
 		renderer_log('Processing zip before sending:', filePath);
-		const tmpExtractPath = path.join(__dirname, '..', '/tmp');
-		const tmpCopyPath = path.join(__dirname, '..', '/tmp', path.basename(filePath));
+		const userData = app.getPath('userData');
+		const tmpExtractPath = path.join(userData, '/tmp');
+		const tmpCopyPath = path.join(userData, '/tmp', path.basename(filePath));
 
 		log.info('Extracting file:', tmpCopyPath);
 		log.info('Extracting to:', tmpExtractPath);
