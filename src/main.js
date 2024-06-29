@@ -337,7 +337,9 @@ function sanitizeInput(input) {
 	return res;
 }
 
-setExternalVBSLocation("resources/node_modules/regedit/vbs"); // to allow packaged app to access registry
+const vbsPath = path.join(app.getAppPath(), '..', 'vbs');
+setExternalVBSLocation(vbsPath); // to allow packaged app to access registry
+log.info('VBS Path:', vbsPath);
 async function wowDefaultPath() {
   if (process.platform === "win32") {
     // log.info('Checking default WoW path on Windows');

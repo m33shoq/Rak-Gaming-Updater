@@ -245,6 +245,7 @@ function ButtonOnClick() {
 async function ButtonUpdate() {
 	const data = this.fileData;
 
+	this.Disable('Checking...');
 	if (!await api.IR_GetWoWPath()) {
 		this.Disable('No WoW path set');
 	} else if (!await api.shouldDownloadFile(data)) {
