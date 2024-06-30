@@ -463,7 +463,7 @@ ipcMain.handle('check-for-login', async () => {
 	return null;
 });
 
-ipcMain.on('store-set', (event, key, value) => store.set(key, value));
+ipcMain.handle('store-set', (event, key, value) => store.set(key, value));
 ipcMain.handle('store-get', (event, key) => store.get(key));
 
 ipcMain.handle('get-app-version', () => {
@@ -778,7 +778,7 @@ async function generateHashForPath(entryPath) {
 
 async function shouldDownloadFile(serverFile) {
 	if (!await getWoWPath()) {
-		return [false, 'no wow path'];
+		return [false, 'No WoW Path set'];
 	}
 
 	const localFilePath = path.join(await getWoWPath(), serverFile.relativePath, serverFile.fileName.replace(/\.zip$/, ''));
@@ -791,16 +791,16 @@ async function shouldDownloadFile(serverFile) {
 	const stats = fs.lstatSync(localFilePath);
 	if (stats.isSymbolicLink()) {
 		log.info(`File is a symbolic link: ${localFilePath}, should download`);
-		return [false, 'symbolic link'];
+		return [false, 'Is symbolic link'];
 	}
 
 	const localFileHash = await generateHashForPath(localFilePath);
 	log.info(`Local File Hash: ${localFileHash}, Server File Hash: ${serverFile.hash}`);
 	const shouldDownload = localFileHash !== serverFile.hash;
 	if (shouldDownload) {
-		return [shouldDownload, 'hash mismatch'];
+		return [shouldDownload, 'Update'];
 	} else {
-		return [shouldDownload, 'hash match'];
+		return [shouldDownload, 'Up to date'];
 	}
 }
 

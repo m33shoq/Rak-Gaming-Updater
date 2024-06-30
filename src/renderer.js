@@ -246,16 +246,12 @@ async function ButtonUpdate() {
 	const data = this.fileData;
 
 	this.Disable('Checking...');
-	if (!await api.IR_GetWoWPath()) {
-		this.Disable('No WoW path set');
-		return;
-	}
 	const [shouldDownload, reason] = await api.shouldDownloadFile(data);
-	this.setAttribute('title', reason);
+	// this.setAttribute('title', reason);
 	if (!shouldDownload) {
-		this.Disable('Up to date');
+		this.Disable(reason);
 	} else {
-		this.Enable('Update');
+		this.Enable(reason);
 		this.addEventListener('click', ButtonOnClick);
 	}
 }
@@ -351,14 +347,14 @@ async function requestFilesData() {
 
 document.getElementById('select-path-btn').addEventListener('click', async () => {
 	console.log("Select WoW path button clicked");
-	const updatePath = await api.IR_selectUpdatePath();
-	if (updatePath) {
-		document.getElementById('selected-path').innerText = `WoW Path: ${updatePath}`;
-		api.store.set('updatePath', updatePath);
+	const selectedPath = await api.IR_selectUpdatePath();
+	if (selectedPath) {
+		await api.store.set('updatePath', selectedPath);
 	} else {
-		document.getElementById('selected-path').innerText = 'WoW Path: Invalid Path Supplied';
-		api.store.set('updatePath', null);
+		await api.store.set('updatePath', null);
 	}
+	const updatePath = await api.IR_GetWoWPath();
+	document.getElementById('selected-path').innerText = `Wow Path: ${updatePath || 'None'}`;
 	UpdateFileWidget();
 });
 

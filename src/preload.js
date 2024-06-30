@@ -7,7 +7,7 @@ async function store_get(key) {
 }
 
 async function store_set(key, value) {
-	ipcRenderer.send('store-set', key, value);
+	return await ipcRenderer.invoke('store-set', key, value);
 }
 
 contextBridge.exposeInMainWorld('api', {
