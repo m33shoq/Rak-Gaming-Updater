@@ -2,7 +2,9 @@
 	"name": "rak-gaming-updater",
 	"description": "Rak Gaming Updater Application",
 	"version": "1.1.8",
-	"author": "m33shoq",
+	"author": {
+		"name": "m33shoq"
+	},
 	"main": "./src/main.js",
 	"scripts": {
 		"start": "electron .",
@@ -25,15 +27,9 @@
 			}
 		],
 		"files": [
-			"./src/preload.js",
-			"./src/main.js",
-			"./src/index.html",
-			"./src/styles.css",
-			"./src/renderer.js",
+			"src",
 			"package.json",
-			"node_modules",
-			"./src/icon.png",
-			"./src/taskbaricon.png"
+			"node_modules"
 		],
 		"extraResources": [
 			{
@@ -43,9 +39,11 @@
     ],
 		"win": {
 			"target": "nsis",
-			"icon": "./src/taskbaricon.png",
-			"signingHashAlgorithms": []
-		}
+			"icon": "./src/taskbaricon.png"
+		},
+		"nsis": {
+    	"deleteAppDataOnUninstall": true
+  	}
 	},
 	"dependencies": {
 		"adm-zip": "^0.5.14",
