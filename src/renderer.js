@@ -9,9 +9,9 @@ async function onNewFile(data) {
 		addFileToAdminWidget(data);
 	}
 	if (await api.store.get('autoupdate') == true) {
-			const shouldDownload = await api.shouldDownloadFile(data);
-			console.log("ShouldDownloadFile:", shouldDownload)
-			if (shouldDownload) {
+		const [shouldDownload, reason] = await api.shouldDownloadFile(data);
+		console.log("ShouldDownloadFile:", shouldDownload, reason)
+		if (shouldDownload) {
 			console.log('Auto updating file:', data.fileName)
 			api.requestFile(data);
 		} else {
@@ -248,7 +248,11 @@ async function ButtonUpdate() {
 	this.Disable('Checking...');
 	if (!await api.IR_GetWoWPath()) {
 		this.Disable('No WoW path set');
-	} else if (!await api.shouldDownloadFile(data)) {
+		return;
+	}
+	const [shouldDownload, reason] = await api.shouldDownloadFile(data);
+	this.setAttribute('title', reason);
+	if (!shouldDownload) {
 		this.Disable('Up to date');
 	} else {
 		this.Enable('Update');

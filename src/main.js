@@ -777,20 +777,31 @@ async function generateHashForPath(entryPath) {
 }
 
 async function shouldDownloadFile(serverFile) {
-	if (!await getWoWPath()) return false;
+	if (!await getWoWPath()) {
+		return [false, 'no wow path'];
+	}
 
 	const localFilePath = path.join(await getWoWPath(), serverFile.relativePath, serverFile.fileName.replace(/\.zip$/, ''));
 	log.info(`Checking file: ${localFilePath}`);
 	// Check if the file exists
 	if (!fs.existsSync(localFilePath)) {
 		log.info(`File does not exist: ${localFilePath}, should download`);
-		return true; // If the file doesn't exist, return true to download it
+		return [true, 'does not exist']; // If the file doesn't exist, return true to download it
+	}
+	const stats = fs.lstatSync(localFilePath);
+	if (stats.isSymbolicLink()) {
+		log.info(`File is a symbolic link: ${localFilePath}, should download`);
+		return [false, 'symbolic link'];
 	}
 
 	const localFileHash = await generateHashForPath(localFilePath);
 	log.info(`Local File Hash: ${localFileHash}, Server File Hash: ${serverFile.hash}`);
 	const shouldDownload = localFileHash !== serverFile.hash;
-	return shouldDownload;
+	if (shouldDownload) {
+		return [shouldDownload, 'hash mismatch'];
+	} else {
+		return [shouldDownload, 'hash match'];
+	}
 }
 
 async function send_data_in_chunks(socket, data) {
