@@ -74,8 +74,8 @@ protocol.registerSchemesAsPrivileged([
   { scheme: "app", privileges: { secure: true, standard: true } },
 ]);
 
-autoUpdater.autoDownload = true;
-autoUpdater.autoInstallOnAppQuit = true;
+autoUpdater.autoDownload = false;
+autoUpdater.autoInstallOnAppQuit = false;
 autoUpdater.allowPrerelease = false;
 log.transports.file.level = 'info';
 autoUpdater.logger = log;
@@ -272,19 +272,33 @@ app.on("web-contents-created", (webContentsCreatedEvent, webContents) => {
 });
 
 // Auto-updater events
-// let installNagAlreadyShown;
+let updatedRecheckTimer;
+let rechekTries = 0;
 autoUpdater.on('update-available', (info) => {
 	renderer_log(`Update available Version: ${info.version} Release Date: ${info.releaseDate}`);
+	if (updatedRecheckTimer) {
+		clearInterval(updatedRecheckTimer);
+		log.info('Recheck timer cleared');
+	}
+	new Notification({
+		title: 'Update available',
+		body: `Rak Gaming Updater ${info.version} is avalilable.`,
+		icon: notificationIcon,
+	}).show();
 
-	// if (!installNagAlreadyShown) {
-		new Notification({
-			title: 'Update available',
-			body: `Rak Gaming Updater ${info.version} is avalilable.\nDownloading...`,
-			icon: notificationIcon,
-		}).show();
-	// }
-	// installNagAlreadyShown = true;
+	const dialogOpts = {
+		type: 'info',
+		buttons: ['Update', 'Later'],
+		title: 'Application Update',
+		message: process.platform === 'win32' ? info.releaseNotes : info.releaseName,
+		detail: `A new version ${info.version} is available. Do you want to update now?`
+	};
 
+	dialog.showMessageBox(dialogOpts).then(({ response }) => {
+			if (response === 0) {
+					autoUpdater.downloadUpdate();
+			}
+	});
 });
 
 autoUpdater.on('update-not-available', () => {
@@ -376,7 +390,7 @@ function validateWoWPath(inputPath) {
 	const pathComponents = normalizedPath.split(path.sep);
 
 	// Find the index of the "World of Warcraft" folder in the path
-	const wowIndex = pathComponents.indexOf('World of Warcraft');
+	const wowIndex = pathComponents.map(component => component.toLowerCase()).indexOf('world of warcraft'.toLowerCase());
 
 	// If "World of Warcraft" is not in the path, the path is invalid
 	if (wowIndex === -1) {
@@ -642,16 +656,26 @@ ipcMain.on('delete-file', (event, data) => {
 	socket.emit('delete-file', data);
 });
 
+
 socket.on('new-release', (data) => {
 	log.info('New release:', data);
 	renderer_log('New release available');
-	for (let i=1; i<10; i++) {
-		setTimeout(() => {
-			autoUpdater.checkForUpdates().then((UpdateCheckResults) => {
-				log.info('Update check results:', UpdateCheckResults);
-			});
-		}, i * 45 * 1000);
+	rechekTries = 0
+	if (updatedRecheckTimer) {
+		clearInterval(updatedRecheckTimer);
+		log.info('Recheck timer cleared');
 	}
+	updatedRecheckTimer = setInterval(() => {
+		rechekTries++;
+		if (rechekTries > 6) {
+			clearInterval(updatedRecheckTimer);
+			log.info('Recheck timer cleared');
+			return;
+		}
+		autoUpdater.checkForUpdates().then((UpdateCheckResults) => {
+			log.info('Update check results:', UpdateCheckResults);
+		});
+	}, 45 * 1000);
 });
 
 socket.on('connected-clients', (data) => {
