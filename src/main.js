@@ -369,6 +369,7 @@ async function wowDefaultPath() {
 }
 
 function validateWoWPath(inputPath) {
+	log.info('Validating WoW Path:', inputPath);
 	// Normalize the input path to handle different path formats
 	const normalizedPath = path.normalize(inputPath);
 	// Split the path to analyze its components
@@ -379,7 +380,8 @@ function validateWoWPath(inputPath) {
 
 	// If "World of Warcraft" is not in the path, the path is invalid
 	if (wowIndex === -1) {
-			return null;
+		log.info('Invalid WoW Path:', inputPath);
+		return null;
 	}
 
 	// Construct the path up to and including "World of Warcraft"
@@ -388,11 +390,13 @@ function validateWoWPath(inputPath) {
 	// Check if the "_retail_" folder exists within the "World of Warcraft" directory
 	const retailPath = path.join(wowPath, '_retail_');
 	if (fs.existsSync(retailPath)) {
-			// Return the path to "World of Warcraft" if "_retail_" exists within it
-			return wowPath;
+		// Return the path to "World of Warcraft" if "_retail_" exists within it
+		log.info('Valid WoW Path:', wowPath)
+		return wowPath;
 	}
 
 	// Return null if the "_retail_" folder does not exist within the "World of Warcraft" directory
+	log.info('Invalid WoW Path(no _retail_):', inputPath);
 	return null;
 }
 
@@ -482,6 +486,7 @@ ipcMain.handle('select-update-path', async () => {
 	const result = await dialog.showOpenDialog(mainWindow, {
 		properties: ['openDirectory']
 	});
+	log.info('Selected path(select-update-path):', result.filePaths);
 	if (result.filePaths.length > 0) {
 		updatePath = validateWoWPath(result.filePaths[0]);
 		return updatePath;
