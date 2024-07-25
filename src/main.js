@@ -82,6 +82,16 @@ log.transports.file.level = 'info';
 autoUpdater.logger = log;
 
 
+let queuedDialogs = [];
+
+function queueDialog(mainWindow, dialogOptions, onSuccess) {
+	if (mainWindow?.isVisible()) {
+		dialog.showMessageBox(mainWindow, dialogOptions)
+			.then(onSuccess);
+	} else {
+		queuedDialogs.push({ dialogOptions, onSuccess });
+	}
+}
 
 let mainWindow;
 let tray;
@@ -190,6 +200,16 @@ function createWindow() {
 
 	mainWindow?.on('show', () => {
 		mainWindow?.setSkipTaskbar(false);
+
+		if (queuedDialogs.length > 0) {
+			queuedDialogs.forEach(({dialogOptions, onSuccess}) => {
+				if (onSuccess) {
+					dialog.showMessageBox(mainWindow, dialogOptions).then(onSuccess)
+				}
+			});
+			queuedDialogs = [];
+		}
+
 	});
 
 	mainWindow?.on('minimize', (event) => {
@@ -290,18 +310,20 @@ autoUpdater.on('update-available', (info) => {
 			icon: notificationIcon,
 		}).show();
 
-	const dialogOpts = {
-		type: 'info',
-		buttons: ['Update', 'Later'],
-		title: 'Application Update',
-		message: process.platform === 'win32' ? info.releaseNotes : info.releaseName,
-		detail: `A new version ${info.version} is available. Do you want to update now?`
-	};
+		const dialogOpts = {
+			buttons: ['Update', 'Later'],
+			title: 'Rak Gaming Updater',
+			message: process.platform === 'win32' ? info.releaseNotes : info.releaseName,
+			detail: `A new version ${info.version} is available. Do you want to update now?`,
+			noLink: true,
+			modal: true,
+			parent: mainWindow
+		};
 
-	dialog.showMessageBox(dialogOpts).then(({ response }) => {
+		queueDialog(mainWindow, dialogOpts, ({ response }) => {
 			if (response === 0) {
-					autoUpdater.downloadUpdate();
-				}
+				autoUpdater.downloadUpdate();
+			}
 		});
 	}
 });
