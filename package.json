@@ -36,14 +36,14 @@
 				"from": "./node_modules/regedit/vbs",
 				"to": "vbs"
 			}
-    ],
+		],
 		"win": {
 			"target": "nsis",
 			"icon": "./src/taskbaricon.png"
 		},
 		"nsis": {
-    	"deleteAppDataOnUninstall": true
-  	}
+			"deleteAppDataOnUninstall": true
+		}
 	},
 	"dependencies": {
 		"adm-zip": "^0.5.14",

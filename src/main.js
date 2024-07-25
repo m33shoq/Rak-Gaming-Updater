@@ -275,17 +275,20 @@ app.on("web-contents-created", (webContentsCreatedEvent, webContents) => {
 // Auto-updater events
 let updatedRecheckTimer;
 let rechekTries = 0;
+let wasNotificationShown = false;
 autoUpdater.on('update-available', (info) => {
 	renderer_log(`Update available Version: ${info.version} Release Date: ${info.releaseDate}`);
 	if (updatedRecheckTimer) {
 		clearInterval(updatedRecheckTimer);
 		log.info('Recheck timer cleared');
 	}
-	new Notification({
-		title: 'Update available',
-		body: `Rak Gaming Updater ${info.version} is avalilable.`,
-		icon: notificationIcon,
-	}).show();
+
+	if (!wasNotificationShown) {
+		new Notification({
+			title: 'Update available',
+			body: `Rak Gaming Updater ${info.version} is avalilable.`,
+			icon: notificationIcon,
+		}).show();
 
 	const dialogOpts = {
 		type: 'info',
@@ -298,8 +301,9 @@ autoUpdater.on('update-available', (info) => {
 	dialog.showMessageBox(dialogOpts).then(({ response }) => {
 			if (response === 0) {
 					autoUpdater.downloadUpdate();
-			}
-	});
+				}
+		});
+	}
 });
 
 autoUpdater.on('update-not-available', () => {
