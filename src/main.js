@@ -30,6 +30,7 @@ let store;
 			autoupdate: false,
 			startWithWindows: true,
 			startMinimized: true,
+			quitOnClose: false,
 		}
 	});
 
@@ -198,7 +199,7 @@ function createWindow() {
 	});
 
 	mainWindow?.on('close', (event) => {
-		if (!app.isQuiting) {
+		if (!app.isQuiting && !store.get('quitOnClose')) {
 			event.preventDefault();
 			mainWindow?.hide();
 		}

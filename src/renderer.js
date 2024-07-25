@@ -366,12 +366,14 @@ document.getElementById('select-path-btn').addEventListener('click', async () =>
 	const autoupdate = await api.store.get('autoupdate');
 	const startWithWindows = await api.store.get('startWithWindows');
 	const startMinimized = await api.store.get('startMinimized');
+	const quitOnClose = await api.store.get('quitOnClose');
 	console.log('autoupdate:', autoupdate);
 	document.getElementById('selected-path').innerText = `Wow Path: ${updatePath || 'None'}`;
 	document.getElementById('relative-path').innerText = `Relative Path: ${relativePath || 'None'}`;
 	document.getElementById('auto-update-checkbox').checked = autoupdate == true;
 	document.getElementById('start-with-windows-checkbox').checked = startWithWindows == true;
 	document.getElementById('start-minimized-checkbox').checked = startMinimized == true;
+	document.getElementById('quit-on-close').checked = quitOnClose == true;
 })();
 
 document.getElementById('auto-update-checkbox').addEventListener('change', () => {
@@ -385,6 +387,11 @@ document.getElementById('start-with-windows-checkbox').addEventListener('change'
 document.getElementById('start-minimized-checkbox').addEventListener('change', () => {
 	api.store.set('startMinimized', document.getElementById('start-minimized-checkbox').checked);
 })
+
+document.getElementById('quit-on-close').addEventListener('change', () => {
+	api.store.set('quitOnClose', document.getElementById('quit-on-close').checked);
+})
+
 
 const filesList = document.getElementById('files-list');
 function addFileToAdminWidget(file) {
