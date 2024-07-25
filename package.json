@@ -1,7 +1,7 @@
 {
 	"name": "rak-gaming-updater",
 	"description": "Rak Gaming Updater Application",
-	"version": "1.1.18",
+	"version": "1.1.19",
 	"author": {
 		"name": "m33shoq"
 	},
@@ -52,7 +52,7 @@
 		"dotenv": "^16.4.5",
 		"electron-log": "^5.1.5",
 		"electron-store": "^10.0.0",
-		"electron-updater": "^6.2.1",
+		"electron-updater": ">=6.3.0-alpha.6",
 		"fs": "^0.0.1-security",
 		"jwt-decode": "^4.0.0",
 		"node-fetch": "^3.3.2",
