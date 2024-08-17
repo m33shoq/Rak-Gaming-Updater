@@ -14,6 +14,7 @@ contextBridge.exposeInMainWorld('api', {
 	/*
 	returns: {username: string, role: string} | null
 	*/
+	on_i18n_ready: (callback) => ipcRenderer.invoke('i18n', callback),
 	check_for_login: () => ipcRenderer.invoke('check-for-login'),
 	// socket
 	socket_connect: () => ipcRenderer.send('connect'),
@@ -49,9 +50,7 @@ contextBridge.exposeInMainWorld('api', {
 	IR_GetAppVersion: () => ipcRenderer.invoke('get-app-version'),
 	IR_GetWoWPath: () => ipcRenderer.invoke('get-wow-path'),
 	//
-	fetchFilesData: () => {
-		return ipcRenderer.invoke('request-files-data')
-	},
+	fetchFilesData: () => ipcRenderer.invoke('request-files-data'),
 	// fetchActiveUsers: () => {
 	// 	return ipcRenderer.invoke('request-active-users')
 	// },

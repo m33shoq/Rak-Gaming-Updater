@@ -1,3 +1,35 @@
+let i18n = {};
+let L = new Proxy(i18n, {
+	get: (target, prop) => (prop in target ? target[prop] : prop)
+});
+
+(async () => {
+	const i18nReady = await api.on_i18n_ready();
+	Object.assign(i18n, i18nReady); // Update the proxy target with the actual i18n object
+
+	const translateDOM = () => {
+		const elements = document.querySelectorAll('*');
+		elements.forEach(element => {
+				if (element.childNodes.length === 1 && element.childNodes[0].nodeType === Node.TEXT_NODE) {
+						const text = element.textContent.trim();
+						if (text) {
+								const translatedText = L[text];
+								if (translatedText !== text) {
+										element.textContent = translatedText;
+								}
+						}
+				}
+		});
+	};
+
+	// Call the function to translate the DOM elements
+	translateDOM();
+	console.log(L.LOCALE_NAME)
+	if (L.LOCALE_NAME === 'ko') {
+		document.getElementById('headericon').src = 'icon-mate.png';
+	}
+})();
+
 let isConnected = false;
 let userData = null;
 const widgetContainerMap = new Map();
@@ -11,7 +43,7 @@ async function onNewFile(data) {
 	if (await api.store.get('autoupdate') == true) {
 		const [shouldDownload, reason] = await api.shouldDownloadFile(data);
 		console.log("ShouldDownloadFile:", shouldDownload, reason)
-		if (shouldDownload) {
+		if (shouldDownload && reason === L["Update"]) { // this is very sketchy to check for localized string
 			console.log('Auto updating file:', data.fileName)
 			api.requestFile(data);
 		} else {
@@ -45,7 +77,7 @@ async function initializeSocket() {
 		isConnected = false
 		console.log(`Socket Disconnected`, description);
 		log(`Disconnected at ${new Date().toLocaleString()}`);
-		document.getElementById('disconnect-reason').innerText = `Disconnected: ${description}`
+		document.getElementById('disconnect-reason').innerText = `${L["Disconnected"]}: ${description}`
 		document.getElementById('login-error').innerText = ``
 		showLogin();
 	});
@@ -83,7 +115,7 @@ async function initializeSocket() {
 
 		if (lineItem) {
 			const updateBtn = lineItem.querySelector('.update-btn');
-			updateBtn.Disable(`Downloading... ${progressPercent}%`);
+			updateBtn.Disable(`${L["Downloading..."]} ${progressPercent}%`);
 			updateBtn.UpdateDownloadTimer();
 		}
 	});
@@ -96,7 +128,7 @@ async function initializeSocket() {
 		const lineItem = widgetContainerMap.get(uniqueId);
 		if (lineItem) {
 			const updateBtn = lineItem.querySelector('.update-btn');
-			updateBtn.Disable('Up to date'); // maybe should use .Update here but it's not necessary
+			updateBtn.Disable(L['Up to date']); // maybe should use .Update here but it's not necessary
 		}
 	});
 
@@ -237,7 +269,7 @@ function ButtonDisable(text) {
 
 function ButtonOnClick() {
 	const data = this.fileData;
-	this.Disable('Fetching...');
+	this.Disable(L['Fetching...']);
 	this.UpdateDownloadTimer();
 	api.requestFile(data);
 }
@@ -245,7 +277,7 @@ function ButtonOnClick() {
 async function ButtonUpdate() {
 	const data = this.fileData;
 
-	this.Disable('Checking...');
+	this.Disable(L['Checking...']);
 	const [shouldDownload, reason] = await api.shouldDownloadFile(data);
 	// this.setAttribute('title', reason);
 	if (!shouldDownload) {
@@ -299,7 +331,7 @@ async function addFileToWidget(data) {
 	updateBtn.Update = ButtonUpdate;
 	updateBtn.UpdateDownloadTimer = ButtonUpdateDownloadTimer;
 
-	updateBtn.Disable("Up to date");
+	updateBtn.Disable(L["Up to date"]);
 	updateBtn.Update();
 
   widgetContainer.appendChild(lineItem)
@@ -354,7 +386,7 @@ document.getElementById('select-path-btn').addEventListener('click', async () =>
 		await api.store.set('updatePath', null);
 	}
 	const updatePath = await api.IR_GetWoWPath();
-	document.getElementById('selected-path').innerText = `Wow Path: ${updatePath || 'None'}`;
+	document.getElementById('selected-path').innerText = `${L["Wow Path"]}: ${updatePath || 'None'}`;
 	UpdateFileWidget();
 });
 
@@ -368,8 +400,8 @@ document.getElementById('select-path-btn').addEventListener('click', async () =>
 	const startMinimized = await api.store.get('startMinimized');
 	const quitOnClose = await api.store.get('quitOnClose');
 	console.log('autoupdate:', autoupdate);
-	document.getElementById('selected-path').innerText = `Wow Path: ${updatePath || 'None'}`;
-	document.getElementById('relative-path').innerText = `Relative Path: ${relativePath || 'None'}`;
+	document.getElementById('selected-path').innerText = `${L["Wow Path"]}: ${updatePath || 'None'}`;
+	document.getElementById('relative-path').innerText = `${L["Relative Path"]}: ${relativePath || 'None'}`;
 	document.getElementById('auto-update-checkbox').checked = autoupdate == true;
 	document.getElementById('start-with-windows-checkbox').checked = startWithWindows == true;
 	document.getElementById('start-minimized-checkbox').checked = startMinimized == true;
@@ -449,10 +481,10 @@ document.getElementById('set-relative-path-btn').addEventListener('click', async
 	console.log("Select WoW path button clicked");
 	const path = await api.IR_selectRelativePath();
 	if (path) {
-		document.getElementById('relative-path').innerText = `Relative Path: ${path}`;
+		document.getElementById('relative-path').innerText = `${L["Relative Path"]}: ${path}`;
 		api.store.set('relativePath', path);
 	} else {
-		document.getElementById('relative-path').innerText = 'Relative Path: Invalid Path Supplied';
+		document.getElementById('relative-path').innerText = `${L["Relative Path"]}: ${L["Invalid Path Supplied"]}`;
 		api.store.set('relativePath', null);
 	}
 })

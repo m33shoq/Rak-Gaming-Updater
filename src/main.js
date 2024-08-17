@@ -1,6 +1,22 @@
 const { app, BrowserWindow, ipcMain, dialog, Tray, Menu, nativeImage, protocol, shell, Notification } = require('electron');
 const { autoUpdater } = require('electron-updater');
 const log = require('electron-log/main');
+
+const i18n = require('./translations/i18n');
+const locale = i18n.getLocale();
+const translations = i18n.getCatalog(locale);
+const serializedL = JSON.parse(JSON.stringify(translations));
+ipcMain.handle('i18n', () => serializedL);
+
+const L = new Proxy(serializedL, {
+	get: (target, prop) => {
+		if (prop in target) {
+			return target[prop];
+		}
+		return prop;
+	},
+});
+
 require('dotenv').config();
 const URL = process.env.ELECTRON_USE_DEV_URL === '1' ? 'http://localhost:3000' : `https://rak-gaming-annoucer-bot-93b48b086bae.herokuapp.com`;
 log.info('URL:', URL);
@@ -63,9 +79,12 @@ log.info('App starting...');
 __dirname = path.dirname(__filename);
 log.info('File:', __filename, 'Dir:', __dirname);
 
+let = currentLocale = i18n.getLocale();
+console.log('Current locale:', currentLocale);
 const preload = path.join(__dirname, 'preload.js')
-const taskBarIconPath = path.join(__dirname, 'taskbaricon.png')
-const notificationIconPath = path.join(__dirname, 'icon.png')
+const taskBarIconPath = path.join(__dirname, (currentLocale === 'ko' &&  'taskbaricon-mate.png' || 'taskbaricon.png'))
+const notificationIconPath = path.join(__dirname, (currentLocale === 'ko' && 'icon-mate.png' || 'icon.png'))
+console.log('Taskbar icon:', taskBarIconPath, 'Notification icon:', notificationIconPath);
 const html = path.join(__dirname, 'index.html')
 
 const taskBarIcon = nativeImage.createFromPath(taskBarIconPath);
@@ -144,6 +163,8 @@ function createWindow() {
 		skipTaskbar: startMinimized,
 		show: !startMinimized,
 	});
+
+
 
 	mainWindow?.webContents.setWindowOpenHandler(({ url }) => {
     if (url.startsWith("https:")) {
@@ -834,7 +855,7 @@ async function generateHashForPath(entryPath) {
 
 async function shouldDownloadFile(serverFile) {
 	if (!await getWoWPath()) {
-		return [false, 'No WoW Path set'];
+		return [false, L['No WoW Path set']];
 	}
 
 	const localFilePath = path.join(await getWoWPath(), serverFile.relativePath, serverFile.fileName.replace(/\.zip$/, ''));
@@ -842,21 +863,21 @@ async function shouldDownloadFile(serverFile) {
 	// Check if the file exists
 	if (!fs.existsSync(localFilePath)) {
 		log.info(`File does not exist: ${localFilePath}, should download`);
-		return [true, 'does not exist']; // If the file doesn't exist, return true to download it
+		return [true, L['Install']]; // If the file doesn't exist, return true to download it
 	}
 	const stats = fs.lstatSync(localFilePath);
 	if (stats.isSymbolicLink()) {
 		log.info(`File is a symbolic link: ${localFilePath}, should download`);
-		return [false, 'Is symbolic link'];
+		return [false, L['Is symbolic link']];
 	}
 
 	const localFileHash = await generateHashForPath(localFilePath);
 	log.info(`Local File Hash: ${localFileHash}, Server File Hash: ${serverFile.hash}`);
 	const shouldDownload = localFileHash !== serverFile.hash;
 	if (shouldDownload) {
-		return [shouldDownload, 'Update'];
+		return [shouldDownload, L['Update']];
 	} else {
-		return [shouldDownload, 'Up to date'];
+		return [shouldDownload, L['Up to date']];
 	}
 }
 
