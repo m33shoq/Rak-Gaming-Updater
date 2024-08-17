@@ -18,7 +18,7 @@ const L = new Proxy(serializedL, {
 });
 
 require('dotenv').config();
-const URL = process.env.ELECTRON_USE_DEV_URL === '1' ? 'http://localhost:3000' : `https://rak-gaming-annoucer-bot-93b48b086bae.herokuapp.com`;
+const URL = process.env.ELECTRON_USE_DEV_URL === '1' ? 'http://localhost:3001' : `https://rak-gaming-annoucer-bot-93b48b086bae.herokuapp.com`;
 log.info('URL:', URL);
 const socket = require('socket.io-client')(URL, { autoConnect: false });
 const AdmZip = require('adm-zip');
@@ -49,7 +49,7 @@ let store;
 			quitOnClose: false,
 		}
 	});
-
+	// store.delete('authToken'); // for testing
 	function updateStartWithWindows() {
 		if (store.get('startWithWindows')) {
 			app.setLoginItemSettings({
@@ -608,7 +608,12 @@ ipcMain.handle('should-download-file', (event, serverFile) => {
 
 
 ipcMain.handle('request-files-data', async (event) => {
-	return await fetch(`${URL}/files`)
+	return await fetch(`${URL}/files`, {
+    method: 'GET',
+    headers: {
+        'Authorization': `Bearer ${store.get('authToken')}`
+    }
+})
 	.then(response => response.json())
 	.catch(error => console.error('Error fetching files data:', error));
 });
