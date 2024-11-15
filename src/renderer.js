@@ -108,7 +108,7 @@ async function initializeSocket() {
 	})
 
 	api.IR_onFileChunkReceived((event, data) => {
-		const { progressPercent, fileName, relativePath, timestamp, hash } = data;
+		const { progressPercent, fileName, relativePath, timestamp, hash, displayName } = data;
 		console.log('File chunk received:', fileName, progressPercent);
 		const uniqueId = generateUniqueId(data);
 		const lineItem = widgetContainerMap.get(uniqueId);
@@ -313,7 +313,7 @@ async function addFileToWidget(data) {
   lineItem.innerHTML = `
     <div class="file-info-container" id=${uniqueId}>
       <div class="file-name-path">
-        <span>${data.fileName}\n
+        <span>${ data.displayName || data.fileName}\n
         ${data.relativePath}</span>
       </div>
       <div class="uploaded-time-container">
@@ -440,7 +440,7 @@ function addFileToAdminWidget(file) {
 	div.innerHTML = `
 		<div class="file-info-container">
 			<div class="file-name-path">
-				<span>${file.fileName}\n
+				<span>${file.displayName || file.fileName}\n
 				${file.relativePath}</span>
 			</div>
 			<div class="uploaded-time-container">

@@ -484,7 +484,10 @@ async function onFilePathSelected(folderPath) {
 	if (folderPath) {
 		const hash = await generateHashForPath(folderPath);
 		const stats = fs.statSync(folderPath);
-		let emptyData = { hash, timestamp: stats.mtime.getTime() / 1000, fileName: path.basename(folderPath)};
+		let displayName = path.basename(folderPath);
+		console.log('Display name:', displayName);
+		let emptyData = { hash, timestamp: stats.mtime.getTime() / 1000, fileName: displayName, displayName: displayName };
+
 		if (stats.isDirectory()) {
 			// Existing directory logic
 			compressAndSend(folderPath, true, emptyData);
@@ -498,7 +501,7 @@ async function onFilePathSelected(folderPath) {
 				// Before sending the .zip we must unzip it to check the hash and name of the package
 				const { fileName, hash, timestamp } = await processZipBeforeSending(folderPath);
 				log.info('Processed zip:', fileName, hash, timestamp);
-				emptyData = { fileName, hash, timestamp }
+				emptyData = { fileName, hash, timestamp, displayName }
 
 				// Send the .zip file directly
 				sendFile(folderPath, emptyData);
@@ -768,7 +771,7 @@ socket.on('not-enough-permissions', (data) => {
 const fileChunks = {};
 socket.on('file-content-chunk', async (data) => {
 	if (!await getWoWPath()) return
-	const { chunk, chunkNumber, totalChunks, fileName, relativePath, timestamp, hash } = data;
+	const { chunk, chunkNumber, totalChunks, fileName, relativePath, timestamp, hash, displayName } = data;
 
 	// Initialize the file's chunk array if it doesn't exist
 	if (!fileChunks[hash]) {
@@ -785,7 +788,7 @@ socket.on('file-content-chunk', async (data) => {
 	// Calculate the percentage of chunks received
 	const chunksReceived = fileChunks[hash].filter(chunk => chunk !== null).length;
 	const progressPercent = Math.round((chunksReceived / totalChunks) * 100);
-	mainWindow?.webContents.send('file-chunk-received', { progressPercent, fileName, relativePath, timestamp, hash });
+	mainWindow?.webContents.send('file-chunk-received', { progressPercent, fileName, relativePath, timestamp, hash, displayName });
 
 
 	// Check if all chunks have been received
@@ -797,7 +800,7 @@ socket.on('file-content-chunk', async (data) => {
 	if (!allChunksReceived) return
 
 	const now = Date.now();
-	if (now - lastDataTimestamp.downloadedFile < DATA_RECEIVE_THRESHOLD && isEqual({fileName, relativePath, timestamp, hash}, lastReceivedData.downloadedFile)) {
+	if (now - lastDataTimestamp.downloadedFile < DATA_RECEIVE_THRESHOLD && isEqual({fileName, relativePath, timestamp, hash, displayName}, lastReceivedData.downloadedFile)) {
 		log.info('Duplicate data received, ignoring.');
 		return;
 	}
@@ -831,7 +834,7 @@ socket.on('file-content-chunk', async (data) => {
 			console.error('Error extracting file:', error);
 			return;
 		}
-		mainWindow?.webContents.send('file-downloaded', { fileName, relativePath, timestamp, hash });
+		mainWindow?.webContents.send('file-downloaded', { fileName, relativePath, timestamp, hash, displayName });
 		setTimeout(() => {
 			delete fileChunks[hash];
 		}, 2000); // Delay deletion of chunks in case server will duplicate some chunks
@@ -896,6 +899,7 @@ async function send_data_in_chunks(socket, data) {
 	const relativePath = data.relativePath;
 	const timestamp = data.timestamp;
 	const hash = data.hash;
+	const displayName = data.displayName;
 
 	const sendChunkAndWaitForAck = (chunk, chunkNumber) => {
 		return new Promise((resolve, reject) => {
@@ -915,6 +919,7 @@ async function send_data_in_chunks(socket, data) {
 				relativePath: relativePath,
 				timestamp: timestamp,
 				hash: hash,
+				displayName: displayName,
 			});
 
 			// Timeout for ACK
@@ -986,7 +991,7 @@ async function processZipBeforeSending(filePath) {
 }
 
 
-async function compressAndSend(folderPath, isFolder,{ fileName, hash, timestamp }) {
+async function compressAndSend(folderPath, isFolder,{ fileName, hash, timestamp, displayName }) {
 	const outputPath = `${folderPath}.zip`;
 	const zip = new AdmZip();
 
@@ -1002,7 +1007,7 @@ async function compressAndSend(folderPath, isFolder,{ fileName, hash, timestamp 
 	log.info("File compressed and saved:", outputPath);
 
 	// Send the file
-	await sendFile(outputPath, { fileName, hash, timestamp });
+	await sendFile(outputPath, { fileName, hash, timestamp, displayName });
 
 	// Clean up the zip file after sending
 	fs.unlink(outputPath, (err) => {
@@ -1013,13 +1018,13 @@ async function compressAndSend(folderPath, isFolder,{ fileName, hash, timestamp 
 }
 
 
-async function sendFile(filePath, { fileName, hash, timestamp }) {
+async function sendFile(filePath, { fileName, hash, timestamp, displayName }) {
 	fileName = fileName.replace(/\.zip$/, '');
 	log.info("Sending file:", filePath, { fileName, hash, timestamp });
 	const fileBuffer = await fs.promises.readFile(filePath);
 	const stats = fs.statSync(filePath);
 	timestamp = timestamp || stats.mtime.getTime() / 1000;
-	send_data_in_chunks(socket, { file: fileBuffer, fileName, relativePath: store.get('relativePath'), timestamp, hash });
+	send_data_in_chunks(socket, { file: fileBuffer, fileName, relativePath: store.get('relativePath'), timestamp, hash, displayName });
 }
 
 /*
@@ -1028,6 +1033,7 @@ data = {
 	relativePath: string,
 	timestamp: number,
 	hash: string,
+	displayName: string,
 }
 
 Эталоном даты считаеться дата которая храниться на сервере
