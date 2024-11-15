@@ -22,23 +22,23 @@ const URL = process.env.ELECTRON_USE_DEV_URL === '1' ? 'http://localhost:3001' :
 log.info('URL:', URL);
 const socket = require('socket.io-client')(URL, { autoConnect: false });
 const AdmZip = require('adm-zip');
-const { jwtDecode }	 = require('jwt-decode')
+const { jwtDecode } = require('jwt-decode');
 const fs = require('fs');
 const path = require('path');
 const validator = require('validator');
 const crc32 = require('crc').crc32;
 const { setExternalVBSLocation, promisified } = require('regedit');
 
-let fetch
+let fetch;
 let store;
 
 (async () => {
-  const fetchModule = await import('node-fetch');
-  fetch = fetchModule.default;
+	const fetchModule = await import('node-fetch');
+	fetch = fetchModule.default;
 
-  const storeModule = await import('electron-store')
-  const Store = storeModule.default;
-  store = new Store({
+	const storeModule = await import('electron-store');
+	const Store = storeModule.default;
+	store = new Store({
 		defaults: {
 			authToken: null,
 			updatePath: null,
@@ -47,7 +47,7 @@ let store;
 			startWithWindows: true,
 			startMinimized: true,
 			quitOnClose: false,
-		}
+		},
 	});
 	// store.delete('authToken'); // for testing
 	function updateStartWithWindows() {
@@ -69,8 +69,7 @@ let store;
 		updateStartWithWindows();
 	});
 
-
-	startProcess()
+	startProcess();
 })();
 
 log.initialize({ preload: true });
@@ -81,18 +80,16 @@ log.info('File:', __filename, 'Dir:', __dirname);
 
 let = currentLocale = i18n.getLocale();
 console.log('Current locale:', currentLocale);
-const preload = path.join(__dirname, 'preload.js')
-const taskBarIconPath = path.join(__dirname, (currentLocale === 'ko' &&  'taskbaricon-mate.png' || 'taskbaricon.png'))
-const notificationIconPath = path.join(__dirname, (currentLocale === 'ko' && 'icon-mate.png' || 'icon.png'))
+const preload = path.join(__dirname, 'preload.js');
+const taskBarIconPath = path.join(__dirname, (currentLocale === 'ko' && 'taskbaricon-mate.png') || 'taskbaricon.png');
+const notificationIconPath = path.join(__dirname, (currentLocale === 'ko' && 'icon-mate.png') || 'icon.png');
 console.log('Taskbar icon:', taskBarIconPath, 'Notification icon:', notificationIconPath);
-const html = path.join(__dirname, 'index.html')
+const html = path.join(__dirname, 'index.html');
 
 const taskBarIcon = nativeImage.createFromPath(taskBarIconPath);
 const notificationIcon = nativeImage.createFromPath(notificationIconPath);
 
-protocol.registerSchemesAsPrivileged([
-  { scheme: "app", privileges: { secure: true, standard: true } },
-]);
+protocol.registerSchemesAsPrivileged([{ scheme: 'app', privileges: { secure: true, standard: true } }]);
 
 autoUpdater.autoDownload = false;
 autoUpdater.autoInstallOnAppQuit = false;
@@ -100,13 +97,11 @@ autoUpdater.allowPrerelease = false;
 log.transports.file.level = 'info';
 autoUpdater.logger = log;
 
-
 let queuedDialogs = [];
 
 function queueDialog(mainWindow, dialogOptions, onSuccess) {
 	if (mainWindow?.isVisible()) {
-		dialog.showMessageBox(mainWindow, dialogOptions)
-			.then(onSuccess);
+		dialog.showMessageBox(mainWindow, dialogOptions).then(onSuccess);
 	} else {
 		queuedDialogs.push({ dialogOptions, onSuccess });
 	}
@@ -134,7 +129,7 @@ function startProcess() {
 	createWindow();
 	autoUpdater.checkForUpdates().then((UpdateCheckResults) => {
 		log.info('Update check results:', UpdateCheckResults);
-	})
+	});
 }
 
 function createWindow() {
@@ -149,8 +144,8 @@ function createWindow() {
 		resizable: false,
 		fullscreenable: false,
 		frame: false,
-		backgroundColor: "#00000000",
-    titleBarStyle: "hidden",
+		backgroundColor: '#00000000',
+		titleBarStyle: 'hidden',
 		webPreferences: {
 			preload: preload,
 			nodeIntegration: false,
@@ -158,23 +153,21 @@ function createWindow() {
 			enableRemoteModule: false,
 			webSecurity: true,
 			allowRunningInsecureContent: false,
-      sandbox: true,
+			sandbox: true,
 		},
 		skipTaskbar: startMinimized,
 		show: !startMinimized,
 	});
 
-
-
 	mainWindow?.webContents.setWindowOpenHandler(({ url }) => {
-    if (url.startsWith("https:")) {
-      void shell.openExternal(url);
-    }
-    return { action: "deny" };
-  });
+		if (url.startsWith('https:')) {
+			void shell.openExternal(url);
+		}
+		return { action: 'deny' };
+	});
 
 	mainWindow?.once('ready-to-show', () => {
-		renderer_log(`Ready to show. Start args: ${process.argv.join(' ')}`)
+		renderer_log(`Ready to show. Start args: ${process.argv.join(' ')}`);
 		log.info(`Ready to show. Start args: ${process.argv.join(' ')}`);
 
 		// mainWindow?.webContents.openDevTools({ mode: "detach" });
@@ -183,54 +176,59 @@ function createWindow() {
 	mainWindow?.setMenu(null);
 
 	log.info(`Loading File: ${html}`);
-	mainWindow?.loadFile(html)
+	mainWindow?.loadFile(html);
 
 	mainWindow?.on('closed', () => (mainWindow = null));
 
 	tray = new Tray(taskBarIcon);
 	const contextMenu = Menu.buildFromTemplate([
 		{ label: 'Show', click: () => mainWindow?.show() },
-		{ label: 'Quit', click: () => { app.isQuiting = true; app.quit(); }},
+		{
+			label: 'Quit',
+			click: () => {
+				app.isQuiting = true;
+				app.quit();
+			},
+		},
 	]);
 	tray?.setToolTip('Rak Gaming Updater');
 	tray?.setContextMenu(contextMenu);
 	tray?.setIgnoreDoubleClickEvents(true);
 
-	tray?.on("right-click", () => tray?.popUpContextMenu(contextMenu));
-	tray?.on("click", () => {
-    if (mainWindow?.isVisible()) {
-      mainWindow?.hide();
+	tray?.on('right-click', () => tray?.popUpContextMenu(contextMenu));
+	tray?.on('click', () => {
+		if (mainWindow?.isVisible()) {
+			mainWindow?.hide();
 
-      if (process.platform === "darwin") {
-        app.dock.hide();
-      }
-    } else {
-      mainWindow?.show();
+			if (process.platform === 'darwin') {
+				app.dock.hide();
+			}
+		} else {
+			mainWindow?.show();
 
-      if (process.platform === "darwin") {
-        void app.dock.show();
-      }
-    }
-  });
+			if (process.platform === 'darwin') {
+				void app.dock.show();
+			}
+		}
+	});
 
-	mainWindow?.webContents.on("will-navigate", (event) => {
-    if (mainWindow?.webContents.getURL() !== winURL) {
-      event.preventDefault();
-    }
-  });
+	mainWindow?.webContents.on('will-navigate', (event) => {
+		if (mainWindow?.webContents.getURL() !== winURL) {
+			event.preventDefault();
+		}
+	});
 
 	mainWindow?.on('show', () => {
 		mainWindow?.setSkipTaskbar(false);
 
 		if (queuedDialogs.length > 0) {
-			queuedDialogs.forEach(({dialogOptions, onSuccess}) => {
+			queuedDialogs.forEach(({ dialogOptions, onSuccess }) => {
 				if (onSuccess) {
-					dialog.showMessageBox(mainWindow, dialogOptions).then(onSuccess)
+					dialog.showMessageBox(mainWindow, dialogOptions).then(onSuccess);
 				}
 			});
 			queuedDialogs = [];
 		}
-
 	});
 
 	mainWindow?.on('minimize', (event) => {
@@ -252,12 +250,12 @@ if (!app.requestSingleInstanceLock()) {
 	log.info('Second instance detected, quitting');
 	app.quit();
 } else {
-	app.on("second-instance", (event, argv) => {
+	app.on('second-instance', (event, argv) => {
 		log.info('Second instance started');
 		// Someone tried to run a second instance, focus our window instead
 		if (mainWindow) {
 			if (!mainWindow?.isVisible()) {
-				log.info('Second instance, forcing show of first window')
+				log.info('Second instance, forcing show of first window');
 				mainWindow?.show();
 			}
 			mainWindow?.focus();
@@ -266,7 +264,7 @@ if (!app.requestSingleInstanceLock()) {
 
 	app.whenReady().then(() => {
 		log.info('App is ready');
-		startProcess()
+		startProcess();
 	});
 }
 
@@ -276,41 +274,40 @@ app.on('window-all-closed', () => {
 	}
 });
 
-app.on("activate", () => {
-  if (mainWindow === null) {
-    createWindow();
+app.on('activate', () => {
+	if (mainWindow === null) {
+		createWindow();
 
-    if (process.platform === "darwin") {
-      void app.dock.show();
-    }
-  }
+		if (process.platform === 'darwin') {
+			void app.dock.show();
+		}
+	}
 });
 
 // important for notifications on Windows
-app.setAppUserModelId("com.rak-gaming-updater");
-app.setAsDefaultProtocolClient("rak-gaming-updater");
-
+app.setAppUserModelId('com.rak-gaming-updater');
+app.setAsDefaultProtocolClient('rak-gaming-updater');
 
 // Protocol handler for macOS
-app.on("open-url", (event, url) => {
-  event.preventDefault();
+app.on('open-url', (event, url) => {
+	event.preventDefault();
 });
 
 // Ctrl+Shift+I to open devTools, Ctrl+Shift+R to reload
-app.on("web-contents-created", (webContentsCreatedEvent, webContents) => {
-  webContents.on("before-input-event", (beforeInputEvent, input) => {
-    const { code, alt, control, shift, meta } = input;
+app.on('web-contents-created', (webContentsCreatedEvent, webContents) => {
+	webContents.on('before-input-event', (beforeInputEvent, input) => {
+		const { code, alt, control, shift, meta } = input;
 
-    // Shortcut: toggle devTools
-    if (shift && control && !alt && !meta && code === "KeyI") {
-      mainWindow?.webContents.openDevTools({ mode: "detach" });
-    }
+		// Shortcut: toggle devTools
+		if (shift && control && !alt && !meta && code === 'KeyI') {
+			mainWindow?.webContents.openDevTools({ mode: 'detach' });
+		}
 
-    // Shortcut: window reload
-    // if (shift && control && !alt && !meta && code === "KeyR") {
-    //   mainWindow.reload();
-    // }
-  });
+		// Shortcut: window reload
+		// if (shift && control && !alt && !meta && code === "KeyR") {
+		//   mainWindow.reload();
+		// }
+	});
 });
 
 // Auto-updater events
@@ -338,7 +335,7 @@ autoUpdater.on('update-available', (info) => {
 			detail: `A new version ${info.version} is available. Do you want to update now?`,
 			noLink: true,
 			modal: true,
-			parent: mainWindow
+			parent: mainWindow,
 		};
 
 		queueDialog(mainWindow, dialogOpts, ({ response }) => {
@@ -354,7 +351,7 @@ autoUpdater.on('update-not-available', () => {
 });
 
 autoUpdater.on('error', (err) => {
-  renderer_log('Error in auto-updater. ' + err);
+	renderer_log('Error in auto-updater. ' + err);
 });
 
 autoUpdater.on('download-progress', (progress) => {
@@ -370,23 +367,23 @@ autoUpdater.on('download-progress', (progress) => {
 	mainWindow?.setProgressBar(progress.percent / 100);
 });
 
-
 autoUpdater.on('update-downloaded', () => {
-  log.info('Update downloaded; will install in 5 seconds');
-	renderer_log('Update downloaded; will install in 5 seconds')
+	log.info('Update downloaded; will install in 5 seconds');
+	renderer_log('Update downloaded; will install in 5 seconds');
 
 	mainWindow?.setProgressBar(-1);
 
-  setTimeout(() => { // Shenanigans to make sure the app closes properly
+	setTimeout(() => {
+		// Shenanigans to make sure the app closes properly
 		app.isQuiting = true;
 		if (mainWindow) {
-      mainWindow?.close();
-    }
-    autoUpdater.quitAndInstall(true, true);
+			mainWindow?.close();
+		}
+		autoUpdater.quitAndInstall(true, true);
 		setTimeout(() => {
 			app.quit();
 		}, 1000);
-  }, 5000);
+	}, 5000);
 });
 
 function isEqual(data1, data2) {
@@ -395,7 +392,7 @@ function isEqual(data1, data2) {
 
 function sanitizeInput(input) {
 	let res = validator.escape(input);
-	res = res.trim()
+	res = res.trim();
 	return res;
 }
 
@@ -403,31 +400,31 @@ const vbsPath = path.join(app.getAppPath(), '..', 'vbs');
 setExternalVBSLocation(vbsPath); // to allow packaged app to access registry
 log.info('VBS Path:', vbsPath);
 async function wowDefaultPath() {
-  if (process.platform === "win32") {
-    // log.info('Checking default WoW path on Windows');
-    const key = "HKLM\\SOFTWARE\\WOW6432Node\\Blizzard Entertainment\\World of Warcraft";
+	if (process.platform === 'win32') {
+		// log.info('Checking default WoW path on Windows');
+		const key = 'HKLM\\SOFTWARE\\WOW6432Node\\Blizzard Entertainment\\World of Warcraft';
 
-    try {
-      const results = await promisified.list([key]);
-      const value = results[key].values.InstallPath.value;
-      // log.info('Registry WoW Path:', value, typeof value);
-      if (typeof value === "string") {
-        let path = validateWoWPath(value);
-        // log.info('Validated WoW Path:', path);
-        return path;
-      } else {
-        // log.error('WoW path is not a string:', value);
-        // Optionally, prompt the user for input or provide a default path
-        return null;
-      }
-    } catch (e) {
-      log.error('Error accessing registry for WoW path:', JSON.stringify(e));
-      // Show an error dialog to the user or log the error
-      // Optionally, prompt the user to manually select the WoW installation path
-      return null;
-    }
-  }
-  return null;
+		try {
+			const results = await promisified.list([key]);
+			const value = results[key].values.InstallPath.value;
+			// log.info('Registry WoW Path:', value, typeof value);
+			if (typeof value === 'string') {
+				let path = validateWoWPath(value);
+				// log.info('Validated WoW Path:', path);
+				return path;
+			} else {
+				// log.error('WoW path is not a string:', value);
+				// Optionally, prompt the user for input or provide a default path
+				return null;
+			}
+		} catch (e) {
+			log.error('Error accessing registry for WoW path:', JSON.stringify(e));
+			// Show an error dialog to the user or log the error
+			// Optionally, prompt the user to manually select the WoW installation path
+			return null;
+		}
+	}
+	return null;
 }
 
 function validateWoWPath(inputPath) {
@@ -438,7 +435,7 @@ function validateWoWPath(inputPath) {
 	const pathComponents = normalizedPath.split(path.sep);
 
 	// Find the index of the "World of Warcraft" folder in the path
-	const wowIndex = pathComponents.map(component => component.toLowerCase()).indexOf('world of warcraft'.toLowerCase());
+	const wowIndex = pathComponents.map((component) => component.toLowerCase()).indexOf('world of warcraft'.toLowerCase());
 
 	// If "World of Warcraft" is not in the path, the path is invalid
 	if (wowIndex === -1) {
@@ -453,7 +450,7 @@ function validateWoWPath(inputPath) {
 	const retailPath = path.join(wowPath, '_retail_');
 	if (fs.existsSync(retailPath)) {
 		// Return the path to "World of Warcraft" if "_retail_" exists within it
-		log.info('Valid WoW Path:', wowPath)
+		log.info('Valid WoW Path:', wowPath);
 		return wowPath;
 	}
 
@@ -476,10 +473,10 @@ ipcMain.handle('get-wow-path', async () => {
 
 async function onFilePathSelected(folderPath) {
 	log.info('Selected path:', folderPath, '|relative path:', store.get('relativePath'));
-	if (!store.get('relativePath'))  {
+	if (!store.get('relativePath')) {
 		log.info('Relative path not set, skipping');
 		renderer_log('Relative path not set, skipping');
-		return
+		return;
 	}
 	if (folderPath) {
 		const hash = await generateHashForPath(folderPath);
@@ -496,12 +493,11 @@ async function onFilePathSelected(folderPath) {
 			log.info('File extension:', fileExtension);
 			renderer_log('File extension:', fileExtension);
 
-
 			if (fileExtension === '.zip') {
 				// Before sending the .zip we must unzip it to check the hash and name of the package
 				const { fileName, hash, timestamp } = await processZipBeforeSending(folderPath);
 				log.info('Processed zip:', fileName, hash, timestamp);
-				emptyData = { fileName, hash, timestamp, displayName }
+				emptyData = { fileName, hash, timestamp, displayName };
 
 				// Send the .zip file directly
 				sendFile(folderPath, emptyData);
@@ -513,7 +509,6 @@ async function onFilePathSelected(folderPath) {
 	} else {
 		log.info('No path selected');
 		renderer_log('No path selected');
-
 	}
 }
 
@@ -549,7 +544,7 @@ ipcMain.on('close-app', (event) => {
 
 ipcMain.handle('select-update-path', async () => {
 	const result = await dialog.showOpenDialog(mainWindow, {
-		properties: ['openDirectory']
+		properties: ['openDirectory'],
 	});
 	log.info('Selected path(select-update-path):', result.filePaths);
 	if (result.filePaths.length > 0) {
@@ -559,7 +554,7 @@ ipcMain.handle('select-update-path', async () => {
 });
 ipcMain.handle('select-relative-path', async () => {
 	const result = await dialog.showOpenDialog(mainWindow, {
-		properties: ['openDirectory']
+		properties: ['openDirectory'],
 	});
 	if (result.filePaths.length > 0) {
 		let pathToWow = validateWoWPath(result.filePaths[0]);
@@ -567,10 +562,10 @@ ipcMain.handle('select-relative-path', async () => {
 			return null;
 		}
 		let relativePath = path.relative(pathToWow, result.filePaths[0]);
-		log.info('Relative path:', relativePath)
+		log.info('Relative path:', relativePath);
 		return relativePath;
 	}
-})
+});
 
 ipcMain.handle('login', async (event, { username, password }) => {
 	try {
@@ -578,47 +573,45 @@ ipcMain.handle('login', async (event, { username, password }) => {
 		const sanitizedUsername = sanitizeInput(username); // Implement sanitizeInput to sanitize user inputs
 		const sanitizedPassword = sanitizeInput(password);
 
-
 		const response = await fetch(loginUrl, {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({ username: sanitizedUsername, password: sanitizedPassword })
+			body: JSON.stringify({ username: sanitizedUsername, password: sanitizedPassword }),
 		});
 
 		if (!response.ok) {
-			return {success: false, error: `Server responded with status ${response.status}: ${await response.text()}`}
+			return { success: false, error: `Server responded with status ${response.status}: ${await response.text()}` };
 		}
 
 		const data = await response.json();
 		if (data.token) {
 			store.set('authToken', data.token);
 			log.info('Login successful');
-			return {success: true, error: null};
+			return { success: true, error: null };
 		} else {
 			log.info('Login failed invalid credentials');
-			return {success: false, error: "invalid credentials"};
+			return { success: false, error: 'invalid credentials' };
 		}
-		} catch (err) {
-			log.info('Login error:', err);
-			console.error('Login error:', err);
-			return {success: false, error: `error logging in: ${err.code}`};
-		}
+	} catch (err) {
+		log.info('Login error:', err);
+		console.error('Login error:', err);
+		return { success: false, error: `error logging in: ${err.code}` };
+	}
 });
 
 ipcMain.handle('should-download-file', (event, serverFile) => {
 	return shouldDownloadFile(serverFile);
 });
 
-
 ipcMain.handle('request-files-data', async (event) => {
 	return await fetch(`${URL}/files`, {
-    method: 'GET',
-    headers: {
-        'Authorization': `Bearer ${store.get('authToken')}`
-    }
-})
-	.then(response => response.json())
-	.catch(error => console.error('Error fetching files data:', error));
+		method: 'GET',
+		headers: {
+			Authorization: `Bearer ${store.get('authToken')}`,
+		},
+	})
+		.then((response) => response.json())
+		.catch((error) => console.error('Error fetching files data:', error));
 });
 
 // ipcMain.handle('request-active-users', async (event) => {
@@ -643,7 +636,6 @@ ipcMain.handle('request-files-data', async (event) => {
 // 	}
 // });
 
-
 ipcMain.on('connect', () => {
 	log.info('Connecting to server');
 	const token = store.get('authToken');
@@ -655,7 +647,6 @@ ipcMain.on('request-file', (event, data) => {
 	socket.emit('request-file', data);
 });
 
-
 socket.on('connect', () => {
 	log.info('Connected to server');
 	mainWindow?.webContents.send('connect');
@@ -666,31 +657,32 @@ const totalReconnectAttempts = 15;
 let manualReconnectAttempt = 0;
 let reconnectScheduled = false;
 socket.on('connect_error', (error) => {
-	log.info('Connection error',error);
-	mainWindow?.webContents.send('connect-error', error)
+	log.info('Connection error', error);
+	mainWindow?.webContents.send('connect-error', error);
 	const token = store.get('authToken');
 
-if (!socket.active && !reconnectScheduled && token && manualReconnectAttempt < totalReconnectAttempts) {
+	if (!socket.active && !reconnectScheduled && token && manualReconnectAttempt < totalReconnectAttempts) {
 		reconnectScheduled = true;
 		socket.auth = { token };
 		setTimeout(() => {
 			reconnectScheduled = false;
 			manualReconnectAttempt++;
 			socket.connect();
-		}), 5000;
+		}),
+			5000;
 	}
 });
 
 socket.on('disconnect', (reason, details) => {
 	log.info('Disconnected from server', reason, details);
-	mainWindow?.webContents.send('disconnect', details && details.description || reason);
+	mainWindow?.webContents.send('disconnect', (details && details.description) || reason);
 });
 
 socket.on('new-file', (data) => {
 	const now = Date.now();
 	if (now - lastDataTimestamp.newFile < DATA_RECEIVE_THRESHOLD && isEqual(data, lastReceivedData.newFile)) {
-			log.info('Duplicate data received, ignoring.');
-			return;
+		log.info('Duplicate data received, ignoring.');
+		return;
 	}
 	lastDataTimestamp.newFile = now;
 	lastReceivedData.newFile = data;
@@ -712,11 +704,10 @@ ipcMain.on('delete-file', (event, data) => {
 	socket.emit('delete-file', data);
 });
 
-
 socket.on('new-release', (data) => {
 	log.info('New release:', data);
 	renderer_log('New release available');
-	rechekTries = 0
+	rechekTries = 0;
 	if (updatedRecheckTimer) {
 		clearInterval(updatedRecheckTimer);
 		log.info('Recheck timer cleared');
@@ -744,19 +735,19 @@ socket.on('error', (error) => {
 });
 
 ipcMain.on('open-file-dialog-folder', async () => {
-	log.info('Opening file dialog: open-file-dialog')
+	log.info('Opening file dialog: open-file-dialog');
 	const { canceled, filePaths } = await dialog.showOpenDialog({
-		properties: ['openDirectory']
+		properties: ['openDirectory'],
 	});
 	if (!canceled && filePaths.length > 0) {
-		onFilePathSelected(filePaths[0])
+		onFilePathSelected(filePaths[0]);
 	}
 });
 
 ipcMain.on('open-file-dialog-file', async () => {
-	log.info('Opening file dialog: open-file-dialog')
+	log.info('Opening file dialog: open-file-dialog');
 	const { canceled, filePaths } = await dialog.showOpenDialog({
-		properties: ['openFile']
+		properties: ['openFile'],
 	});
 	if (!canceled && filePaths.length > 0) {
 		onFilePathSelected(filePaths[0]);
@@ -770,7 +761,7 @@ socket.on('not-enough-permissions', (data) => {
 
 const fileChunks = {};
 socket.on('file-content-chunk', async (data) => {
-	if (!await getWoWPath()) return
+	if (!(await getWoWPath())) return;
 	const { chunk, chunkNumber, totalChunks, fileName, relativePath, timestamp, hash, displayName } = data;
 
 	// Initialize the file's chunk array if it doesn't exist
@@ -786,21 +777,20 @@ socket.on('file-content-chunk', async (data) => {
 	fileChunks[hash][chunkNumber] = chunk;
 
 	// Calculate the percentage of chunks received
-	const chunksReceived = fileChunks[hash].filter(chunk => chunk !== null).length;
+	const chunksReceived = fileChunks[hash].filter((chunk) => chunk !== null).length;
 	const progressPercent = Math.round((chunksReceived / totalChunks) * 100);
 	mainWindow?.webContents.send('file-chunk-received', { progressPercent, fileName, relativePath, timestamp, hash, displayName });
-
 
 	// Check if all chunks have been received
 	const allChunksReceived = fileChunks[hash].every((chunk) => chunk !== null);
 
-	socket.emit('ack', {chunkNumber, fileName, hash});
+	socket.emit('ack', { chunkNumber, fileName, hash });
 	// log.info(`ACK sent for chunk ${chunkNumber} of file ${fileName}`)
 
-	if (!allChunksReceived) return
+	if (!allChunksReceived) return;
 
 	const now = Date.now();
-	if (now - lastDataTimestamp.downloadedFile < DATA_RECEIVE_THRESHOLD && isEqual({fileName, relativePath, timestamp, hash, displayName}, lastReceivedData.downloadedFile)) {
+	if (now - lastDataTimestamp.downloadedFile < DATA_RECEIVE_THRESHOLD && isEqual({ fileName, relativePath, timestamp, hash, displayName }, lastReceivedData.downloadedFile)) {
 		log.info('Duplicate data received, ignoring.');
 		return;
 	}
@@ -825,7 +815,7 @@ socket.on('file-content-chunk', async (data) => {
 		await fs.promises.rm(exptected_output_folder, { recursive: true });
 	}
 
-	log.info('Decompressing file:', temp_zip_file_path)
+	log.info('Decompressing file:', temp_zip_file_path);
 	const zip = new AdmZip(fileBuffer);
 
 	zip.extractAllToAsync(target_path, true, false, (error) => {
@@ -842,27 +832,27 @@ socket.on('file-content-chunk', async (data) => {
 });
 
 async function generateHashForPath(entryPath) {
-    const stats = await fs.promises.stat(entryPath);
-    if (stats.isDirectory()) {
-        // Get all entries in the directory
-        const entries = await fs.promises.readdir(entryPath);
-        const sortedEntries = entries.sort();
-				let combinedHash = '';
-        for (let entry of sortedEntries) {
-					const fullPath = path.join(entryPath, entry);
-					const entryHash = await generateHashForPath(fullPath); // Process each entry sequentially
-					combinedHash += entryHash; // Concatenate hashes
-			}
-        return crc32(combinedHash).toString(16);
-    } else {
-        // It's a file, generate hash as before
-        const fileBuffer = await fs.promises.readFile(entryPath);
-        return crc32(fileBuffer).toString(16);
-    }
+	const stats = await fs.promises.stat(entryPath);
+	if (stats.isDirectory()) {
+		// Get all entries in the directory
+		const entries = await fs.promises.readdir(entryPath);
+		const sortedEntries = entries.sort();
+		let combinedHash = '';
+		for (let entry of sortedEntries) {
+			const fullPath = path.join(entryPath, entry);
+			const entryHash = await generateHashForPath(fullPath); // Process each entry sequentially
+			combinedHash += entryHash; // Concatenate hashes
+		}
+		return crc32(combinedHash).toString(16);
+	} else {
+		// It's a file, generate hash as before
+		const fileBuffer = await fs.promises.readFile(entryPath);
+		return crc32(fileBuffer).toString(16);
+	}
 }
 
 async function shouldDownloadFile(serverFile) {
-	if (!await getWoWPath()) {
+	if (!(await getWoWPath())) {
 		return [false, L['No WoW Path set']];
 	}
 
@@ -890,7 +880,7 @@ async function shouldDownloadFile(serverFile) {
 }
 
 async function send_data_in_chunks(socket, data) {
-	log.info('Sending data in chunks:', data.fileName, data.relativePath, data.timestamp, data.hash );
+	log.info('Sending data in chunks:', data.fileName, data.relativePath, data.timestamp, data.hash);
 	const CHUNK_SIZE = 256 * 1024; // 256KB
 	const fileBuffer = data.file;
 	const totalChunks = Math.ceil(fileBuffer.length / CHUNK_SIZE);
@@ -905,8 +895,8 @@ async function send_data_in_chunks(socket, data) {
 		return new Promise((resolve, reject) => {
 			const ackListener = (ackData) => {
 				if (ackData.chunkNumber === chunkNumber && ackData.hash === hash && ackData.fileName === fileName) {
-						socket.off('ack', ackListener); // Remove listener after receiving ACK
-						resolve();
+					socket.off('ack', ackListener); // Remove listener after receiving ACK
+					resolve();
 				}
 			};
 			socket.on('ack', ackListener);
@@ -990,21 +980,20 @@ async function processZipBeforeSending(filePath) {
 	}
 }
 
-
-async function compressAndSend(folderPath, isFolder,{ fileName, hash, timestamp, displayName }) {
+async function compressAndSend(folderPath, isFolder, { fileName, hash, timestamp, displayName }) {
 	const outputPath = `${folderPath}.zip`;
 	const zip = new AdmZip();
 
 	if (isFolder) {
-			zip.addLocalFolder(folderPath, fileName);
+		zip.addLocalFolder(folderPath, fileName);
 	} else {
-			zip.addLocalFile(folderPath);
+		zip.addLocalFile(folderPath);
 	}
 
 	// Save the zip file
 	await zip.writeZipPromise(outputPath);
 
-	log.info("File compressed and saved:", outputPath);
+	log.info('File compressed and saved:', outputPath);
 
 	// Send the file
 	await sendFile(outputPath, { fileName, hash, timestamp, displayName });
@@ -1012,15 +1001,14 @@ async function compressAndSend(folderPath, isFolder,{ fileName, hash, timestamp,
 	// Clean up the zip file after sending
 	fs.unlink(outputPath, (err) => {
 		if (err) {
-			console.error("Error deleting zip file:", err);
+			console.error('Error deleting zip file:', err);
 		}
 	});
 }
 
-
 async function sendFile(filePath, { fileName, hash, timestamp, displayName }) {
 	fileName = fileName.replace(/\.zip$/, '');
-	log.info("Sending file:", filePath, { fileName, hash, timestamp });
+	log.info('Sending file:', filePath, { fileName, hash, timestamp });
 	const fileBuffer = await fs.promises.readFile(filePath);
 	const stats = fs.statSync(filePath);
 	timestamp = timestamp || stats.mtime.getTime() / 1000;

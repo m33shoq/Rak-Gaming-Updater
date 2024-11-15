@@ -1,6 +1,6 @@
 let i18n = {};
 let L = new Proxy(i18n, {
-	get: (target, prop) => (prop in target ? target[prop] : prop)
+	get: (target, prop) => (prop in target ? target[prop] : prop),
 });
 
 (async () => {
@@ -9,22 +9,22 @@ let L = new Proxy(i18n, {
 
 	const translateDOM = () => {
 		const elements = document.querySelectorAll('*');
-		elements.forEach(element => {
-				if (element.childNodes.length === 1 && element.childNodes[0].nodeType === Node.TEXT_NODE) {
-						const text = element.textContent.trim();
-						if (text) {
-								const translatedText = L[text];
-								if (translatedText !== text) {
-										element.textContent = translatedText;
-								}
-						}
+		elements.forEach((element) => {
+			if (element.childNodes.length === 1 && element.childNodes[0].nodeType === Node.TEXT_NODE) {
+				const text = element.textContent.trim();
+				if (text) {
+					const translatedText = L[text];
+					if (translatedText !== text) {
+						element.textContent = translatedText;
+					}
 				}
+			}
 		});
 	};
 
 	// Call the function to translate the DOM elements
 	translateDOM();
-	console.log(L.LOCALE_NAME)
+	console.log(L.LOCALE_NAME);
 	if (L.LOCALE_NAME === 'ko') {
 		document.getElementById('headericon').src = 'icon-mate.png';
 	}
@@ -40,11 +40,12 @@ async function onNewFile(data) {
 	if (isAdmin()) {
 		addFileToAdminWidget(data);
 	}
-	if (await api.store.get('autoupdate') == true) {
+	if ((await api.store.get('autoupdate')) == true) {
 		const [shouldDownload, reason] = await api.shouldDownloadFile(data);
-		console.log("ShouldDownloadFile:", shouldDownload, reason)
-		if (shouldDownload && reason === L["Update"]) { // this is very sketchy to check for localized string
-			console.log('Auto updating file:', data.fileName)
+		console.log('ShouldDownloadFile:', shouldDownload, reason);
+		if (shouldDownload && reason === L['Update']) {
+			// this is very sketchy to check for localized string
+			console.log('Auto updating file:', data.fileName);
 			api.requestFile(data);
 		} else {
 			console.log('File is up to date:', data.fileName);
@@ -53,7 +54,7 @@ async function onNewFile(data) {
 }
 
 async function initializeSocket() {
-	 userData = await api.check_for_login()
+	userData = await api.check_for_login();
 	if (userData) {
 		api.socket_connect();
 	} else {
@@ -62,7 +63,7 @@ async function initializeSocket() {
 
 	api.socket_on_connect(() => {
 		isConnected = true;
-		console.log("Socket connected");
+		console.log('Socket connected');
 		log(`Connected at ${new Date().toLocaleString()}`);
 		widgetContainerMap.clear();
 		filesListMap.clear();
@@ -74,38 +75,38 @@ async function initializeSocket() {
 	});
 
 	api.socket_on_disconnect((event, description) => {
-		isConnected = false
+		isConnected = false;
 		console.log(`Socket Disconnected`, description);
 		log(`Disconnected at ${new Date().toLocaleString()}`);
-		document.getElementById('disconnect-reason').innerText = `${L["Disconnected"]}: ${description}`
-		document.getElementById('login-error').innerText = ``
+		document.getElementById('disconnect-reason').innerText = `${L['Disconnected']}: ${description}`;
+		document.getElementById('login-error').innerText = ``;
 		showLogin();
 	});
 
 	api.socket_on_connect_error((event, description) => {
-		console.log('Connect failed:', description)
-		document.getElementById('login-error').innerText = `connect failed: ${description}`
+		console.log('Connect failed:', description);
+		document.getElementById('login-error').innerText = `connect failed: ${description}`;
 	});
 
 	api.socket_on_new_file(async (event, data) => {
 		console.log('New file available:', data, data.fileName);
 		log(`New file available: ${data.fileName} at ${new Date().toLocaleString()}`);
-		onNewFile(data)
+		onNewFile(data);
 	});
 
 	api.socket_on_file_not_found((event, data) => {
 		console.log('File not found:', data);
-    log(`File not found: ${data.fileName} at ${new Date().toLocaleString()}`);
+		log(`File not found: ${data.fileName} at ${new Date().toLocaleString()}`);
 	});
 
 	api.socket_on_file_deleted((event, data) => {
-    log(`File deleted from the server: ${data.fileName} at ${new Date().toLocaleString()}`);
+		log(`File deleted from the server: ${data.fileName} at ${new Date().toLocaleString()}`);
 
 		removeFileFromWidget(data);
 		if (isAdmin()) {
 			removeFileFromAdminWidget(data);
 		}
-	})
+	});
 
 	api.IR_onFileChunkReceived((event, data) => {
 		const { progressPercent, fileName, relativePath, timestamp, hash, displayName } = data;
@@ -115,7 +116,7 @@ async function initializeSocket() {
 
 		if (lineItem) {
 			const updateBtn = lineItem.querySelector('.update-btn');
-			updateBtn.Disable(`${L["Downloading..."]} ${progressPercent}%`);
+			updateBtn.Disable(`${L['Downloading...']} ${progressPercent}%`);
 			updateBtn.UpdateDownloadTimer();
 		}
 	});
@@ -131,25 +132,24 @@ async function initializeSocket() {
 			updateBtn.Disable(L['Up to date']); // maybe should use .Update here but it's not necessary
 		}
 	});
-
 }
 
-
 document.getElementById('login-btn').addEventListener('click', async () => {
-	const username = document.getElementById('username').value
-	const password = document.getElementById('password').value
+	const username = document.getElementById('username').value;
+	const password = document.getElementById('password').value;
 
-	let {success, error} = await api.IR_sendLogin({ username, password })
-	console.log("Login result:", success, error)
+	let { success, error } = await api.IR_sendLogin({ username, password });
+	console.log('Login result:', success, error);
 
-	if (success) { // we recieved token so we can try to connect to the socket
-		console.log("Login successful")
-		userData = await api.check_for_login()
-		console.log(userData)
+	if (success) {
+		// we recieved token so we can try to connect to the socket
+		console.log('Login successful');
+		userData = await api.check_for_login();
+		console.log(userData);
 		api.socket_connect();
 	} else {
-		console.log("Login failed:", error)
-		document.getElementById('login-error').innerText = error
+		console.log('Login failed:', error);
+		document.getElementById('login-error').innerText = error;
 	}
 });
 
@@ -161,40 +161,40 @@ document.getElementById('close-btn').addEventListener('click', () => {
 	api.IR_closeApp();
 });
 
-api.IR_GetAppVersion().then(version => {
+api.IR_GetAppVersion().then((version) => {
 	document.getElementById('version').innerText = `Version ${version}`;
-})
+});
 
 function log(...args) {
-  const logsList = document.getElementById('logs-list')
-  const logItem = document.createElement('li')
-	logItem.innerText = args.join(' ')
-  if (logsList.firstChild) {
-		logsList.insertBefore(logItem, logsList.firstChild)
-  } else {
-    logsList.appendChild(logItem)
-  }
+	const logsList = document.getElementById('logs-list');
+	const logItem = document.createElement('li');
+	logItem.innerText = args.join(' ');
+	if (logsList.firstChild) {
+		logsList.insertBefore(logItem, logsList.firstChild);
+	} else {
+		logsList.appendChild(logItem);
+	}
 }
 
 api.IR_onLog((event, data) => {
-	log(data)
-})
+	log(data);
+});
 
 function isAdmin() {
 	return userData && userData.role === 'admin';
 }
 
-let tab_buttons = {}
+let tab_buttons = {};
 let admin_tabs = {
 	admin: true,
 	status: true,
-}
+};
 function showLogin() {
-	console.log("Displaying login screen");
-	document.querySelectorAll('.tab-content').forEach(tab => tab.style.display = 'none');
+	console.log('Displaying login screen');
+	document.querySelectorAll('.tab-content').forEach((tab) => (tab.style.display = 'none'));
 	document.getElementById(`login-container`).style.display = 'block';
 	// hide tab buttons while on login screen
-	document.querySelectorAll('.tab-button').forEach(button => {
+	document.querySelectorAll('.tab-button').forEach((button) => {
 		button.style.display = 'none';
 	});
 }
@@ -209,7 +209,7 @@ function showAdmin() {
 	if (isAdmin()) {
 		tab_buttons['admin'].click();
 	} else {
-		showMain()
+		showMain();
 	}
 }
 
@@ -223,13 +223,13 @@ function showStatus() {
 	tab_buttons['status'].click();
 }
 
-document.querySelectorAll('.tab-button').forEach(button => {
-	const tabName = button.dataset.tabName
-	console.log("Tab name:", tabName);
+document.querySelectorAll('.tab-button').forEach((button) => {
+	const tabName = button.dataset.tabName;
+	console.log('Tab name:', tabName);
 	tab_buttons[tabName] = button;
 	button.addEventListener('click', () => {
 		// update all tabs visibility based on user role
-		document.querySelectorAll('.tab-button').forEach(button => {
+		document.querySelectorAll('.tab-button').forEach((button) => {
 			if (admin_tabs[button.dataset.tabName] && !isAdmin()) {
 				button.style.display = 'none';
 			} else {
@@ -241,17 +241,17 @@ document.querySelectorAll('.tab-button').forEach(button => {
 			return;
 		}
 
-		document.querySelectorAll('.tab-content').forEach(tab => tab.style.display = 'none');
+		document.querySelectorAll('.tab-content').forEach((tab) => (tab.style.display = 'none'));
 		document.getElementById(`${tabName}-container`).style.display = 'block';
 
-    document.querySelectorAll('.tab-button').forEach(btn => btn.classList.remove('active'));
-    button.classList.add('active');
-		console.log("Switching to tab:", tabName);
-    });
-})
+		document.querySelectorAll('.tab-button').forEach((btn) => btn.classList.remove('active'));
+		button.classList.add('active');
+		console.log('Switching to tab:', tabName);
+	});
+});
 
-function generateUniqueId({fileName, relativePath, timestamp, hash}) {
-  return `${fileName}^${relativePath}^${timestamp}^${hash}`;
+function generateUniqueId({ fileName, relativePath, timestamp, hash }) {
+	return `${fileName}^${relativePath}^${timestamp}^${hash}`;
 }
 
 function ButtonEnable(text) {
@@ -291,29 +291,29 @@ async function ButtonUpdate() {
 function ButtonUpdateDownloadTimer() {
 	if (this.downloadTimer) clearTimeout(this.downloadTimer);
 	this.downloadTimer = setTimeout(() => {
-		this.Update()
+		this.Update();
 	}, 5000);
 }
 
 const widgetContainer = document.getElementById('updater-frame');
 async function addFileToWidget(data) {
-  const uniqueId = generateUniqueId(data);
+	const uniqueId = generateUniqueId(data);
 	if (widgetContainerMap.has(uniqueId)) {
 		console.log('File already exists in widget:', data.fileName);
 		return;
 	}
 
-  const lineItem = document.createElement('div');
+	const lineItem = document.createElement('div');
 	widgetContainerMap.set(uniqueId, lineItem);
-  lineItem.className = 'line-item';
+	lineItem.className = 'line-item';
 
-  let time = new Date(data.timestamp * 1000).toLocaleString();
+	let time = new Date(data.timestamp * 1000).toLocaleString();
 
-  // Create the inner HTML structure to include file name, relative path, and timestamp
-  lineItem.innerHTML = `
+	// Create the inner HTML structure to include file name, relative path, and timestamp
+	lineItem.innerHTML = `
     <div class="file-info-container" id=${uniqueId}>
       <div class="file-name-path">
-        <span>${ data.displayName || data.fileName}\n
+        <span>${data.displayName || data.fileName}\n
         ${data.relativePath}</span>
       </div>
       <div class="uploaded-time-container">
@@ -323,18 +323,18 @@ async function addFileToWidget(data) {
     </div>
   `;
 
-  // Find the button within the newly created structure
-  const updateBtn = lineItem.querySelector('.update-btn');
-  updateBtn.fileData = data;
+	// Find the button within the newly created structure
+	const updateBtn = lineItem.querySelector('.update-btn');
+	updateBtn.fileData = data;
 	updateBtn.Disable = ButtonDisable;
 	updateBtn.Enable = ButtonEnable;
 	updateBtn.Update = ButtonUpdate;
 	updateBtn.UpdateDownloadTimer = ButtonUpdateDownloadTimer;
 
-	updateBtn.Disable(L["Up to date"]);
+	updateBtn.Disable(L['Up to date']);
 	updateBtn.Update();
 
-  widgetContainer.appendChild(lineItem)
+	widgetContainer.appendChild(lineItem);
 }
 function removeFileFromWidget(data) {
 	const uniqueId = generateUniqueId(data);
@@ -347,38 +347,38 @@ function removeFileFromWidget(data) {
 }
 
 function UpdateFileWidget() {
-  widgetContainer.querySelectorAll('.line-item').forEach(lineItem => {
-    const updateBtn = lineItem.querySelector('.update-btn');
+	widgetContainer.querySelectorAll('.line-item').forEach((lineItem) => {
+		const updateBtn = lineItem.querySelector('.update-btn');
 		updateBtn.Update();
-  });
+	});
 }
 
-document.getElementById('refresh-btn').addEventListener('click', async function() {
-  this.classList.add('disabled-btn');
-  this.disabled = true;
+document.getElementById('refresh-btn').addEventListener('click', async function () {
+	this.classList.add('disabled-btn');
+	this.disabled = true;
 
-  setTimeout(() => {
+	setTimeout(() => {
 		this.classList.remove('disabled-btn');
 		this.disabled = false;
-  }, 4000);
+	}, 4000);
 
-	console.log('Requesting files data')
+	console.log('Requesting files data');
 	widgetContainerMap.clear();
 	filesListMap.clear();
-  document.getElementById('updater-frame').innerHTML = '';
-  document.getElementById('files-list').innerHTML = '';
-  filesData = await api.fetchFilesData()
+	document.getElementById('updater-frame').innerHTML = '';
+	document.getElementById('files-list').innerHTML = '';
+	filesData = await api.fetchFilesData();
 
 	console.log('Files data:', filesData);
 	filesData.files.forEach(onNewFile);
-})
+});
 
 async function requestFilesData() {
 	document.getElementById('refresh-btn').click();
 }
 
 document.getElementById('select-path-btn').addEventListener('click', async () => {
-	console.log("Select WoW path button clicked");
+	console.log('Select WoW path button clicked');
 	const selectedPath = await api.IR_selectUpdatePath();
 	if (selectedPath) {
 		await api.store.set('updatePath', selectedPath);
@@ -386,11 +386,9 @@ document.getElementById('select-path-btn').addEventListener('click', async () =>
 		await api.store.set('updatePath', null);
 	}
 	const updatePath = await api.IR_GetWoWPath();
-	document.getElementById('selected-path').innerText = `${L["Wow Path"]}: ${updatePath || 'None'}`;
+	document.getElementById('selected-path').innerText = `${L['Wow Path']}: ${updatePath || 'None'}`;
 	UpdateFileWidget();
 });
-
-
 
 (async () => {
 	const updatePath = await api.IR_GetWoWPath();
@@ -400,8 +398,8 @@ document.getElementById('select-path-btn').addEventListener('click', async () =>
 	const startMinimized = await api.store.get('startMinimized');
 	const quitOnClose = await api.store.get('quitOnClose');
 	console.log('autoupdate:', autoupdate);
-	document.getElementById('selected-path').innerText = `${L["Wow Path"]}: ${updatePath || 'None'}`;
-	document.getElementById('relative-path').innerText = `${L["Relative Path"]}: ${relativePath || 'None'}`;
+	document.getElementById('selected-path').innerText = `${L['Wow Path']}: ${updatePath || 'None'}`;
+	document.getElementById('relative-path').innerText = `${L['Relative Path']}: ${relativePath || 'None'}`;
 	document.getElementById('auto-update-checkbox').checked = autoupdate == true;
 	document.getElementById('start-with-windows-checkbox').checked = startWithWindows == true;
 	document.getElementById('start-minimized-checkbox').checked = startMinimized == true;
@@ -410,20 +408,19 @@ document.getElementById('select-path-btn').addEventListener('click', async () =>
 
 document.getElementById('auto-update-checkbox').addEventListener('change', () => {
 	api.store.set('autoupdate', document.getElementById('auto-update-checkbox').checked);
-})
+});
 
 document.getElementById('start-with-windows-checkbox').addEventListener('change', () => {
 	api.IR_setStartWithWindows(document.getElementById('start-with-windows-checkbox').checked);
-})
+});
 
 document.getElementById('start-minimized-checkbox').addEventListener('change', () => {
 	api.store.set('startMinimized', document.getElementById('start-minimized-checkbox').checked);
-})
+});
 
 document.getElementById('quit-on-close').addEventListener('change', () => {
 	api.store.set('quitOnClose', document.getElementById('quit-on-close').checked);
-})
-
+});
 
 const filesList = document.getElementById('files-list');
 function addFileToAdminWidget(file) {
@@ -436,7 +433,7 @@ function addFileToAdminWidget(file) {
 	const div = document.createElement('div');
 	filesListMap.set(uniqueId, div);
 
-  let time = new Date(file.timestamp * 1000).toLocaleString();
+	let time = new Date(file.timestamp * 1000).toLocaleString();
 	div.innerHTML = `
 		<div class="file-info-container">
 			<div class="file-name-path">
@@ -471,43 +468,38 @@ function removeFileFromAdminWidget(file) {
 
 document.getElementById('add-files-btn').addEventListener('click', () => {
 	api.IR_openFileDialogFile();
-})
+});
 
 document.getElementById('add-folder-btn').addEventListener('click', () => {
 	api.IR_openFileDialogFolder();
-})
+});
 
 document.getElementById('set-relative-path-btn').addEventListener('click', async () => {
-	console.log("Select WoW path button clicked");
+	console.log('Select WoW path button clicked');
 	const path = await api.IR_selectRelativePath();
 	if (path) {
-		document.getElementById('relative-path').innerText = `${L["Relative Path"]}: ${path}`;
+		document.getElementById('relative-path').innerText = `${L['Relative Path']}: ${path}`;
 		api.store.set('relativePath', path);
 	} else {
-		document.getElementById('relative-path').innerText = `${L["Relative Path"]}: ${L["Invalid Path Supplied"]}`;
+		document.getElementById('relative-path').innerText = `${L['Relative Path']}: ${L['Invalid Path Supplied']}`;
 		api.store.set('relativePath', null);
 	}
-})
+});
 
-
-initializeSocket()
-
+initializeSocket();
 
 api.IR_onConnectedClients((event, clients) => {
 	if (!isAdmin) return;
 
-	const clientsList = document.getElementById('clients-list')
-	clientsList.innerHTML = ''
-	clients.forEach(client => {
-		const clientItem = document.createElement('li')
-		clientItem.innerText = `${client.username}(${client.role})`
+	const clientsList = document.getElementById('clients-list');
+	clientsList.innerHTML = '';
+	clients.forEach((client) => {
+		const clientItem = document.createElement('li');
+		clientItem.innerText = `${client.username}(${client.role})`;
 		if (clientsList.firstChild) {
-			clientsList.insertBefore(clientItem, clientsList.firstChild)
+			clientsList.insertBefore(clientItem, clientsList.firstChild);
 		} else {
-			clientsList.appendChild(clientItem)
+			clientsList.appendChild(clientItem);
 		}
 	});
-})
-
-
-
+});

@@ -2,7 +2,7 @@ console.log('preload.js loaded');
 const { contextBridge, ipcRenderer } = require('electron');
 
 async function store_get(key) {
-	if(key === 'authToken') return null;
+	if (key === 'authToken') return null;
 	return await ipcRenderer.invoke('store-get', key);
 }
 
@@ -57,5 +57,3 @@ contextBridge.exposeInMainWorld('api', {
 	requestFile: (data) => ipcRenderer.send('request-file', data),
 	shouldDownloadFile: (data) => ipcRenderer.invoke('should-download-file', data),
 });
-
-
