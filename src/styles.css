@@ -389,3 +389,51 @@ li {
 #main-tab-btn, #admin-tab-btn, #settings-tab-btn, #status-tab-btn, #main-container, #admin-container, #settings-container, #status-container {
 	display: none;
 }
+
+.dropdown-container {
+	margin-top: 20px;
+}
+
+.dropdown {
+	width: 100%;
+	max-width: 300px;
+	padding: 10px;
+	border-radius: 5px;
+	border: 1px solid #333333;
+	background-color: #333333;
+	color: #FFFFFF;
+	font-size: 16px;
+}
+.dropdown:hover {
+	background-color: #444444;
+	border-color: #555555;
+	color: #FFFFFF;
+}
+
+.dropdown:focus {
+	outline: none;
+	border-color: #888888;
+	box-shadow: 0 0 5px rgba(136, 136, 136, 0.5);
+}
+
+.dropdown option {
+	background-color: #333333;
+	color: #FFFFFF;
+}
+
+.dropdown option:hover {
+	background-color: #444444;
+}
+
+#backups-path,
+#backups-folder-size,
+#backups-last-backup-time {
+	margin-top: 10px;
+	/* Adjust the value as needed */
+}
+
+.backups-button-container {
+	display: flex;
+	gap: 10px;
+	/* Adjust the gap between buttons as needed */
+}

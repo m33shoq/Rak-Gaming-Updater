@@ -47,6 +47,7 @@ contextBridge.exposeInMainWorld('api', {
 	IR_openFileDialogFolder: () => ipcRenderer.send('open-file-dialog-folder'),
 	IR_selectUpdatePath: () => ipcRenderer.invoke('select-update-path'),
 	IR_selectRelativePath: () => ipcRenderer.invoke('select-relative-path'),
+	IR_selectBackupsPath: () => ipcRenderer.invoke('select-backups-path'),
 	IR_GetAppVersion: () => ipcRenderer.invoke('get-app-version'),
 	IR_GetWoWPath: () => ipcRenderer.invoke('get-wow-path'),
 	//
@@ -56,4 +57,7 @@ contextBridge.exposeInMainWorld('api', {
 	// },
 	requestFile: (data) => ipcRenderer.send('request-file', data),
 	shouldDownloadFile: (data) => ipcRenderer.invoke('should-download-file', data),
+	getSizeOfBackupsFolder: () => ipcRenderer.invoke('get-size-of-backups-folder'),
+	IR_openBackupsFolder: () => ipcRenderer.send('open-backups-folder'),
+	IR_onBackupCreated: (callback) => ipcRenderer.on('backup-created', callback),
 });

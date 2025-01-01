@@ -11,7 +11,7 @@
 		<div id="title-container">
 			<div class="header-container">
 				<img src="icon.png" alt="Tray Icon" id="headericon" />
-				<h1>Rak Gaming Updater</h1>
+				<h1>RG Updater</h1>
 			</div>
 			<!-- Tab Buttons Container -->
 			<div id="tab-buttons-container">
@@ -19,6 +19,7 @@
 				<button id="admin-tab-btn" class="tab-button" data-tab-name="admin">Pusher</button>
 				<button id="settings-tab-btn" class="tab-button" data-tab-name="settings">Settings</button>
 				<button id="status-tab-btn" class="tab-button" data-tab-name="status">Status</button>
+				<button id="backups-tab-btn" class="tab-button" data-tab-name="backups">Backups</button>
 			</div>
 			<div id="button-container">
 				<button id="minimize-btn">―</button>
@@ -95,6 +96,35 @@
 			<div id="status-frame" class="scroll-frame">
 				<ul id="clients-list" class="scroll-frame-text"></ul>
 			</div>
+		</div>
+		<div id="backups-container" class="tab-content">
+			<div class="checkbox-container">
+				<input type="checkbox" id="backups-enable" />
+				<label>Do backups of WTF folder every 7 days</label>
+			</div>
+			<div id="backupsPath">
+				<div class="backups-button-container">
+					<button id="set-backups-path-btn" class="rounded-button">Set Backups Folder Path</button>
+					<button id="open-backups-path-btn" class="rounded-button">Open Backups Folder</button>
+				</div>
+				<!-- <button id="set-backups-path-btn" class="rounded-button">Set Backups Folder Path</button> -->
+				<!-- <button id="open-backups-path-btn" class="rounded-button">Open Backups Folder</button> -->
+				<p id="backups-path">Backups Path:</p>
+				<p id="backups-folder-size">Current Folder Size:</p>
+				<p id="backups-last-backup-time">Last backup time:</p>
+			</div>
+			<div class="dropdown-container">
+				<label for="max-backups-folder-size-select">Max Backups Folder Size:</label>
+				<select id="max-backups-folder-size-select" class="dropdown">
+					<option value="524">500MB</option>
+					<option value="1048">1GB</option>
+					<option value="2096">2GB</option>
+					<option value="4192">4GB</option>
+					<option value="8384">8GB</option>
+					<option value="16768">16GB</option>
+				</select>
+			</div>
+
 		</div>
 		<script src="renderer.js"></script>
 	</body>

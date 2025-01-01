@@ -241,6 +241,10 @@ document.querySelectorAll('.tab-button').forEach((button) => {
 			return;
 		}
 
+		if (tabName === 'backups') {
+			updateBackupsTexts();
+		}
+
 		document.querySelectorAll('.tab-content').forEach((tab) => (tab.style.display = 'none'));
 		document.getElementById(`${tabName}-container`).style.display = 'block';
 
@@ -404,7 +408,33 @@ document.getElementById('select-path-btn').addEventListener('click', async () =>
 	document.getElementById('start-with-windows-checkbox').checked = startWithWindows == true;
 	document.getElementById('start-minimized-checkbox').checked = startMinimized == true;
 	document.getElementById('quit-on-close').checked = quitOnClose == true;
+
+	const maxBackupsFolderSize = await api.store.get('maxBackupsFolderSize');
+	document.getElementById('max-backups-folder-size-select').value = maxBackupsFolderSize || 0;
+
+	const backupsEnable = await api.store.get('backupsEnabled');
+	document.getElementById('backups-enable').checked = backupsEnable == true;
+
+	const backupsPath = await api.store.get('backupsPath');
+	document.getElementById('backups-path').innerText = `${L['Backups Path']}: ${backupsPath || 'None'}`;
+	updateBackupsTexts();
 })();
+
+function updateBackupsTexts() {
+	api.getSizeOfBackupsFolder().then(async (backupsSize) => {
+		const maxBackupsFolderSize = document.getElementById('max-backups-folder-size-select').value;
+		const backupsSizePercent = (backupsSize / maxBackupsFolderSize) * 100;
+		document.getElementById('backups-folder-size').innerText = `${L['Backups Size']}: ${backupsSize}MB (${backupsSizePercent.toFixed(2)}%)`;
+
+		const lastBackupTime = await api.store.get('lastBackupTime');
+		const lastBackupDate = new Date(lastBackupTime).toLocaleString();
+		document.getElementById('backups-last-backup-time').innerText = `${L['Last backup made']}: ${lastBackupDate}`;
+	});
+}
+api.IR_onBackupCreated((event, data) => {
+	console.log('Backup created:', data);
+	updateBackupsTexts();
+});
 
 document.getElementById('auto-update-checkbox').addEventListener('change', () => {
 	api.store.set('autoupdate', document.getElementById('auto-update-checkbox').checked);
@@ -486,6 +516,33 @@ document.getElementById('set-relative-path-btn').addEventListener('click', async
 	}
 });
 
+document.getElementById('max-backups-folder-size-select').addEventListener('change', (event) => {
+	const value = parseInt(event.target.value, 10);
+	api.store.set('maxBackupsFolderSize', value);
+	updateBackupsTexts();
+});
+
+document.getElementById('backups-enable').addEventListener('change', () => {
+	api.store.set('backupsEnabled', document.getElementById('backups-enable').checked);
+});
+
+document.getElementById('set-backups-path-btn').addEventListener('click', async () => {
+	const path = await api.IR_selectBackupsPath();
+	if (path) {
+		document.getElementById('backups-path').innerText = `${L['Backups Path']}: ${path}`;
+		api.store.set('backupsPath', path);
+		updateBackupsTexts();
+	} else {
+		document.getElementById('backups-path').innerText = `${L['Backups Path']}: ${L['Invalid Path Supplied']}`;
+		api.store.set('backupsPath', null);
+		updateBackupsTexts();
+	}
+});
+
+document.getElementById('open-backups-path-btn').addEventListener('click', async () => {
+	api.IR_openBackupsFolder();
+});
+
 initializeSocket();
 
 api.IR_onConnectedClients((event, clients) => {
@@ -503,3 +560,4 @@ api.IR_onConnectedClients((event, clients) => {
 		}
 	});
 });
+

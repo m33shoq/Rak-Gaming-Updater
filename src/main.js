@@ -47,6 +47,9 @@ let store;
 			startWithWindows: true,
 			startMinimized: true,
 			quitOnClose: false,
+			maxBackupsFolderSize: 524,
+			backupsEnabled: false,
+			backupsFolderPath: null,
 		},
 	});
 	// store.delete('authToken'); // for testing
@@ -567,6 +570,57 @@ ipcMain.handle('select-relative-path', async () => {
 	}
 });
 
+ipcMain.handle('select-backups-path', async () => {
+	const result = await dialog.showOpenDialog(mainWindow, {
+		properties: ['openDirectory'],
+	});
+	if (result.filePaths.length > 0) {
+		log.info('Backups path:', result.filePaths[0]);
+		return result.filePaths[0];
+	}
+});
+
+async function getFolderSize(folderPath) {
+	let totalSize = 0;
+
+	async function calculateSize(directory) {
+		const files = await fs.promises.readdir(directory, { withFileTypes: true });
+
+		for (const file of files) {
+			const filePath = path.join(directory, file.name);
+			const stats = await fs.promises.stat(filePath);
+
+			if (stats.isDirectory()) {
+				await calculateSize(filePath); // Recursively calculate size for subdirectories
+			} else {
+				totalSize += stats.size; // Accumulate file size
+			}
+		}
+	}
+
+	await calculateSize(folderPath);
+	const totalSizeInMB = totalSize / (1024 * 1024); // Convert bytes to megabytes
+	return totalSizeInMB.toFixed(2); // Return size in MB with 2 decimal places
+}
+
+ipcMain.handle('get-size-of-backups-folder', async () => {
+	const folderPath = store.get('backupsPath');
+	if (!folderPath) {
+		console.log('No path set');
+		return 'no path set';
+	}
+	const size = await getFolderSize(folderPath);
+	return size;
+});
+
+ipcMain.on('open-backups-folder', (event) => {
+	const folderPath = store.get('backupsPath');
+	console.log('Opening backups folder:', folderPath);
+	if (folderPath) {
+		shell.openPath(folderPath);
+	}
+});
+
 ipcMain.handle('login', async (event, { username, password }) => {
 	try {
 		const loginUrl = `${URL}/login`;
@@ -1063,3 +1117,105 @@ data = {
 	Имя файла соотвествует имени первого файла/папки? в архиве
 
 */
+
+async function DeleteOverSizeBackupFiles() {
+	const backupsPath = store.get('backupsPath');
+	// delete old backups untill there is only 1 backup left or the folder size is less than maxSise setting
+	const maxSiseMB = store.get('maxBackupsFolderSize'); // in MB
+	if (!maxSiseMB) {
+		log.info('Max backup size not set');
+		return;
+	}
+	const maxSise = maxSiseMB * 1024 * 1024; // convert to bytes
+	const backups = await fs.promises.readdir(backupsPath);
+	if (backups.length <= 1) {
+		log.info('Only one backup found, skipping delete');
+		return;
+	}
+	let totalSize = 0;
+	let files = [];
+	for (let file of backups) {
+		const filePath = path.join(backupsPath, file);
+		const stats = fs.statSync(filePath);
+		totalSize += stats.size;
+		files.push({ file, size: stats.size });
+	}
+	log.info('Total size of backups:', totalSize);
+	if (totalSize < maxSise) {
+		log.info('Total size is less than max size, skipping delete');
+		return;
+	}
+	files.sort((a, b) => a.mtime - b.mtime);
+	log.info('Files:', files);
+	let deletedSize = 0;
+	for (let file of files) {
+		const filePath = path.join(backupsPath, file.file);
+		await fs.promises.rm(filePath, { recursive: true });
+		deletedSize += file.size;
+		log.info('Deleted:', filePath);
+		if (totalSize - deletedSize < maxSise) {
+			break;
+		}
+	}
+	log.info('Deleted size:', deletedSize);
+}
+
+async function BackupWTFFolder() {
+	const wowPath = await getWoWPath();
+	const wtfPath = path.join(wowPath, '_retail_', 'WTF');
+	const backupsPath = store.get('backupsPath');
+
+	if (!fs.existsSync(wtfPath)) {
+		log.error('WTF folder not found:', wtfPath);
+		return;
+	}
+
+	if (!fs.existsSync(backupsPath)) {
+		log.error('Backups folder not found:', backupsPath);
+		return;
+	}
+	//.split('T')[0];
+	const timestamp = new Date().toISOString().replace(/:/g, '-').split('.')[0];
+	const backupName = `WTF-${timestamp}.zip`;
+	const backupFilePath = path.join(backupsPath, backupName);
+
+	const zip = new AdmZip();
+	zip.addLocalFolderPromise(wtfPath, 'WTF').then(() => {
+		zip.writeZipPromise(backupFilePath).then(() => {
+			log.info('Backup created:', backupFilePath);
+			renderer_log('Backup created:' + backupFilePath);
+			ipcMain.emit('backup-created');
+		});
+	});
+}
+
+function InitiateBackup() {
+	const backupsEnabled = store.get('backupsEnabled');
+	if (!backupsEnabled) {
+		log.info('Backups are disabled, skipping');
+		return;
+	}
+
+	const lastBackup = store.get('lastBackupTime');
+	// 1 week
+	const backupInterval = 1000 * 60 * 60 * 24 * 7;
+	const now = Date.now();
+	if (!lastBackup || now - lastBackup > backupInterval) {
+		DeleteOverSizeBackupFiles().then(() => {
+			BackupWTFFolder().then(() => {
+				store.set('lastBackupTime', now);
+				DeleteOverSizeBackupFiles();
+			});
+		});
+	}
+}
+
+// every 1 hour
+setInterval(async () => {
+	InitiateBackup();
+}, 1000 * 60 * 60);
+
+// 30 sec after start
+setTimeout(() => {
+	InitiateBackup();
+}, 1000 * 30);
