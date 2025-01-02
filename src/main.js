@@ -607,7 +607,7 @@ ipcMain.handle('get-size-of-backups-folder', async () => {
 	const folderPath = store.get('backupsPath');
 	if (!folderPath) {
 		console.log('No path set');
-		return 'no path set';
+		return;
 	}
 	const size = await getFolderSize(folderPath);
 	return size;
@@ -1146,7 +1146,6 @@ async function DeleteOverSizeBackupFiles() {
 		return;
 	}
 	files.sort((a, b) => a.mtime - b.mtime);
-	log.info('Files:', files);
 	let deletedSize = 0;
 	for (let file of files) {
 		const filePath = path.join(backupsPath, file.file);
@@ -1158,6 +1157,7 @@ async function DeleteOverSizeBackupFiles() {
 		}
 	}
 	log.info('Deleted size:', deletedSize);
+	mainWindow?.webContents.send('backup-created');
 }
 
 async function BackupWTFFolder() {
@@ -1174,48 +1174,66 @@ async function BackupWTFFolder() {
 		log.error('Backups folder not found:', backupsPath);
 		return;
 	}
+	log.info('Backing up WTF folder:', wtfPath);
 	//.split('T')[0];
 	const timestamp = new Date().toISOString().replace(/:/g, '-').split('.')[0];
 	const backupName = `WTF-${timestamp}.zip`;
 	const backupFilePath = path.join(backupsPath, backupName);
 
 	const zip = new AdmZip();
-	zip.addLocalFolderPromise(wtfPath, 'WTF').then(() => {
-		zip.writeZipPromise(backupFilePath).then(() => {
-			log.info('Backup created:', backupFilePath);
-			renderer_log('Backup created:' + backupFilePath);
-			ipcMain.emit('backup-created');
-		});
-	});
+	await zip.addLocalFolderPromise(wtfPath, 'WTF');
+	await zip.writeZipPromise(backupFilePath);
+	log.info('Backup created:', backupFilePath);
+	renderer_log('Backup created: ' + backupFilePath);
+	mainWindow?.webContents.send('backup-created');
 }
 
-function InitiateBackup() {
+let isBackupRunning = false;
+const ONE_WEEK = 1000 * 60 * 60 * 24 * 7;
+// const ONE_MINUTE = 1000 * 60;
+
+async function InitiateBackup() {
+	if (isBackupRunning) {
+		log.info('Backup is already running, skipping');
+		return;
+	}
+
 	const backupsEnabled = store.get('backupsEnabled');
 	if (!backupsEnabled) {
 		log.info('Backups are disabled, skipping');
 		return;
 	}
+	log.info('Initiating backup');
 
 	const lastBackup = store.get('lastBackupTime');
 	// 1 week
-	const backupInterval = 1000 * 60 * 60 * 24 * 7;
+	const backupInterval = ONE_WEEK;
 	const now = Date.now();
 	if (!lastBackup || now - lastBackup > backupInterval) {
-		DeleteOverSizeBackupFiles().then(() => {
-			BackupWTFFolder().then(() => {
-				store.set('lastBackupTime', now);
-				DeleteOverSizeBackupFiles();
-			});
-		});
+		isBackupRunning = true;
+		try {
+			await DeleteOverSizeBackupFiles();
+			await BackupWTFFolder();
+			store.set('lastBackupTime', now);
+			await DeleteOverSizeBackupFiles();
+		} catch (error) {
+			log.error('Error during backup:', error);
+		} finally {
+			isBackupRunning = false;
+		}
 	}
 }
+
+ipcMain.on('initiate-backup', () => {
+	InitiateBackup();
+});
 
 // every 1 hour
 setInterval(async () => {
 	InitiateBackup();
 }, 1000 * 60 * 60);
 
-// 30 sec after start
+// 20 sec after start
 setTimeout(() => {
 	InitiateBackup();
-}, 1000 * 30);
+}, 1000 * 20);

@@ -437,3 +437,6 @@ li {
 	gap: 10px;
 	/* Adjust the gap between buttons as needed */
 }
+.red-text {
+	color: red;
+}

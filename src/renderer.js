@@ -422,17 +422,28 @@ document.getElementById('select-path-btn').addEventListener('click', async () =>
 
 function updateBackupsTexts() {
 	api.getSizeOfBackupsFolder().then(async (backupsSize) => {
-		const maxBackupsFolderSize = document.getElementById('max-backups-folder-size-select').value;
-		const backupsSizePercent = (backupsSize / maxBackupsFolderSize) * 100;
-		document.getElementById('backups-folder-size').innerText = `${L['Backups Size']}: ${backupsSize}MB (${backupsSizePercent.toFixed(2)}%)`;
+		log(document.getElementById('backups-folder-size').style.color);
+		if (backupsSize) {
+			const maxBackupsFolderSize = await api.store.get('maxBackupsFolderSize');
+			const backupsSizePercent = (backupsSize / maxBackupsFolderSize) * 100;
+			document.getElementById('backups-folder-size').innerText = `${L['Backups Size']}: ${backupsSize}MB (${backupsSizePercent.toFixed(2)}%)`;
+			document.getElementById('backups-folder-size').classList.remove('red-text');
+		} else {
+			// red colored no folder found
+			document.getElementById('backups-folder-size').innerText = `${L['Backups Size']}: ${L['No folder found']}`;
+			document.getElementById('backups-folder-size').classList.add('red-text');
+		}
 
 		const lastBackupTime = await api.store.get('lastBackupTime');
-		const lastBackupDate = new Date(lastBackupTime).toLocaleString();
-		document.getElementById('backups-last-backup-time').innerText = `${L['Last backup made']}: ${lastBackupDate}`;
+		if (lastBackupTime) {
+			const lastBackupDate = new Date(lastBackupTime).toLocaleString();
+			document.getElementById('backups-last-backup-time').innerText = `${L['Last backup made']}: ${lastBackupDate}`;
+		} else {
+			document.getElementById('backups-last-backup-time').innerText = `${L['Last backup made']}: ${L['No backups made yet']}`;
+		}
 	});
 }
 api.IR_onBackupCreated((event, data) => {
-	console.log('Backup created:', data);
 	updateBackupsTexts();
 });
 
@@ -516,25 +527,28 @@ document.getElementById('set-relative-path-btn').addEventListener('click', async
 	}
 });
 
-document.getElementById('max-backups-folder-size-select').addEventListener('change', (event) => {
+document.getElementById('max-backups-folder-size-select').addEventListener('change', async (event) => {
 	const value = parseInt(event.target.value, 10);
-	api.store.set('maxBackupsFolderSize', value);
+	await api.store.set('maxBackupsFolderSize', value);
 	updateBackupsTexts();
+	api.IR_InitiateBackup();
 });
 
-document.getElementById('backups-enable').addEventListener('change', () => {
-	api.store.set('backupsEnabled', document.getElementById('backups-enable').checked);
+document.getElementById('backups-enable').addEventListener('change', async () => {
+	await api.store.set('backupsEnabled', document.getElementById('backups-enable').checked);
+	api.IR_InitiateBackup();
 });
 
 document.getElementById('set-backups-path-btn').addEventListener('click', async () => {
 	const path = await api.IR_selectBackupsPath();
 	if (path) {
 		document.getElementById('backups-path').innerText = `${L['Backups Path']}: ${path}`;
-		api.store.set('backupsPath', path);
+		await api.store.set('backupsPath', path);
 		updateBackupsTexts();
+		api.IR_InitiateBackup();
 	} else {
 		document.getElementById('backups-path').innerText = `${L['Backups Path']}: ${L['Invalid Path Supplied']}`;
-		api.store.set('backupsPath', null);
+		await api.store.set('backupsPath', null);
 		updateBackupsTexts();
 	}
 });
@@ -560,4 +574,3 @@ api.IR_onConnectedClients((event, clients) => {
 		}
 	});
 });
-
