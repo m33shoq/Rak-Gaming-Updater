@@ -421,16 +421,23 @@ document.getElementById('select-path-btn').addEventListener('click', async () =>
 })();
 
 function updateBackupsTexts() {
+	// set 'In progress' text
+	document.getElementById('backups-folder-size').innerText = `${L['Backups Size']}: ${L['In progress']}`;
+	document.getElementById('backups-last-backup-time').innerText = `${L['Last backup made']}: ${L['In progress']}`;
+
 	api.getSizeOfBackupsFolder().then(async (backupsSize) => {
-		log(document.getElementById('backups-folder-size').style.color);
-		if (backupsSize) {
+		if (backupsSize.size) {
 			const maxBackupsFolderSize = await api.store.get('maxBackupsFolderSize');
-			const backupsSizePercent = (backupsSize / maxBackupsFolderSize) * 100;
-			document.getElementById('backups-folder-size').innerText = `${L['Backups Size']}: ${backupsSize}MB (${backupsSizePercent.toFixed(2)}%)`;
+			const backupsSizePercent = (backupsSize.size / maxBackupsFolderSize) * 100;
+			document.getElementById('backups-folder-size').innerText = `${L['Backups Size']}: ${backupsSize.size}MB (${backupsSizePercent.toFixed(2)}%)`;
+			document.getElementById('backups-folder-size').classList.remove('red-text');
+		} else if (backupsSize.aborted) {
+			// aborted due to function was called before the previous one finished
+			document.getElementById('backups-folder-size').innerText = `${L['Backups Size']}: ${L['In progress']}`;
 			document.getElementById('backups-folder-size').classList.remove('red-text');
 		} else {
 			// red colored no folder found
-			document.getElementById('backups-folder-size').innerText = `${L['Backups Size']}: ${L['No folder found']}`;
+			document.getElementById('backups-folder-size').innerText = `${L['Backups Size']}: ${L[backupsSize.error || 'No backups folder found']}`;
 			document.getElementById('backups-folder-size').classList.add('red-text');
 		}
 
@@ -541,13 +548,13 @@ document.getElementById('backups-enable').addEventListener('change', async () =>
 
 document.getElementById('set-backups-path-btn').addEventListener('click', async () => {
 	const path = await api.IR_selectBackupsPath();
-	if (path) {
-		document.getElementById('backups-path').innerText = `${L['Backups Path']}: ${path}`;
-		await api.store.set('backupsPath', path);
+	if (path.success) {
+		document.getElementById('backups-path').innerText = `${L['Backups Path']}: ${path.path}`;
+		await api.store.set('backupsPath', path.path);
 		updateBackupsTexts();
 		api.IR_InitiateBackup();
 	} else {
-		document.getElementById('backups-path').innerText = `${L['Backups Path']}: ${L['Invalid Path Supplied']}`;
+		document.getElementById('backups-path').innerText = `${L['Backups Path']}: ${L[path.message || 'Invalid Path Supplied']}`;
 		await api.store.set('backupsPath', null);
 		updateBackupsTexts();
 	}

@@ -1,7 +1,7 @@
 {
 	"name": "rak-gaming-updater",
 	"description": "Rak Gaming Updater Application",
-	"version": "1.3.5",
+	"version": "1.3.6",
 	"author": {
 		"name": "m33shoq"
 	},
@@ -46,6 +46,7 @@
 		}
 	},
 	"dependencies": {
+		"abort-controller": "^3.0.0",
 		"adm-zip": "^0.5.14",
 		"cors": "^2.8.5",
 		"crc": "^4.3.2",

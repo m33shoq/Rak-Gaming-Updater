@@ -1,6 +1,7 @@
 const { app, BrowserWindow, ipcMain, dialog, Tray, Menu, nativeImage, protocol, shell, Notification } = require('electron');
 const { autoUpdater } = require('electron-updater');
 const log = require('electron-log/main');
+const { AbortController } = require('abort-controller');
 
 const i18n = require('./translations/i18n');
 const locale = i18n.getLocale();
@@ -574,43 +575,95 @@ ipcMain.handle('select-backups-path', async () => {
 	const result = await dialog.showOpenDialog(mainWindow, {
 		properties: ['openDirectory'],
 	});
-	if (result.filePaths.length > 0) {
-		log.info('Backups path:', result.filePaths[0]);
-		return result.filePaths[0];
+	const selectedPath = result.filePaths[0];
+	// check if selected path is not somewhere within the WoW folder
+	if (selectedPath) {
+		if (isPathWithin(await getWoWPath(), selectedPath)) {
+			log.info('Selected path is within WoW folder, skipping');
+			renderer_log('Selected path is within WoW folder, skipping');
+			return { success: false, message: 'Selected path is within WoW folder!!!' };
+		}
+
+		log.info('Backups path:', selectedPath);
+		return { success: true, path: selectedPath };
 	}
+	return { success: false, message: 'No path selected' };
 });
 
-async function getFolderSize(folderPath) {
+/**
+ * Check if a given path is within another path
+ * @param {string} basePath - The base path to check against
+ * @param {string} targetPath - The target path to check
+ * @returns {boolean} - True if targetPath is within basePath, false otherwise
+ */
+function isPathWithin(basePath, targetPath) {
+	const resolvedBasePath = path.resolve(basePath);
+	const resolvedTargetPath = path.resolve(targetPath);
+	return resolvedTargetPath.startsWith(resolvedBasePath);
+}
+
+let currentAbortController = null;
+async function getFolderSize(folderPath, signal) {
 	let totalSize = 0;
 
 	async function calculateSize(directory) {
 		const files = await fs.promises.readdir(directory, { withFileTypes: true });
 
 		for (const file of files) {
-			const filePath = path.join(directory, file.name);
-			const stats = await fs.promises.stat(filePath);
+			if (signal.aborted) {
+				throw new Error('Operation aborted');
+			}
 
-			if (stats.isDirectory()) {
-				await calculateSize(filePath); // Recursively calculate size for subdirectories
-			} else {
-				totalSize += stats.size; // Accumulate file size
+			const filePath = path.join(directory, file.name);
+			try {
+				const stats = await fs.promises.stat(filePath);
+
+				if (stats.isDirectory()) {
+					await calculateSize(filePath); // Recursively calculate size for subdirectories
+				} else if (file.name.startsWith('WTF-')) {
+					totalSize += stats.size; // Accumulate file size for files starting with WTF-
+				}
+			} catch (error) {
+				if (error.code === 'EPERM' || error.code === 'EACCES') {
+					console.warn(`Skipping inaccessible file: ${filePath}`);
+				} else {
+					throw error; // Re-throw other errors
+				}
 			}
 		}
 	}
 
 	await calculateSize(folderPath);
 	const totalSizeInMB = totalSize / (1024 * 1024); // Convert bytes to megabytes
+	console.log('Total size:', totalSizeInMB.toFixed(2), 'MB');
 	return totalSizeInMB.toFixed(2); // Return size in MB with 2 decimal places
 }
 
 ipcMain.handle('get-size-of-backups-folder', async () => {
+	if (currentAbortController) {
+		currentAbortController.abort(); // Cancel the previous run
+	}
+
+	currentAbortController = new AbortController();
+	const { signal } = currentAbortController;
+
 	const folderPath = store.get('backupsPath');
 	if (!folderPath) {
 		console.log('No path set');
-		return;
+		return { error: 'No path set' };
 	}
-	const size = await getFolderSize(folderPath);
-	return size;
+
+	try {
+		const size = await getFolderSize(folderPath, signal);
+		return { size };
+	} catch (error) {
+		if (error.message === 'Operation aborted') {
+			return { aborted: true };
+		}
+		throw error;
+	} finally {
+		currentAbortController = null; // Reset the controller after the operation
+	}
 });
 
 ipcMain.on('open-backups-folder', (event) => {
@@ -1135,10 +1188,12 @@ async function DeleteOverSizeBackupFiles() {
 	let totalSize = 0;
 	let files = [];
 	for (let file of backups) {
-		const filePath = path.join(backupsPath, file);
-		const stats = fs.statSync(filePath);
-		totalSize += stats.size;
-		files.push({ file, size: stats.size });
+		if (file.startsWith('WTF-')) {
+			const filePath = path.join(backupsPath, file);
+			const stats = fs.statSync(filePath);
+			totalSize += stats.size;
+			files.push({ file, size: stats.size });
+		}
 	}
 	log.info('Total size of backups:', totalSize);
 	if (totalSize < maxSise) {
