@@ -1,7 +1,7 @@
 {
 	"LOCALE_NAME": "uk",
 	"Refresh": "Оновити",
-	"Select WoW Path": "Виберіть шлях WoW",
+	"Select WoW Path": "Вибрати шлях WoW",
 	"Wow Path": "Шлях WoW",
 	"Relative Path": "Відносний шлях",
 	"Invalid Path Supplied": "Надано неправильний шлях",
@@ -21,5 +21,16 @@
 	"Disconnected": "Відключено",
 	"Updater": "Головна",
 	"Settings": "Налаштування",
-	"Login": "Увійти"
+	"Login": "Увійти",
+	"Do backups of WTF folder every 7 days": "Робити бекапи папки WTF кожні 7 днів",
+	"Backups Path": "Шлях для бекапів",
+	"Backups Size": "Розмір бекапів",
+	"Last backup made": "Останній бекап зроблено",
+	"Max Backups Folder Size:": "Макс. розмір папки з бекапами",
+	"Set Backups Folder Path": "Вибрати шлях для папки з бекапами",
+	"Open Backups Folder": "Відкрити папку з бекапами",
+	"Backups": "Бекапи",
+	"In progress": "В процесі",
+	"No backups made yet": "Бекапи ще не створені",
+	"No path set": "Шлях не вибрано"
 }

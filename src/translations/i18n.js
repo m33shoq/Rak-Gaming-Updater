@@ -27,6 +27,6 @@ for (const lang of preferredLanguages) {
 }
 
 // Set the language in your i18n module
-i18n.setLocale(selectedLanguage);
+i18n.setLocale(selectedLanguage); // 'ru'
 
 module.exports = i18n;
