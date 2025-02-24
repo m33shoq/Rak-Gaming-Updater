@@ -32,5 +32,6 @@
 	"Backups": "Бекапы",
 	"In progress": "В процессе",
 	"No backups made yet": "Бекапы еще не созданы",
-	"No path set": "Путь не выбран"
+	"No path set": "Путь не выбран",
+	"Backup Now": "Сделать бекап сейчас"
 }

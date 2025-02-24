@@ -427,7 +427,8 @@ li {
 
 #backups-path,
 #backups-folder-size,
-#backups-last-backup-time {
+#backups-last-backup-time,
+#backups-status {
 	margin-top: 10px;
 	/* Adjust the value as needed */
 }

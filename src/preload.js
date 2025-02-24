@@ -60,5 +60,6 @@ contextBridge.exposeInMainWorld('api', {
 	getSizeOfBackupsFolder: () => ipcRenderer.invoke('get-size-of-backups-folder'),
 	IR_openBackupsFolder: () => ipcRenderer.send('open-backups-folder'),
 	IR_onBackupCreated: (callback) => ipcRenderer.on('backup-created', callback),
-	IR_InitiateBackup: () => ipcRenderer.send('initiate-backup'),
+	IR_InitiateBackup: (force) => ipcRenderer.send('initiate-backup', force),
+	IR_onBackupStatus: (callback) => ipcRenderer.on('backup-status', callback),
 });

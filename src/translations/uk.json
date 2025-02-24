@@ -32,5 +32,6 @@
 	"Backups": "Бекапи",
 	"In progress": "В процесі",
 	"No backups made yet": "Бекапи ще не створені",
-	"No path set": "Шлях не вибрано"
+	"No path set": "Шлях не вибрано",
+	"Backup Now": "Зробити бекап зараз"
 }

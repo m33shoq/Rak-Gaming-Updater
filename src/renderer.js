@@ -564,6 +564,15 @@ document.getElementById('open-backups-path-btn').addEventListener('click', async
 	api.IR_openBackupsFolder();
 });
 
+api.IR_onBackupStatus((event, data) => {
+	document.getElementById('backups-status').innerText = data;
+});
+
+document.getElementById('backup-now-btn').addEventListener('click', () => {
+	api.IR_InitiateBackup(true);
+});
+
+
 initializeSocket();
 
 api.IR_onConnectedClients((event, clients) => {
