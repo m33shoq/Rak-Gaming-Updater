@@ -23,6 +23,7 @@ const URL = process.env.ELECTRON_USE_DEV_URL === '1' ? 'http://localhost:3001' :
 log.info('URL:', URL);
 const socket = require('socket.io-client')(URL, { autoConnect: false });
 const AdmZip = require('adm-zip');
+const archiver = require('archiver');
 const { jwtDecode } = require('jwt-decode');
 const fs = require('fs');
 const path = require('path');
@@ -1237,14 +1238,43 @@ async function BackupWTFFolder() {
 	const backupName = `WTF-${timestamp}.zip`;
 	const backupFilePath = path.join(backupsPath, backupName);
 
-	const zip = new AdmZip();
+	// Create a file to stream archive data to.
+	const output = fs.createWriteStream(backupFilePath);
+	const archive = archiver('zip', {
+		zlib: { level: 9 }, // Maximum compression
+	});
+
 	ScheduleBackupStatus('Creating zip file');
-	await zip.addLocalFolderPromise(wtfPath, 'WTF');
-	ScheduleBackupStatus('Writing zip file');
-	await zip.writeZipPromise(backupFilePath);
-	log.info('Backup created:', backupFilePath);
-	renderer_log('Backup created: ' + backupFilePath);
-	mainWindow?.webContents.send('backup-created');
+
+	// Listen for all archive data to be written
+	output.on('close', function () {
+		log.info('Backup created:', backupFilePath);
+		renderer_log('Backup created: ' + backupFilePath);
+		mainWindow?.webContents.send('backup-created');
+	});
+
+	archive.on('error', function (err) {
+		throw err;
+	});
+
+	// Pipe archive data to the file
+	archive.pipe(output);
+
+	// Append files from the WTF folder, preserving folder structure and supporting Unicode
+	archive.directory(wtfPath, 'WTF');
+
+	// Finalize the archive (i.e., we are done appending files but streams have to finish yet)
+	await archive.finalize();
+
+	// this doesnt include files with cyrillic characters in it so we use archiver
+	// const zip = new AdmZip();
+	// ScheduleBackupStatus('Creating zip file');
+	// await zip.addLocalFolderPromise(wtfPath, 'WTF');
+	// ScheduleBackupStatus('Writing zip file');
+	// await zip.writeZipPromise(backupFilePath);
+	// log.info('Backup created:', backupFilePath);
+	// renderer_log('Backup created: ' + backupFilePath);
+	// mainWindow?.webContents.send('backup-created');
 }
 
 let isBackupRunning = false;
