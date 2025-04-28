@@ -22,8 +22,8 @@ require('dotenv').config();
 const URL = process.env.ELECTRON_USE_DEV_URL === '1' ? 'http://localhost:3001' : `https://rak-gaming-annoucer-bot-93b48b086bae.herokuapp.com`;
 log.info('URL:', URL);
 const socket = require('socket.io-client')(URL, { autoConnect: false });
-const AdmZip = require('adm-zip');
 const archiver = require('archiver');
+const extract = require('extract-zip');
 const { jwtDecode } = require('jwt-decode');
 const fs = require('fs');
 const path = require('path');
@@ -896,48 +896,55 @@ socket.on('file-content-chunk', async (data) => {
 	socket.emit('ack', { chunkNumber, fileName, hash });
 	// log.info(`ACK sent for chunk ${chunkNumber} of file ${fileName}`)
 
-	if (!allChunksReceived) return;
-
-	const now = Date.now();
-	if (now - lastDataTimestamp.downloadedFile < DATA_RECEIVE_THRESHOLD && isEqual({ fileName, relativePath, timestamp, hash, displayName }, lastReceivedData.downloadedFile)) {
-		log.info('Duplicate data received, ignoring.');
-		return;
-	}
-
-	lastDataTimestamp.downloadedFile = now;
-	lastReceivedData.downloadedFile = data;
-
-	// Combine all chunks
-	const fileBuffer = Buffer.concat(fileChunks[hash]);
-
-	const updatePath = await getWoWPath();
-	const temp_zip_file_path = path.join(updatePath, relativePath, fileName + '.zip'); // wow + relative + .zip
-	const exptected_output_folder = path.join(updatePath, relativePath, fileName); // wow + relative + foler/file
-	const target_path = path.join(updatePath, relativePath); // wow + relative
-
-	// ensure the target path exists
-	if (!fs.existsSync(target_path)) {
-		fs.promises.mkdir(target_path, { recursive: true });
-	}
-	// ensure expected output folder is empty
-	if (fs.existsSync(exptected_output_folder)) {
-		await fs.promises.rm(exptected_output_folder, { recursive: true });
-	}
-
-	log.info('Decompressing file:', temp_zip_file_path);
-	const zip = new AdmZip(fileBuffer);
-
-	zip.extractAllToAsync(target_path, true, false, (error) => {
-		if (error) {
-			log.error('Error extracting file:', error);
-			console.error('Error extracting file:', error);
+	if (allChunksReceived) {
+		const now = Date.now();
+		if (now - lastDataTimestamp.downloadedFile < DATA_RECEIVE_THRESHOLD && isEqual({ fileName, relativePath, timestamp, hash, displayName }, lastReceivedData.downloadedFile)) {
+			log.info('Duplicate data received, ignoring.');
 			return;
 		}
-		mainWindow?.webContents.send('file-downloaded', { fileName, relativePath, timestamp, hash, displayName });
-		setTimeout(() => {
-			delete fileChunks[hash];
-		}, 2000); // Delay deletion of chunks in case server will duplicate some chunks
-	});
+
+		lastDataTimestamp.downloadedFile = now;
+		lastReceivedData.downloadedFile = data;
+
+		// Combine all chunks
+		const fileBuffer = Buffer.concat(fileChunks[hash]);
+
+		const updatePath = await getWoWPath();
+		const tempZipFilePath = path.join(updatePath, relativePath, fileName + '.zip'); // wow + relative + .zip
+		const expectedOutputFolder = path.join(updatePath, relativePath, fileName); // wow + relative + foler/file
+		const targetPath = path.join(updatePath, relativePath); // wow + relative
+
+		// Ensure the target path exists
+		if (!fs.existsSync(targetPath)) {
+			await fs.promises.mkdir(targetPath, { recursive: true });
+		}
+
+		// Remove the previous extracted folder if it exists
+		if (fs.existsSync(expectedOutputFolder)) {
+			await fs.promises.rm(expectedOutputFolder, { recursive: true });
+		}
+
+		// Write the received zip data to disk
+		await fs.promises.writeFile(tempZipFilePath, fileBuffer);
+		log.info('Zip file saved for extraction:', tempZipFilePath);
+
+		try {
+			// Use extract-zip to extract the written zip file into the target path
+			await extract(tempZipFilePath, { dir: targetPath });
+			log.info('File extracted successfully:', targetPath);
+			mainWindow?.webContents.send('file-downloaded', { fileName, relativePath, timestamp, hash, displayName });
+			// Delay deletion of chunks in case the server duplicates some chunks
+			setTimeout(() => {
+				delete fileChunks[hash];
+			}, 2000);
+		} catch (error) {
+			log.error('Error extracting file:', error);
+			console.error('Error extracting file:', error);
+		} finally {
+			// Clean up the temporary zip file
+			await fs.promises.rm(tempZipFilePath, { recursive: false });
+		}
+	}
 });
 
 async function generateHashForPath(entryPath) {
@@ -1046,7 +1053,7 @@ async function send_data_in_chunks(socket, data) {
 
 // filePath is the location of current zip file
 // decompress zip to check hash and proper name for the package
-// extract it to /tmp and check the hash and name of the first file/foler in directory
+// extract it to /tmp and check the hash and name of the first file/folder in directory
 // delete /tmp after the processing
 // return { name, hash, timestamp }
 async function processZipBeforeSending(filePath) {
@@ -1054,8 +1061,8 @@ async function processZipBeforeSending(filePath) {
 		log.info('Processing zip before sending:', filePath);
 		renderer_log('Processing zip before sending:', filePath);
 		const userData = app.getPath('userData');
-		const tmpExtractPath = path.join(userData, '/tmp');
-		const tmpCopyPath = path.join(userData, '/tmp', path.basename(filePath));
+		const tmpExtractPath = path.join(userData, 'tmp'); // temporary folder
+		const tmpCopyPath = path.join(tmpExtractPath, path.basename(filePath));
 
 		log.info('Extracting file:', tmpCopyPath);
 		log.info('Extracting to:', tmpExtractPath);
@@ -1065,14 +1072,13 @@ async function processZipBeforeSending(filePath) {
 		}
 		await fs.promises.copyFile(filePath, tmpCopyPath);
 
-		const zip = new AdmZip(tmpCopyPath);
-		zip.extractAllTo(tmpExtractPath, true);
+		// Use extract-zip to extract the copied zip file
+		await extract(tmpCopyPath, { dir: tmpExtractPath });
 
 		// Delete the copied zip file
 		await fs.promises.rm(tmpCopyPath, { recursive: true });
 
 		const extractedFiles = await fs.promises.readdir(tmpExtractPath);
-
 		log.info('Extracted files:', extractedFiles);
 		const targetFile = path.join(tmpExtractPath, extractedFiles[0]);
 
@@ -1091,16 +1097,27 @@ async function processZipBeforeSending(filePath) {
 
 async function compressAndSend(folderPath, isFolder, { fileName, hash, timestamp, displayName }) {
 	const outputPath = `${folderPath}.zip`;
-	const zip = new AdmZip();
+	const output = fs.createWriteStream(outputPath);
+	const archive = archiver('zip', {
+		zlib: { level: 9 }, // Maximum compression
+	});
+
+	// Listen for archive errors
+	archive.on('error', (err) => {
+		throw err;
+	});
+
+	// Pipe archive data to the file
+	archive.pipe(output);
 
 	if (isFolder) {
-		zip.addLocalFolder(folderPath, fileName);
+		archive.directory(folderPath, fileName);
 	} else {
-		zip.addLocalFile(folderPath);
+		archive.file(folderPath, { name: fileName });
 	}
 
-	// Save the zip file
-	await zip.writeZipPromise(outputPath);
+	// Finalize the archive (i.e., we are done appending files but streams have to finish yet)
+	await archive.finalize();
 
 	log.info('File compressed and saved:', outputPath);
 
@@ -1265,16 +1282,6 @@ async function BackupWTFFolder() {
 
 	// Finalize the archive (i.e., we are done appending files but streams have to finish yet)
 	await archive.finalize();
-
-	// this doesnt include files with cyrillic characters in it so we use archiver
-	// const zip = new AdmZip();
-	// ScheduleBackupStatus('Creating zip file');
-	// await zip.addLocalFolderPromise(wtfPath, 'WTF');
-	// ScheduleBackupStatus('Writing zip file');
-	// await zip.writeZipPromise(backupFilePath);
-	// log.info('Backup created:', backupFilePath);
-	// renderer_log('Backup created: ' + backupFilePath);
-	// mainWindow?.webContents.send('backup-created');
 }
 
 let isBackupRunning = false;
