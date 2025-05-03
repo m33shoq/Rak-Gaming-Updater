@@ -881,6 +881,7 @@ socket.on('file-content-chunk', async (data) => {
 	// check if chank was already sent
 	if (fileChunks[hash][chunkNumber] !== null) {
 		log.info(`Chunk ${chunkNumber} already received, skipping...`);
+		socket.emit('ack', { chunkNumber, fileName, hash });
 		return;
 	}
 	fileChunks[hash][chunkNumber] = chunk;
