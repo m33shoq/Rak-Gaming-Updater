@@ -874,7 +874,8 @@ socket.on('file-content-chunk', async (data) => {
 	const { chunk, chunkNumber, totalChunks, fileName, relativePath, timestamp, hash, displayName } = data;
 
 	// Initialize the file's chunk array if it doesn't exist
-	if (!fileChunks[hash]) {
+	if (!fileChunks[hash] || chunkNumber === 0) {
+		// chunk 0 is always sent with window size 1 so it will always be before other chunks
 		fileChunks[hash] = new Array(totalChunks).fill(null);
 	}
 
