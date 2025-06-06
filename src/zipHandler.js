@@ -9,6 +9,8 @@ async function zipFile(sourcePath, destinationPath) {
 	return new Promise((resolve, reject) => {
 		const isFolder = fs.lstatSync(sourcePath)?.isDirectory();
 
+		log.info(`Zipping ${isFolder ? 'folder' : 'file'}: ${sourcePath} to ${destinationPath}`);
+
 		const output = fs.createWriteStream(destinationPath);
 		const archive = archiver('zip', {
 			zlib: { level: 9 } // Sets the compression level

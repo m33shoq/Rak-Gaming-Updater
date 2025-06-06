@@ -1,3 +1,4 @@
+const { app } = require('electron');
 const fs = require('fs');
 const path = require('path');
 const fsp = require('fs').promises;
@@ -9,8 +10,10 @@ const { getWoWPath, validateWoWPath } = require('./wowPathUtility.js');
 const { zipFile, unzipFile } = require('./zipHandler.js');
 
 const { SERVER_URL, SERVER_LOGIN_ENDPOINT, SERVER_UPLOADS_ENDPOINT, SERVER_EXISTING_FILES_ENDPOINT, SERVER_DOWNLOAD_ENDPOINT } = require('./serverEndpoints.js');
-const TEMP_DIR = path.join(__dirname, 'temp'); // Temporary directory for unzipped/zipped files
 
+__dirname = path.dirname(__filename);
+log.info('File:', __filename, 'Dir:', __dirname);
+const TEMP_DIR = path.join(app.getPath('appData'), 'temp'); // Temporary directory for unzipped/zipped files
 
 // return file path for downloaded zip file
 async function DownloadFile(fileData, retries = 3) {

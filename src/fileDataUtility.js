@@ -1,10 +1,13 @@
+const { app } = require('electron');
 const fsp = require('fs').promises;
 const path = require('path');
 const crc32 = require('crc').crc32;
 const { zipFile, unzipFile } = require('./zipHandler.js');
+const log = require('electron-log/main');
 
-const TEMP_DIR = path.join(__dirname, 'temp'); // Temporary directory for unzipped files
-
+__dirname = path.dirname(__filename);
+log.info('File:', __filename, 'Dir:', __dirname);
+const TEMP_DIR = path.join(app.getPath('appData'), 'temp'); // Temporary directory for unzipped/zipped files
 
 async function GetFileData(filePath, relativePath) {
 	const fileName = path.basename(filePath);
@@ -15,24 +18,27 @@ async function GetFileData(filePath, relativePath) {
 	let hash;
 	if (stats.isFile()) {
 		const fileExtension = path.extname(filePath).toLowerCase();
-		if (fileExtension === '.zip') { // we need hash of unzipped content
+		if (fileExtension === '.zip') {
+			// we need hash of unzipped content
 			const tempFilePath = path.join(TEMP_DIR, fileName);
 			await fsp.mkdir(path.dirname(tempFilePath), { recursive: true });
 			try {
 				await unzipFile(filePath, tempFilePath); // Unzip the file to a temporary location
 				hash = await CalculateHashForPath(tempFilePath); // Calculate hash of the unzipped content
 			} finally {
-				await fsp.rm(tempFilePath, { recursive: true}); // Clean up the temporary directory
+				await fsp.rm(tempFilePath, { recursive: true }); // Clean up the temporary directory
 			}
-		} else { // calculate hash of file
+		} else {
+			// calculate hash of file
 			hash = await CalculateHashForPath(filePath);
 		}
-	} else { // calculate hash of folder
+	} else {
+		// calculate hash of folder
 		hash = await CalculateHashForPath(filePath);
 	}
 
 	// const hash = await CalculateHashForPath(filePath);
-	return { fileName, displayName, hash, relativePath, timestamp }
+	return { fileName, displayName, hash, relativePath, timestamp };
 }
 
 async function CalculateHashForPath(filePath) {

@@ -35,10 +35,10 @@ const L = new Proxy(serializedL, {
 
 const { SERVER_URL, SERVER_LOGIN_ENDPOINT, SERVER_UPLOADS_ENDPOINT, SERVER_EXISTING_FILES_ENDPOINT, SERVER_DOWNLOAD_ENDPOINT } = require('./serverEndpoints.js');
 
-const TEMP_DIR = path.join(__dirname, 'temp'); // Temporary directory for unzipped/zipped files
-if (!fs.existsSync(TEMP_DIR)) {
-	fs.mkdirSync(TEMP_DIR, { recursive: true });
-}
+__dirname = path.dirname(__filename);
+log.info('File:', __filename, 'Dir:', __dirname);
+
+const TEMP_DIR = path.join(app.getPath('appData'), 'temp'); // Temporary directory for unzipped/zipped files
 
 log.info('SERVER_URL:', SERVER_URL);
 const socket = require('socket.io-client')(SERVER_URL, { autoConnect: false });
@@ -70,9 +70,6 @@ const socket = require('socket.io-client')(SERVER_URL, { autoConnect: false });
 
 log.initialize({ preload: true });
 log.info('App starting...');
-
-__dirname = path.dirname(__filename);
-log.info('File:', __filename, 'Dir:', __dirname);
 
 let = currentLocale = i18n.getLocale();
 console.log('Current locale:', currentLocale);
@@ -792,11 +789,15 @@ async function shouldDownloadFile(serverFile) {
 }
 
 async function compressAndSend(folderPath, fileData) {
+	log.info('Compressing and sending file:', folderPath, 'with data:', fileData);
 	const baseName = path.basename(folderPath);
 	const outputPath = path.join(TEMP_DIR, baseName + '.zip');
+
+	log.info('Creating output directory if it does not exist:', path.dirname(outputPath));
 	await fsp.mkdir(path.dirname(outputPath), { recursive: true });
 
 	try {
+		log.info('Compressing:', folderPath, 'to:', outputPath);
 		await zipFile(folderPath, outputPath);
 		log.info('File compressed and saved:', outputPath);
 		// Send the file
