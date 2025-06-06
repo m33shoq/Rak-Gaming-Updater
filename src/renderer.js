@@ -85,7 +85,7 @@ async function initializeSocket() {
 
 	api.socket_on_connect_error((event, description) => {
 		console.log('Connect failed:', description);
-		document.getElementById('login-error').innerText = `connect failed: ${description}`;
+		document.getElementById('login-error').innerText = description;
 	});
 
 	api.socket_on_new_file(async (event, data) => {
@@ -108,15 +108,15 @@ async function initializeSocket() {
 		}
 	});
 
-	api.IR_onFileChunkReceived((event, data) => {
-		const { progressPercent, fileName, relativePath, timestamp, hash, displayName } = data;
-		console.log('File chunk received:', fileName, progressPercent);
-		const uniqueId = generateUniqueId(data);
+	api.IR_onFileChunkReceived((event, fileData, percent) => {
+		const { fileName, relativePath, timestamp, hash, displayName } = fileData;
+		console.log('File chunk received:', fileName, percent);
+		const uniqueId = generateUniqueId(fileData);
 		const lineItem = widgetContainerMap.get(uniqueId);
 
 		if (lineItem) {
 			const updateBtn = lineItem.querySelector('.update-btn');
-			updateBtn.Disable(`${L['Downloading...']} ${progressPercent}%`);
+			updateBtn.Disable(`${L['Downloading...']} ${percent}%`);
 			updateBtn.UpdateDownloadTimer();
 		}
 	});
@@ -195,6 +195,7 @@ function showLogin() {
 	document.getElementById(`login-container`).style.display = 'block';
 	// hide tab buttons while on login screen
 	document.querySelectorAll('.tab-button').forEach((button) => {
+		console.log('Hiding button:', button.dataset.tabName);
 		button.style.display = 'none';
 	});
 }
@@ -221,6 +222,11 @@ function showSettings() {
 function showStatus() {
 	if (!isConnected) return showLogin();
 	tab_buttons['status'].click();
+}
+
+function showBackups() {
+	if (!isConnected) return showLogin();
+	tab_buttons['backups'].click();
 }
 
 document.querySelectorAll('.tab-button').forEach((button) => {
@@ -572,7 +578,6 @@ document.getElementById('backup-now-btn').addEventListener('click', () => {
 	api.IR_InitiateBackup(true);
 });
 
-
 initializeSocket();
 
 api.IR_onConnectedClients((event, clients) => {
@@ -590,3 +595,5 @@ api.IR_onConnectedClients((event, clients) => {
 		}
 	});
 });
+
+showLogin();

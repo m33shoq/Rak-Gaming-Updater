@@ -1,7 +1,22 @@
-const { app, BrowserWindow, ipcMain, dialog, Tray, Menu, nativeImage, protocol, shell, Notification } = require('electron');
+require('dotenv').config();
+const { app, BrowserWindow, ipcMain, dialog, Tray, Menu, nativeImage, protocol, shell, Notification, net } = require('electron');
 const { autoUpdater } = require('electron-updater');
 const log = require('electron-log/main');
 const { AbortController } = require('abort-controller');
+const { jwtDecode } = require('jwt-decode');
+const fs = require('fs');
+const fsp = require('fs').promises;
+const path = require('path');
+const validator = require('validator');
+
+const { GetFileData, CalculateHashForPath } = require('./fileDataUtility.js');
+const { zipFile, unzipFile } = require('./zipHandler.js');
+const { DownloadFile, InstallFile } = require('./fileManagement.js');
+const { getWoWPath, validateWoWPath } = require('./wowPathUtility.js');
+const MainWindowWrapper = require('./MainWindowWrapper.js');
+log.info('MainWindowWrapper', MainWindowWrapper);
+const store = require('./store.js');
+let storeInitialized = false;
 
 const i18n = require('./translations/i18n');
 const locale = i18n.getLocale();
@@ -18,45 +33,20 @@ const L = new Proxy(serializedL, {
 	},
 });
 
-require('dotenv').config();
-const URL = process.env.ELECTRON_USE_DEV_URL === '1' ? 'http://localhost:3001' : `https://rak-gaming-annoucer-bot-93b48b086bae.herokuapp.com`;
-log.info('URL:', URL);
-const socket = require('socket.io-client')(URL, { autoConnect: false });
-const archiver = require('archiver');
-const extract = require('extract-zip');
-const { jwtDecode } = require('jwt-decode');
-const fs = require('fs');
-const path = require('path');
-const validator = require('validator');
-const crc32 = require('crc').crc32;
-const { setExternalVBSLocation, promisified } = require('regedit');
+const { SERVER_URL, SERVER_LOGIN_ENDPOINT, SERVER_UPLOADS_ENDPOINT, SERVER_EXISTING_FILES_ENDPOINT, SERVER_DOWNLOAD_ENDPOINT } = require('./serverEndpoints.js');
 
-let fetch;
-let store;
+const TEMP_DIR = path.join(__dirname, 'temp'); // Temporary directory for unzipped/zipped files
+if (!fs.existsSync(TEMP_DIR)) {
+	fs.mkdirSync(TEMP_DIR, { recursive: true });
+}
+
+log.info('SERVER_URL:', SERVER_URL);
+const socket = require('socket.io-client')(SERVER_URL, { autoConnect: false });
 
 (async () => {
-	const fetchModule = await import('node-fetch');
-	fetch = fetchModule.default;
-
-	const storeModule = await import('electron-store');
-	const Store = storeModule.default;
-	store = new Store({
-		defaults: {
-			authToken: null,
-			updatePath: null,
-			relativePath: null,
-			autoupdate: false,
-			startWithWindows: true,
-			startMinimized: true,
-			quitOnClose: false,
-			maxBackupsFolderSize: 524,
-			backupsEnabled: false,
-			backupsFolderPath: null,
-		},
-	});
-	// store.delete('authToken'); // for testing
-	function updateStartWithWindows() {
-		if (store.get('startWithWindows')) {
+	// await store.delete('authToken'); // Clear auth token on startup for testing
+	async function updateStartWithWindows() {
+		if (await store.get('startWithWindows')) {
 			app.setLoginItemSettings({
 				openAtLogin: true,
 				args: ['--hidden'],
@@ -67,13 +57,14 @@ let store;
 			});
 		}
 	}
-	updateStartWithWindows();
+	await updateStartWithWindows();
 
-	ipcMain.on('set-start-with-windows', (event, value) => {
-		store.set('startWithWindows', value);
-		updateStartWithWindows();
+	ipcMain.on('set-start-with-windows', async (event, value) => {
+		await store.set('startWithWindows', value);
+		await updateStartWithWindows();
 	});
 
+	storeInitialized = true;
 	startProcess();
 })();
 
@@ -119,18 +110,8 @@ function renderer_log(message) {
 	mainWindow?.webContents?.send('log', message);
 }
 
-let lastReceivedData = {
-	newFile: {},
-	downloadedFile: {},
-}; // Last received data
-let lastDataTimestamp = {
-	newFile: 0,
-	downloadedFile: 0,
-}; // Timestamp of the last received data
-const DATA_RECEIVE_THRESHOLD = 2000; // 2 seconds threshold
-
 function startProcess() {
-	if (!store || !app.isReady() || mainWindow) return;
+	if (!storeInitialized || !app.isReady() || mainWindow) return;
 	createWindow();
 	autoUpdater.checkForUpdates().then((UpdateCheckResults) => {
 		log.info('Update check results:', UpdateCheckResults);
@@ -138,8 +119,8 @@ function startProcess() {
 	InitiateBackup();
 }
 
-function createWindow() {
-	const startMinimized = process.argv.includes('--hidden') && store.get('startMinimized');
+async function createWindow() {
+	const startMinimized = process.argv.includes('--hidden') && (await store.get('startMinimized'));
 	log.info('Creating window', { startMinimized });
 	mainWindow = new BrowserWindow({
 		width: 850,
@@ -164,6 +145,8 @@ function createWindow() {
 		skipTaskbar: startMinimized,
 		show: !startMinimized,
 	});
+
+	MainWindowWrapper.init(mainWindow);
 
 	mainWindow?.webContents.setWindowOpenHandler(({ url }) => {
 		if (url.startsWith('https:')) {
@@ -243,8 +226,8 @@ function createWindow() {
 		mainWindow?.hide();
 	});
 
-	mainWindow?.on('close', (event) => {
-		if (!app.isQuiting && !store.get('quitOnClose')) {
+	mainWindow?.on('close', async (event) => {
+		if (!app.isQuiting && !(await store.get('quitOnClose'))) {
 			event.preventDefault();
 			mainWindow?.hide();
 		}
@@ -392,85 +375,10 @@ autoUpdater.on('update-downloaded', () => {
 	}, 5000);
 });
 
-function isEqual(data1, data2) {
-	return JSON.stringify(data1) === JSON.stringify(data2);
-}
-
 function sanitizeInput(input) {
 	let res = validator.escape(input);
 	res = res.trim();
 	return res;
-}
-
-const vbsPath = path.join(app.getAppPath(), '..', 'vbs');
-setExternalVBSLocation(vbsPath); // to allow packaged app to access registry
-log.info('VBS Path:', vbsPath);
-async function wowDefaultPath() {
-	if (process.platform === 'win32') {
-		// log.info('Checking default WoW path on Windows');
-		const key = 'HKLM\\SOFTWARE\\WOW6432Node\\Blizzard Entertainment\\World of Warcraft';
-
-		try {
-			const results = await promisified.list([key]);
-			const value = results[key].values.InstallPath.value;
-			// log.info('Registry WoW Path:', value, typeof value);
-			if (typeof value === 'string') {
-				let path = validateWoWPath(value);
-				// log.info('Validated WoW Path:', path);
-				return path;
-			} else {
-				// log.error('WoW path is not a string:', value);
-				// Optionally, prompt the user for input or provide a default path
-				return null;
-			}
-		} catch (e) {
-			log.error('Error accessing registry for WoW path:', JSON.stringify(e));
-			// Show an error dialog to the user or log the error
-			// Optionally, prompt the user to manually select the WoW installation path
-			return null;
-		}
-	}
-	return null;
-}
-
-function validateWoWPath(inputPath) {
-	log.info('Validating WoW Path:', inputPath);
-	// Normalize the input path to handle different path formats
-	const normalizedPath = path.normalize(inputPath);
-	// Split the path to analyze its components
-	const pathComponents = normalizedPath.split(path.sep);
-
-	// Find the index of the "World of Warcraft" folder in the path
-	const wowIndex = pathComponents.map((component) => component.toLowerCase()).indexOf('world of warcraft'.toLowerCase());
-
-	// If "World of Warcraft" is not in the path, the path is invalid
-	if (wowIndex === -1) {
-		log.info('Invalid WoW Path:', inputPath);
-		return null;
-	}
-
-	// Construct the path up to and including "World of Warcraft"
-	const wowPath = pathComponents.slice(0, wowIndex + 1).join(path.sep);
-
-	// Check if the "_retail_" folder exists within the "World of Warcraft" directory
-	const retailPath = path.join(wowPath, '_retail_');
-	if (fs.existsSync(retailPath)) {
-		// Return the path to "World of Warcraft" if "_retail_" exists within it
-		log.info('Valid WoW Path:', wowPath);
-		return wowPath;
-	}
-
-	// Return null if the "_retail_" folder does not exist within the "World of Warcraft" directory
-	log.info('Invalid WoW Path(no _retail_):', inputPath);
-	return null;
-}
-
-async function getWoWPath() {
-	let path = store.get('updatePath');
-	if (!path) {
-		path = await wowDefaultPath();
-	}
-	return path;
 }
 
 ipcMain.handle('get-wow-path', async () => {
@@ -478,38 +386,30 @@ ipcMain.handle('get-wow-path', async () => {
 });
 
 async function onFilePathSelected(folderPath) {
-	log.info('Selected path:', folderPath, '|relative path:', store.get('relativePath'));
-	if (!store.get('relativePath')) {
+	const relativePath = await store.get('relativePath');
+	log.info('Selected path:', folderPath, 'relative path:', relativePath);
+	if (!relativePath) {
 		log.info('Relative path not set, skipping');
 		renderer_log('Relative path not set, skipping');
 		return;
 	}
+
 	if (folderPath) {
-		const hash = await generateHashForPath(folderPath);
-		const stats = fs.statSync(folderPath);
-		let displayName = path.basename(folderPath);
-		console.log('Display name:', displayName);
-		let emptyData = { hash, timestamp: stats.mtime.getTime() / 1000, fileName: displayName, displayName: displayName };
+		const fileData = await GetFileData(folderPath, relativePath);
+		const stats = await fsp.stat(folderPath);
 
 		if (stats.isDirectory()) {
-			// Existing directory logic
-			compressAndSend(folderPath, true, emptyData);
+			compressAndSend(folderPath, fileData);
 		} else if (stats.isFile()) {
 			const fileExtension = path.extname(folderPath);
 			log.info('File extension:', fileExtension);
-			renderer_log('File extension:', fileExtension);
 
 			if (fileExtension === '.zip') {
-				// Before sending the .zip we must unzip it to check the hash and name of the package
-				const { fileName, hash, timestamp } = await processZipBeforeSending(folderPath);
-				log.info('Processed zip:', fileName, hash, timestamp);
-				emptyData = { fileName, hash, timestamp, displayName };
-
 				// Send the .zip file directly
-				sendFile(folderPath, emptyData);
+				await sendFile(folderPath, fileData);
 			} else {
-				// Compress and send the file
-				compressAndSend(folderPath, false, emptyData);
+				// normal file
+				compressAndSend(folderPath, fileData);
 			}
 		}
 	} else {
@@ -519,7 +419,7 @@ async function onFilePathSelected(folderPath) {
 }
 
 ipcMain.handle('check-for-login', async () => {
-	const token = store.get('authToken');
+	const token = await store.get('authToken');
 	log.info('Checking for login:', token);
 	if (token) {
 		try {
@@ -533,8 +433,8 @@ ipcMain.handle('check-for-login', async () => {
 	return null;
 });
 
-ipcMain.handle('store-set', (event, key, value) => store.set(key, value));
-ipcMain.handle('store-get', (event, key) => store.get(key));
+ipcMain.handle('store-set', async (event, key, value) => await store.set(key, value));
+ipcMain.handle('store-get', async (event, key) => await store.get(key));
 
 ipcMain.handle('get-app-version', () => {
 	return app.getVersion();
@@ -609,7 +509,7 @@ async function getFolderSize(folderPath, signal) {
 	let totalSize = 0;
 
 	async function calculateSize(directory) {
-		const files = await fs.promises.readdir(directory, { withFileTypes: true });
+		const files = await fsp.readdir(directory, { withFileTypes: true });
 
 		for (const file of files) {
 			if (signal.aborted) {
@@ -618,7 +518,7 @@ async function getFolderSize(folderPath, signal) {
 
 			const filePath = path.join(directory, file.name);
 			try {
-				const stats = await fs.promises.stat(filePath);
+				const stats = await fsp.stat(filePath);
 
 				if (stats.isDirectory()) {
 					await calculateSize(filePath); // Recursively calculate size for subdirectories
@@ -649,7 +549,7 @@ ipcMain.handle('get-size-of-backups-folder', async () => {
 	currentAbortController = new AbortController();
 	const { signal } = currentAbortController;
 
-	const folderPath = store.get('backupsPath');
+	const folderPath = await store.get('backupsPath');
 	if (!folderPath) {
 		console.log('No path set');
 		return { error: 'No path set' };
@@ -668,8 +568,8 @@ ipcMain.handle('get-size-of-backups-folder', async () => {
 	}
 });
 
-ipcMain.on('open-backups-folder', (event) => {
-	const folderPath = store.get('backupsPath');
+ipcMain.on('open-backups-folder', async (event) => {
+	const folderPath = await store.get('backupsPath');
 	console.log('Opening backups folder:', folderPath);
 	if (folderPath) {
 		shell.openPath(folderPath);
@@ -678,11 +578,10 @@ ipcMain.on('open-backups-folder', (event) => {
 
 ipcMain.handle('login', async (event, { username, password }) => {
 	try {
-		const loginUrl = `${URL}/login`;
 		const sanitizedUsername = sanitizeInput(username); // Implement sanitizeInput to sanitize user inputs
 		const sanitizedPassword = sanitizeInput(password);
 
-		const response = await fetch(loginUrl, {
+		const response = await net.fetch(SERVER_LOGIN_ENDPOINT, {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify({ username: sanitizedUsername, password: sanitizedPassword }),
@@ -694,7 +593,7 @@ ipcMain.handle('login', async (event, { username, password }) => {
 
 		const data = await response.json();
 		if (data.token) {
-			store.set('authToken', data.token);
+			await store.set('authToken', data.token);
 			log.info('Login successful');
 			return { success: true, error: null };
 		} else {
@@ -703,7 +602,7 @@ ipcMain.handle('login', async (event, { username, password }) => {
 		}
 	} catch (err) {
 		log.info('Login error:', err);
-		console.error('Login error:', err);
+		mainWindow?.webContents.send('connect-error', err);
 		return { success: false, error: `error logging in: ${err.code}` };
 	}
 });
@@ -713,47 +612,45 @@ ipcMain.handle('should-download-file', (event, serverFile) => {
 });
 
 ipcMain.handle('request-files-data', async (event) => {
-	return await fetch(`${URL}/files`, {
-		method: 'GET',
-		headers: {
-			Authorization: `Bearer ${store.get('authToken')}`,
-		},
-	})
+	return await net
+		.fetch(SERVER_EXISTING_FILES_ENDPOINT, {
+			method: 'GET',
+			headers: {
+				Authorization: `Bearer ${await store.get('authToken')}`,
+			},
+		})
 		.then((response) => response.json())
 		.catch((error) => console.error('Error fetching files data:', error));
 });
 
-// ipcMain.handle('request-active-users', async (event) => {
-// 	const token = store.get('authToken'); // Replace this with your actual token
-
-// 	try {
-// 		const response = await fetch(URL+'/active-users', {
-// 			method: 'GET',
-// 			headers: {
-// 				'Authorization': `Bearer ${token}`
-// 			}
-// 		});
-
-// 		if (!response.ok) {
-// 			throw new Error(`HTTP error! status: ${response.status}`);
-// 		}
-
-// 		return await response.json();
-// 	} catch (error) {
-// 		console.error('Error fetching active users:', error);
-// 		// Handle the error appropriately in your application
-// 	}
-// });
-
-ipcMain.on('connect', () => {
+ipcMain.on('connect', async () => {
 	log.info('Connecting to server');
-	const token = store.get('authToken');
+	const token = await store.get('authToken');
 	socket.auth = { token };
 	socket.connect();
 });
 
-ipcMain.on('request-file', (event, data) => {
-	socket.emit('request-file', data);
+/*
+data = {
+	fileName: 'example.zip',
+	relativePath: 'path/to/file/inside/wow/folder',
+	timestamp: 1633072800,
+	hash: 'abc123',
+	displayName: 'Example File',
+}
+*/
+ipcMain.on('request-file', async (event, fileData) => {
+	try {
+		const zipPath = await DownloadFile(fileData);
+		try {
+			await InstallFile(fileData, zipPath);
+		} finally {
+			log.info('Removing zip file:', zipPath);
+			await fsp.rm(zipPath, { recursive: false });
+		}
+	} catch (error) {
+		console.log('Error requesting file:', error);
+	}
 });
 
 socket.on('connect', () => {
@@ -765,10 +662,15 @@ socket.on('connect', () => {
 const totalReconnectAttempts = 15;
 let manualReconnectAttempt = 0;
 let reconnectScheduled = false;
-socket.on('connect_error', (error) => {
-	log.info('Connection error', error);
+socket.on('connect_error', async (error) => {
+	// change xhr poll error with server is not avaliable
+	if (error.message.includes('xhr poll error')) {
+		error = new Error('Server is unavailable.');
+	}
+
 	mainWindow?.webContents.send('connect-error', error);
-	const token = store.get('authToken');
+	log.error('Connection error:', error);
+	const token = await store.get('authToken');
 
 	if (!socket.active && !reconnectScheduled && token && manualReconnectAttempt < totalReconnectAttempts) {
 		reconnectScheduled = true;
@@ -787,30 +689,23 @@ socket.on('disconnect', (reason, details) => {
 	mainWindow?.webContents.send('disconnect', (details && details.description) || reason);
 });
 
-socket.on('new-file', (data) => {
-	const now = Date.now();
-	if (now - lastDataTimestamp.newFile < DATA_RECEIVE_THRESHOLD && isEqual(data, lastReceivedData.newFile)) {
-		log.info('Duplicate data received, ignoring.');
-		return;
-	}
-	lastDataTimestamp.newFile = now;
-	lastReceivedData.newFile = data;
-	log.info('New file:', data);
-	mainWindow?.webContents.send('new-file', data);
+socket.on('new-file', (fileData) => {
+	log.info('New file:', fileData);
+	mainWindow?.webContents.send('new-file', fileData);
 });
 
-socket.on('file-not-found', (data) => {
-	mainWindow?.webContents.send('file-not-found', data);
+socket.on('file-not-found', (fileData) => {
+	mainWindow?.webContents.send('file-not-found', fileData);
 });
 
-socket.on('file-deleted', (data) => {
-	log.info('File deleted:', data);
-	mainWindow?.webContents.send('file-deleted', data);
+socket.on('file-deleted', (fileData) => {
+	log.info('File deleted:', fileData);
+	mainWindow?.webContents.send('file-deleted', fileData);
 });
 
-ipcMain.on('delete-file', (event, data) => {
-	log.info('Deleting file:', data);
-	socket.emit('delete-file', data);
+ipcMain.on('delete-file', (event, fileData) => {
+	log.info('Deleting file:', fileData);
+	socket.emit('delete-file', fileData);
 });
 
 socket.on('new-release', (data) => {
@@ -868,107 +763,6 @@ socket.on('not-enough-permissions', (data) => {
 	renderer_log('Not enough permissions:', data);
 });
 
-const fileChunks = {};
-socket.on('file-content-chunk', async (data) => {
-	if (!(await getWoWPath())) return;
-	const { chunk, chunkNumber, totalChunks, fileName, relativePath, timestamp, hash, displayName } = data;
-
-	// Initialize the file's chunk array if it doesn't exist
-	if (!fileChunks[hash] || chunkNumber === 0) {
-		// chunk 0 is always sent with window size 1 so it will always be before other chunks
-		fileChunks[hash] = new Array(totalChunks).fill(null);
-	}
-
-	// check if chank was already sent
-	if (fileChunks[hash][chunkNumber] !== null) {
-		log.info(`Chunk ${chunkNumber} already received, skipping...`);
-		socket.emit('ack', { chunkNumber, fileName, hash });
-		return;
-	}
-	fileChunks[hash][chunkNumber] = chunk;
-
-	// Calculate the percentage of chunks received
-	const chunksReceived = fileChunks[hash].filter((chunk) => chunk !== null).length;
-	const progressPercent = Math.round((chunksReceived / totalChunks) * 100);
-	mainWindow?.webContents.send('file-chunk-received', { progressPercent, fileName, relativePath, timestamp, hash, displayName });
-
-	// Check if all chunks have been received
-	const allChunksReceived = fileChunks[hash].every((chunk) => chunk !== null);
-
-	socket.emit('ack', { chunkNumber, fileName, hash });
-	// log.info(`ACK sent for chunk ${chunkNumber} of file ${fileName}`)
-
-	if (allChunksReceived) {
-		const now = Date.now();
-		if (now - lastDataTimestamp.downloadedFile < DATA_RECEIVE_THRESHOLD && isEqual({ fileName, relativePath, timestamp, hash, displayName }, lastReceivedData.downloadedFile)) {
-			log.info('Duplicate data received, ignoring.');
-			return;
-		}
-
-		lastDataTimestamp.downloadedFile = now;
-		lastReceivedData.downloadedFile = data;
-
-		// Combine all chunks
-		const fileBuffer = Buffer.concat(fileChunks[hash]);
-
-		const updatePath = await getWoWPath();
-		const tempZipFilePath = path.join(updatePath, relativePath, fileName + '.zip'); // wow + relative + .zip
-		const expectedOutputFolder = path.join(updatePath, relativePath, fileName); // wow + relative + foler/file
-		const targetPath = path.join(updatePath, relativePath); // wow + relative
-
-		// Ensure the target path exists
-		if (!fs.existsSync(targetPath)) {
-			await fs.promises.mkdir(targetPath, { recursive: true });
-		}
-
-		// Remove the previous extracted folder if it exists
-		if (fs.existsSync(expectedOutputFolder)) {
-			await fs.promises.rm(expectedOutputFolder, { recursive: true });
-		}
-
-		// Write the received zip data to disk
-		await fs.promises.writeFile(tempZipFilePath, fileBuffer);
-		log.info('Zip file saved for extraction:', tempZipFilePath);
-
-		try {
-			// Use extract-zip to extract the written zip file into the target path
-			await extract(tempZipFilePath, { dir: targetPath });
-			log.info('File extracted successfully:', targetPath);
-			mainWindow?.webContents.send('file-downloaded', { fileName, relativePath, timestamp, hash, displayName });
-			// Delay deletion of chunks in case the server duplicates some chunks
-			setTimeout(() => {
-				delete fileChunks[hash];
-			}, 2000);
-		} catch (error) {
-			log.error('Error extracting file:', error);
-			console.error('Error extracting file:', error);
-		} finally {
-			// Clean up the temporary zip file
-			await fs.promises.rm(tempZipFilePath, { recursive: false });
-		}
-	}
-});
-
-async function generateHashForPath(entryPath) {
-	const stats = await fs.promises.stat(entryPath);
-	if (stats.isDirectory()) {
-		// Get all entries in the directory
-		const entries = await fs.promises.readdir(entryPath);
-		const sortedEntries = entries.sort();
-		let combinedHash = '';
-		for (let entry of sortedEntries) {
-			const fullPath = path.join(entryPath, entry);
-			const entryHash = await generateHashForPath(fullPath); // Process each entry sequentially
-			combinedHash += entryHash; // Concatenate hashes
-		}
-		return crc32(combinedHash).toString(16);
-	} else {
-		// It's a file, generate hash as before
-		const fileBuffer = await fs.promises.readFile(entryPath);
-		return crc32(fileBuffer).toString(16);
-	}
-}
-
 async function shouldDownloadFile(serverFile) {
 	if (!(await getWoWPath())) {
 		return [false, L['No WoW Path set']];
@@ -987,7 +781,7 @@ async function shouldDownloadFile(serverFile) {
 		return [false, L['Is symbolic link']];
 	}
 
-	const localFileHash = await generateHashForPath(localFilePath);
+	const localFileHash = await CalculateHashForPath(localFilePath);
 	log.info(`Local File Hash: ${localFileHash}, Server File Hash: ${serverFile.hash}`);
 	const shouldDownload = localFileHash !== serverFile.hash;
 	if (shouldDownload) {
@@ -997,150 +791,57 @@ async function shouldDownloadFile(serverFile) {
 	}
 }
 
-async function send_data_in_chunks(socket, data) {
-	log.info('Sending data in chunks:', data.fileName, data.relativePath, data.timestamp, data.hash);
-	const CHUNK_SIZE = 256 * 1024; // 256KB
-	const fileBuffer = data.file;
-	const totalChunks = Math.ceil(fileBuffer.length / CHUNK_SIZE);
+async function compressAndSend(folderPath, fileData) {
+	const baseName = path.basename(folderPath);
+	const outputPath = path.join(TEMP_DIR, baseName + '.zip');
+	await fsp.mkdir(path.dirname(outputPath), { recursive: true });
 
-	const fileName = data.fileName;
-	const relativePath = data.relativePath;
-	const timestamp = data.timestamp;
-	const hash = data.hash;
-	const displayName = data.displayName;
+	try {
+		await zipFile(folderPath, outputPath);
+		log.info('File compressed and saved:', outputPath);
+		// Send the file
+		await sendFile(outputPath, fileData);
+	} catch (error) {
+		log.error('Error compressing and sending file:', error);
+		renderer_log('Error compressing and sending file:', error);
+		return;
+	} finally {
+		// Clean up the zip file after sending
+		await fsp.rm(outputPath, { recursive: true });
+	}
+}
 
-	const sendChunkAndWaitForAck = (chunk, chunkNumber) => {
-		return new Promise((resolve, reject) => {
-			const ackListener = (ackData) => {
-				if (ackData.chunkNumber === chunkNumber && ackData.hash === hash && ackData.fileName === fileName) {
-					socket.off('ack', ackListener); // Remove listener after receiving ACK
-					resolve();
-				}
-			};
-			socket.on('ack', ackListener);
+async function sendFile(filePath, fileData) {
+	log.info('Sending file:', filePath, fileData);
+	const fileBuffer = await fsp.readFile(filePath);
 
-			socket.emit('upload-file-chunk', {
-				chunk: chunk,
-				chunkNumber: chunkNumber,
-				totalChunks: totalChunks,
-				fileName: fileName,
-				relativePath: relativePath,
-				timestamp: timestamp,
-				hash: hash,
-				displayName: displayName,
-			});
-
-			// Timeout for ACK
-			setTimeout(() => {
-				socket.off('ack', ackListener); // Ensure to remove listener to prevent memory leak
-				reject(`Timeout waiting for ACK for chunk ${chunkNumber}`);
-			}, 5000); // 5 seconds timeout for ACK
-		});
+	const payload = {
+		fileData,
+		file: fileBuffer.toString('base64'),
 	};
 
-	for (let i = 0; i < totalChunks; i++) {
-		let start = i * CHUNK_SIZE;
-		let end = start + CHUNK_SIZE;
-		let chunk = fileBuffer.slice(start, end);
+	log.info('SERVER_UPLOADS_ENDPOINT:', SERVER_UPLOADS_ENDPOINT);
 
-		try {
-			await sendChunkAndWaitForAck(chunk, i);
-			log.info(`Chunk ${i} sent and acknowledged`);
-		} catch (error) {
-			console.error(error);
-			i--; // Retry sending the current chunk
-		}
-	}
-}
-
-// filePath is the location of current zip file
-// decompress zip to check hash and proper name for the package
-// extract it to /tmp and check the hash and name of the first file/folder in directory
-// delete /tmp after the processing
-// return { name, hash, timestamp }
-async function processZipBeforeSending(filePath) {
-	try {
-		log.info('Processing zip before sending:', filePath);
-		renderer_log('Processing zip before sending:', filePath);
-		const userData = app.getPath('userData');
-		const tmpExtractPath = path.join(userData, 'tmp'); // temporary folder
-		const tmpCopyPath = path.join(tmpExtractPath, path.basename(filePath));
-
-		log.info('Extracting file:', tmpCopyPath);
-		log.info('Extracting to:', tmpExtractPath);
-
-		if (!fs.existsSync(tmpExtractPath)) {
-			await fs.promises.mkdir(tmpExtractPath, { recursive: true });
-		}
-		await fs.promises.copyFile(filePath, tmpCopyPath);
-
-		// Use extract-zip to extract the copied zip file
-		await extract(tmpCopyPath, { dir: tmpExtractPath });
-
-		// Delete the copied zip file
-		await fs.promises.rm(tmpCopyPath, { recursive: true });
-
-		const extractedFiles = await fs.promises.readdir(tmpExtractPath);
-		log.info('Extracted files:', extractedFiles);
-		const targetFile = path.join(tmpExtractPath, extractedFiles[0]);
-
-		const fileName = path.basename(targetFile);
-		const hash = await generateHashForPath(targetFile);
-		const stats = fs.statSync(targetFile);
-		const timestamp = stats.mtime.getTime() / 1000;
-		await fs.promises.rm(tmpExtractPath, { recursive: true });
-
-		return { fileName, hash, timestamp };
-	} catch (error) {
-		log.error('Error processing zip before sending:', error);
-		renderer_log('Error processing zip before sending:', error);
-	}
-}
-
-async function compressAndSend(folderPath, isFolder, { fileName, hash, timestamp, displayName }) {
-	const outputPath = `${folderPath}.zip`;
-	const output = fs.createWriteStream(outputPath);
-	const archive = archiver('zip', {
-		zlib: { level: 9 }, // Maximum compression
+	const req = net.request({
+		url: SERVER_UPLOADS_ENDPOINT,
+		method: 'POST',
+		headers: {
+			'Content-Type': 'application/json',
+			Authorization: `Bearer ${await store.get('authToken')}`,
+		},
 	});
 
-	// Listen for archive errors
-	archive.on('error', (err) => {
-		throw err;
+	req.on('response', (response) => {
+		log.info('Upload response status:', response.statusCode);
+		response.on('data', (data) => {
+			log.info('Upload response data:', data.toString());
+		});
 	});
 
-	// Pipe archive data to the file
-	archive.pipe(output);
-
-	if (isFolder) {
-		archive.directory(folderPath, fileName);
-	} else {
-		archive.file(folderPath, { name: fileName });
-	}
-
-	// Finalize the archive (i.e., we are done appending files but streams have to finish yet)
-	await archive.finalize();
-
-	log.info('File compressed and saved:', outputPath);
-
-	// Send the file
-	await sendFile(outputPath, { fileName, hash, timestamp, displayName });
-
-	// Clean up the zip file after sending
-	fs.unlink(outputPath, (err) => {
-		if (err) {
-			console.error('Error deleting zip file:', err);
-		}
-	});
-}
-
-async function sendFile(filePath, { fileName, hash, timestamp, displayName }) {
-	fileName = fileName.replace(/\.zip$/, '');
-	log.info('Sending file:', filePath, { fileName, hash, timestamp });
-	const fileBuffer = await fs.promises.readFile(filePath);
-	const stats = fs.statSync(filePath);
-	timestamp = timestamp || stats.mtime.getTime() / 1000;
-	send_data_in_chunks(socket, { file: fileBuffer, fileName, relativePath: store.get('relativePath'), timestamp, hash, displayName });
+	// Write the JSON payload and end the request
+	req.write(JSON.stringify(payload));
+	req.end();
+	log.info('File sent successfully:', filePath);
 }
 
 /*
@@ -1193,15 +894,15 @@ data = {
 */
 
 async function DeleteOverSizeBackupFiles() {
-	const backupsPath = store.get('backupsPath');
+	const backupsPath = await store.get('backupsPath');
 	// delete old backups untill there is only 1 backup left or the folder size is less than maxSise setting
-	const maxSiseMB = store.get('maxBackupsFolderSize'); // in MB
+	const maxSiseMB = await store.get('maxBackupsFolderSize'); // in MB
 	if (!maxSiseMB) {
 		log.info('Max backup size not set');
 		return;
 	}
 	const maxSise = maxSiseMB * 1024 * 1024; // convert to bytes
-	const backups = await fs.promises.readdir(backupsPath);
+	const backups = await fsp.readdir(backupsPath);
 	if (backups.length <= 1) {
 		log.info('Only one backup found, skipping delete');
 		return;
@@ -1225,7 +926,7 @@ async function DeleteOverSizeBackupFiles() {
 	let deletedSize = 0;
 	for (let file of files) {
 		const filePath = path.join(backupsPath, file.file);
-		await fs.promises.rm(filePath, { recursive: true });
+		await fsp.rm(filePath, { recursive: true });
 		deletedSize += file.size;
 		log.info('Deleted:', filePath);
 		UpdateBackupStatus('Backup deleted: ' + filePath);
@@ -1240,7 +941,7 @@ async function DeleteOverSizeBackupFiles() {
 async function BackupWTFFolder() {
 	const wowPath = await getWoWPath();
 	const wtfPath = path.join(wowPath, '_retail_', 'WTF');
-	const backupsPath = store.get('backupsPath');
+	const backupsPath = await store.get('backupsPath');
 
 	if (!fs.existsSync(wtfPath)) {
 		log.error('WTF folder not found:', wtfPath);
@@ -1257,33 +958,7 @@ async function BackupWTFFolder() {
 	const backupName = `WTF-${timestamp}.zip`;
 	const backupFilePath = path.join(backupsPath, backupName);
 
-	// Create a file to stream archive data to.
-	const output = fs.createWriteStream(backupFilePath);
-	const archive = archiver('zip', {
-		zlib: { level: 9 }, // Maximum compression
-	});
-
-	ScheduleBackupStatus('Creating zip file');
-
-	// Listen for all archive data to be written
-	output.on('close', function () {
-		log.info('Backup created:', backupFilePath);
-		renderer_log('Backup created: ' + backupFilePath);
-		mainWindow?.webContents.send('backup-created');
-	});
-
-	archive.on('error', function (err) {
-		throw err;
-	});
-
-	// Pipe archive data to the file
-	archive.pipe(output);
-
-	// Append files from the WTF folder, preserving folder structure and supporting Unicode
-	archive.directory(wtfPath, 'WTF');
-
-	// Finalize the archive (i.e., we are done appending files but streams have to finish yet)
-	await archive.finalize();
+	await zipFile(wtfPath, backupFilePath);
 }
 
 let isBackupRunning = false;
@@ -1308,12 +983,17 @@ function ScheduleBackupStatus(status) {
 }
 
 async function InitiateBackup(force) {
+	if (!socket.connected) {
+		log.info('Socket is not connected, skipping backup');
+		return;
+	}
+
 	if (isBackupRunning) {
 		log.info('Backup is already running, skipping');
 		return;
 	}
 
-	const backupsEnabled = store.get('backupsEnabled');
+	const backupsEnabled = await store.get('backupsEnabled');
 	if (!backupsEnabled && !force) {
 		log.info('Backups are disabled, skipping');
 		UpdateBackupStatus('Backups are disabled');
@@ -1321,7 +1001,7 @@ async function InitiateBackup(force) {
 	}
 	log.info('Initiating backup');
 
-	const lastBackup = store.get('lastBackupTime');
+	const lastBackup = await store.get('lastBackupTime');
 	// 1 week
 	const backupInterval = ONE_WEEK;
 	const now = Date.now();
@@ -1332,7 +1012,7 @@ async function InitiateBackup(force) {
 			await DeleteOverSizeBackupFiles();
 			ScheduleBackupStatus('Creating backup');
 			await BackupWTFFolder();
-			store.set('lastBackupTime', now);
+			await store.set('lastBackupTime', now);
 			ScheduleBackupStatus('Deleting old backups');
 			await DeleteOverSizeBackupFiles();
 			UpdateBackupStatus('Backup completed!');
