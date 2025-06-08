@@ -74,8 +74,8 @@ log.info('App starting...');
 let = currentLocale = i18n.getLocale();
 console.log('Current locale:', currentLocale);
 const preload = path.join(__dirname, 'preload.js');
-const taskBarIconPath = path.join(__dirname, (currentLocale === 'ko' && 'taskbaricon-mate.png') || 'taskbaricon.png');
-const notificationIconPath = path.join(__dirname, (currentLocale === 'ko' && 'icon-mate.png') || 'icon.png');
+const taskBarIconPath = path.join(__dirname, 'taskbaricon.png');
+const notificationIconPath = path.join(__dirname, 'icon.png');
 console.log('Taskbar icon:', taskBarIconPath, 'Notification icon:', notificationIconPath);
 const html = path.join(__dirname, 'index.html');
 

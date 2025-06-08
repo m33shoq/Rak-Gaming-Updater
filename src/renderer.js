@@ -24,10 +24,6 @@ let L = new Proxy(i18n, {
 
 	// Call the function to translate the DOM elements
 	translateDOM();
-	console.log(L.LOCALE_NAME);
-	if (L.LOCALE_NAME === 'ko') {
-		document.getElementById('headericon').src = 'icon-mate.png';
-	}
 })();
 
 let isConnected = false;
