@@ -1,15 +1,15 @@
-const path = require('path');
-const fs = require('fs');
-const { app } = require('electron');
-const log = require('electron-log/main');
-const { setExternalVBSLocation, promisified } = require('regedit');
-const store = require('./store.js');
+import path from 'path';
+import fs from 'fs';
+import { app } from 'electron';
+import log from 'electron-log/main';
+import { setExternalVBSLocation, promisified } from 'regedit';
+import store from './store';
 
 
 const vbsPath = path.join(app.getAppPath(), '..', 'vbs');
 setExternalVBSLocation(vbsPath); // to allow packaged app to access registry
 log.info('VBS Path:', vbsPath);
-async function wowDefaultPath() {
+async function wowDefaultPath(): Promise<string | null> {
 	if (process.platform === 'win32') {
 		// log.info('Checking default WoW path on Windows');
 		const key = 'HKLM\\SOFTWARE\\WOW6432Node\\Blizzard Entertainment\\World of Warcraft';
@@ -37,7 +37,7 @@ async function wowDefaultPath() {
 	return null;
 }
 
-function validateWoWPath(inputPath) {
+export function validateWoWPath(inputPath: string): string | null {
 	log.info('Validating WoW Path:', inputPath);
 	// Normalize the input path to handle different path formats
 	const normalizedPath = path.normalize(inputPath);
@@ -69,12 +69,10 @@ function validateWoWPath(inputPath) {
 	return null;
 }
 
-async function getWoWPath() {
+export async function getWoWPath(): Promise<string | null> {
 	let path = await store.get('updatePath');
 	if (!path) {
 		path = await wowDefaultPath();
 	}
 	return path;
 }
-
-module.exports = { getWoWPath, validateWoWPath }

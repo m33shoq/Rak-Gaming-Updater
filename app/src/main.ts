@@ -1,39 +1,35 @@
-require('dotenv').config();
-const { app, BrowserWindow, ipcMain, dialog, Tray, Menu, nativeImage, protocol, shell, Notification, net } = require('electron');
-const { autoUpdater } = require('electron-updater');
-const log = require('electron-log/main');
-const { AbortController } = require('abort-controller');
-const { jwtDecode } = require('jwt-decode');
-const fs = require('fs');
-const fsp = require('fs').promises;
-const path = require('path');
-const validator = require('validator');
+import * as dotenv from 'dotenv';
+dotenv.config();
+import { app, BrowserWindow, ipcMain, dialog, Tray, Menu, nativeImage, protocol, shell, Notification, net } from 'electron';
+import { autoUpdater } from 'electron-updater';
+import log from 'electron-log/main';
+import AbortController from 'abort-controller';
+import { jwtDecode } from 'jwt-decode';
+import * as fs from 'fs';
+import * as fsp from 'fs/promises';
+import * as path from 'path';
+import validator from 'validator';
 
-const { GetFileData, CalculateHashForPath } = require('./fileDataUtility.js');
-const { zipFile, unzipFile } = require('./zipHandler.js');
-const { DownloadFile, InstallFile } = require('./fileManagement.js');
-const { getWoWPath, validateWoWPath } = require('./wowPathUtility.js');
-const MainWindowWrapper = require('./MainWindowWrapper.js');
-log.info('MainWindowWrapper', MainWindowWrapper);
-const store = require('./store.js');
-let storeInitialized = false;
+import { GetFileData, CalculateHashForPath } from './fileDataUtility';
+import { zipFile, unzipFile } from './zipHandler';
+import { DownloadFile, InstallFile } from './fileManagement';
+import { getWoWPath, validateWoWPath } from './wowPathUtility';
+import mainWindowWrapper from './MainWindowWrapper';
+import store from './store';
 
-const i18n = require('./translations/i18n');
-const locale = i18n.getLocale();
-const translations = i18n.getCatalog(locale);
-const serializedL = JSON.parse(JSON.stringify(translations));
-ipcMain.handle('i18n', () => serializedL);
+import Locale from './locale';
+import {
+	SERVER_URL,
+	SERVER_LOGIN_ENDPOINT,
+	SERVER_UPLOADS_ENDPOINT,
+	SERVER_EXISTING_FILES_ENDPOINT,
+	SERVER_DOWNLOAD_ENDPOINT
+} from './serverEndpoints';
+const L = Locale.L;
+let isQuiting = false;
 
-const L = new Proxy(serializedL, {
-	get: (target, prop) => {
-		if (prop in target) {
-			return target[prop];
-		}
-		return prop;
-	},
-});
-
-const { SERVER_URL, SERVER_LOGIN_ENDPOINT, SERVER_UPLOADS_ENDPOINT, SERVER_EXISTING_FILES_ENDPOINT, SERVER_DOWNLOAD_ENDPOINT } = require('./serverEndpoints.js');
+log.info("LOCALE:", Locale.selectedLocale)
+ipcMain.handle('i18n', () => Locale.translations);
 
 __dirname = path.dirname(__filename);
 log.info('File:', __filename, 'Dir:', __dirname);
@@ -41,43 +37,43 @@ log.info('File:', __filename, 'Dir:', __dirname);
 const TEMP_DIR = path.join(app.getPath('appData'), 'temp'); // Temporary directory for unzipped/zipped files
 
 log.info('SERVER_URL:', SERVER_URL);
-const socket = require('socket.io-client')(SERVER_URL, { autoConnect: false });
+import Socket from 'socket.io-client';
+const socket = Socket(SERVER_URL, { autoConnect: false });
 
-(async () => {
-	// await store.delete('authToken'); // Clear auth token on startup for testing
-	async function updateStartWithWindows() {
-		if (await store.get('startWithWindows')) {
-			app.setLoginItemSettings({
-				openAtLogin: true,
-				args: ['--hidden'],
-			});
-		} else {
-			app.setLoginItemSettings({
-				openAtLogin: false,
-			});
-		}
+
+// store.delete('authToken'); // Clear auth token on startup for testing
+function updateStartWithWindows() {
+	if (store.get('startWithWindows')) {
+		app.setLoginItemSettings({
+			openAtLogin: true,
+			args: ['--hidden'],
+		});
+	} else {
+		app.setLoginItemSettings({
+			openAtLogin: false,
+		});
 	}
-	await updateStartWithWindows();
+}
+updateStartWithWindows();
 
-	ipcMain.on('set-start-with-windows', async (event, value) => {
-		await store.set('startWithWindows', value);
-		await updateStartWithWindows();
-	});
-
-	storeInitialized = true;
-	startProcess();
-})();
+ipcMain.on('set-start-with-windows', async (event, value) => {
+	store.set('startWithWindows', value);
+	updateStartWithWindows();
+});
 
 log.initialize({ preload: true });
 log.info('App starting...');
 
-let = currentLocale = i18n.getLocale();
+// @ts-ignore
+const currentLocale = Locale.selectedLocale;
 console.log('Current locale:', currentLocale);
 const preload = path.join(__dirname, 'preload.js');
-const taskBarIconPath = path.join(__dirname, 'taskbaricon.png');
-const notificationIconPath = path.join(__dirname, 'icon.png');
+const taskBarIconPath = path.join(__dirname, '..', 'assets','taskbaricon.png');
+const notificationIconPath = path.join(__dirname, '..', 'assets','icon.png');
 console.log('Taskbar icon:', taskBarIconPath, 'Notification icon:', notificationIconPath);
-const html = path.join(__dirname, 'index.html');
+console.log( path.join(__dirname, '..', ))
+console.log( path.join(__dirname ));
+const html = path.join(__dirname, '..', 'index.html');
 
 const taskBarIcon = nativeImage.createFromPath(taskBarIconPath);
 const notificationIcon = nativeImage.createFromPath(notificationIconPath);
@@ -90,34 +86,34 @@ autoUpdater.allowPrerelease = false;
 log.transports.file.level = 'info';
 autoUpdater.logger = log;
 
-let queuedDialogs = [];
+const queuedDialogs = [] as Array<{dialogOptions: Electron.MessageBoxOptions, onSuccessCallback: (value: Electron.MessageBoxReturnValue) => void}>;
 
-function queueDialog(mainWindow, dialogOptions, onSuccess) {
+function queueDialog(dialogOptions: Electron.MessageBoxOptions,	onSuccessCallback: (value: Electron.MessageBoxReturnValue) => void) {
 	if (mainWindow?.isVisible()) {
-		dialog.showMessageBox(mainWindow, dialogOptions).then(onSuccess);
+		dialog.showMessageBox(mainWindow, dialogOptions).then(onSuccessCallback);
 	} else {
-		queuedDialogs.push({ dialogOptions, onSuccess });
+		queuedDialogs.push({ dialogOptions, onSuccessCallback });
 	}
 }
 
-let mainWindow;
-let tray;
+let mainWindow: BrowserWindow | null = null;
+let tray: Tray | null = null;
 
-function renderer_log(message) {
+function renderer_log(message: any) {
 	mainWindow?.webContents?.send('log', message);
 }
 
-function startProcess() {
-	if (!storeInitialized || !app.isReady() || mainWindow) return;
+async function startProcess() {
+	if (!app.isReady() || mainWindow) return;
 	createWindow();
 	autoUpdater.checkForUpdates().then((UpdateCheckResults) => {
 		log.info('Update check results:', UpdateCheckResults);
 	});
-	InitiateBackup();
+	InitiateBackup(false);
 }
 
 async function createWindow() {
-	const startMinimized = process.argv.includes('--hidden') && (await store.get('startMinimized'));
+	const startMinimized = process.argv.includes('--hidden') && (store.get('startMinimized'));
 	log.info('Creating window', { startMinimized });
 	mainWindow = new BrowserWindow({
 		width: 850,
@@ -134,16 +130,14 @@ async function createWindow() {
 			preload: preload,
 			nodeIntegration: false,
 			contextIsolation: true,
-			enableRemoteModule: false,
 			webSecurity: true,
 			allowRunningInsecureContent: false,
-			sandbox: true,
 		},
 		skipTaskbar: startMinimized,
 		show: !startMinimized,
 	});
 
-	MainWindowWrapper.init(mainWindow);
+	mainWindowWrapper.init(mainWindow);
 
 	mainWindow?.webContents.setWindowOpenHandler(({ url }) => {
 		if (url.startsWith('https:')) {
@@ -156,6 +150,7 @@ async function createWindow() {
 		renderer_log(`Ready to show. Start args: ${process.argv.join(' ')}`);
 		log.info(`Ready to show. Start args: ${process.argv.join(' ')}`);
 
+		log.debug(store.get('authToken'))
 		// mainWindow?.webContents.openDevTools({ mode: "detach" });
 	});
 
@@ -172,7 +167,7 @@ async function createWindow() {
 		{
 			label: 'Quit',
 			click: () => {
-				app.isQuiting = true;
+				isQuiting = true;
 				app.quit();
 			},
 		},
@@ -199,32 +194,33 @@ async function createWindow() {
 	});
 
 	mainWindow?.webContents.on('will-navigate', (event) => {
-		if (mainWindow?.webContents.getURL() !== winURL) {
+		// if (mainWindow?.webContents.getURL() !== winURL) {
 			event.preventDefault();
-		}
+		// }
 	});
 
 	mainWindow?.on('show', () => {
 		mainWindow?.setSkipTaskbar(false);
 
 		if (queuedDialogs.length > 0) {
-			queuedDialogs.forEach(({ dialogOptions, onSuccess }) => {
-				if (onSuccess) {
-					dialog.showMessageBox(mainWindow, dialogOptions).then(onSuccess);
+			queuedDialogs.forEach(({ dialogOptions, onSuccessCallback  }) => {
+				if (onSuccessCallback) {
+					dialog.showMessageBox(mainWindow as BrowserWindow, dialogOptions).then(onSuccessCallback);
 				}
 			});
-			queuedDialogs = [];
+			// wipe the queue
+			queuedDialogs.length = 0; // Clear the queue
 		}
 	});
 
-	mainWindow?.on('minimize', (event) => {
+	mainWindow?.on('minimize', (event: Electron.Event) => {
 		mainWindow?.setSkipTaskbar(true);
 		event.preventDefault();
 		mainWindow?.hide();
 	});
 
-	mainWindow?.on('close', async (event) => {
-		if (!app.isQuiting && !(await store.get('quitOnClose'))) {
+	mainWindow?.on('close', async (event: Electron.Event) => {
+		if (!isQuiting && !(store.get('quitOnClose'))) {
 			event.preventDefault();
 			mainWindow?.hide();
 		}
@@ -297,7 +293,7 @@ app.on('web-contents-created', (webContentsCreatedEvent, webContents) => {
 });
 
 // Auto-updater events
-let updatedRecheckTimer;
+let updatedRecheckTimer: NodeJS.Timeout | null = null;
 let rechekTries = 0;
 let wasNotificationShown = false;
 autoUpdater.on('update-available', (info) => {
@@ -322,9 +318,9 @@ autoUpdater.on('update-available', (info) => {
 			noLink: true,
 			modal: true,
 			parent: mainWindow,
-		};
+		} as Electron.MessageBoxOptions;
 
-		queueDialog(mainWindow, dialogOpts, ({ response }) => {
+		queueDialog(dialogOpts, ({ response  }) => {
 			if (response === 0) {
 				autoUpdater.downloadUpdate();
 			}
@@ -361,7 +357,7 @@ autoUpdater.on('update-downloaded', () => {
 
 	setTimeout(() => {
 		// Shenanigans to make sure the app closes properly
-		app.isQuiting = true;
+		isQuiting = true;
 		if (mainWindow) {
 			mainWindow?.close();
 		}
@@ -372,7 +368,7 @@ autoUpdater.on('update-downloaded', () => {
 	}, 5000);
 });
 
-function sanitizeInput(input) {
+function sanitizeInput(input: string): string {
 	let res = validator.escape(input);
 	res = res.trim();
 	return res;
@@ -382,8 +378,8 @@ ipcMain.handle('get-wow-path', async () => {
 	return await getWoWPath();
 });
 
-async function onFilePathSelected(folderPath) {
-	const relativePath = await store.get('relativePath');
+async function onFilePathSelected(folderPath: string) {
+	const relativePath = store.get('relativePath');
 	log.info('Selected path:', folderPath, 'relative path:', relativePath);
 	if (!relativePath) {
 		log.info('Relative path not set, skipping');
@@ -416,11 +412,11 @@ async function onFilePathSelected(folderPath) {
 }
 
 ipcMain.handle('check-for-login', async () => {
-	const token = await store.get('authToken');
+	const token = store.get('authToken');
 	log.info('Checking for login:', token);
 	if (token) {
 		try {
-			const decoded = jwtDecode(token);
+			const decoded = jwtDecode(token) as { username: string; role: string };
 			return { username: decoded.username, role: decoded.role };
 		} catch (error) {
 			console.error('Error decoding token:', error);
@@ -430,8 +426,8 @@ ipcMain.handle('check-for-login', async () => {
 	return null;
 });
 
-ipcMain.handle('store-set', async (event, key, value) => await store.set(key, value));
-ipcMain.handle('store-get', async (event, key) => await store.get(key));
+ipcMain.handle('store-set', async (event, key, value) => store.set(key, value));
+ipcMain.handle('store-get', async (event, key) => store.get(key));
 
 ipcMain.handle('get-app-version', () => {
 	return app.getVersion();
@@ -446,17 +442,16 @@ ipcMain.on('close-app', (event) => {
 });
 
 ipcMain.handle('select-update-path', async () => {
-	const result = await dialog.showOpenDialog(mainWindow, {
+	const result = await dialog.showOpenDialog(mainWindow as BrowserWindow, {
 		properties: ['openDirectory'],
 	});
 	log.info('Selected path(select-update-path):', result.filePaths);
 	if (result.filePaths.length > 0) {
-		updatePath = validateWoWPath(result.filePaths[0]);
-		return updatePath;
+		return validateWoWPath(result.filePaths[0]);
 	}
 });
 ipcMain.handle('select-relative-path', async () => {
-	const result = await dialog.showOpenDialog(mainWindow, {
+	const result = await dialog.showOpenDialog(mainWindow as BrowserWindow, {
 		properties: ['openDirectory'],
 	});
 	if (result.filePaths.length > 0) {
@@ -471,13 +466,14 @@ ipcMain.handle('select-relative-path', async () => {
 });
 
 ipcMain.handle('select-backups-path', async () => {
-	const result = await dialog.showOpenDialog(mainWindow, {
+	const result = await dialog.showOpenDialog(mainWindow as BrowserWindow, {
 		properties: ['openDirectory'],
 	});
 	const selectedPath = result.filePaths[0];
 	// check if selected path is not somewhere within the WoW folder
 	if (selectedPath) {
-		if (isPathWithin(await getWoWPath(), selectedPath)) {
+		const wowPath = await getWoWPath();
+		if (wowPath && isPathWithin(wowPath, selectedPath)) {
 			log.info('Selected path is within WoW folder, skipping');
 			renderer_log('Selected path is within WoW folder, skipping');
 			return { success: false, message: 'Selected path is within WoW folder!!!' };
@@ -495,17 +491,17 @@ ipcMain.handle('select-backups-path', async () => {
  * @param {string} targetPath - The target path to check
  * @returns {boolean} - True if targetPath is within basePath, false otherwise
  */
-function isPathWithin(basePath, targetPath) {
+function isPathWithin(basePath: string, targetPath: string): boolean {
 	const resolvedBasePath = path.resolve(basePath);
 	const resolvedTargetPath = path.resolve(targetPath);
 	return resolvedTargetPath.startsWith(resolvedBasePath);
 }
 
-let currentAbortController = null;
-async function getFolderSize(folderPath, signal) {
+let currentAbortController: AbortController | null = null;
+async function getFolderSize(folderPath: string, signal: AbortSignal): Promise<string> {
 	let totalSize = 0;
 
-	async function calculateSize(directory) {
+	async function calculateSize(directory: string): Promise<void> {
 		const files = await fsp.readdir(directory, { withFileTypes: true });
 
 		for (const file of files) {
@@ -522,7 +518,7 @@ async function getFolderSize(folderPath, signal) {
 				} else if (file.name.startsWith('WTF-')) {
 					totalSize += stats.size; // Accumulate file size for files starting with WTF-
 				}
-			} catch (error) {
+			} catch (error: any) {
 				if (error.code === 'EPERM' || error.code === 'EACCES') {
 					console.warn(`Skipping inaccessible file: ${filePath}`);
 				} else {
@@ -546,16 +542,16 @@ ipcMain.handle('get-size-of-backups-folder', async () => {
 	currentAbortController = new AbortController();
 	const { signal } = currentAbortController;
 
-	const folderPath = await store.get('backupsPath');
+	const folderPath = store.get('backupsPath');
 	if (!folderPath) {
 		console.log('No path set');
 		return { error: 'No path set' };
 	}
 
 	try {
-		const size = await getFolderSize(folderPath, signal);
+		const size = await getFolderSize(folderPath, signal as AbortSignal);
 		return { size };
-	} catch (error) {
+	} catch (error: any) {
 		if (error.message === 'Operation aborted') {
 			return { aborted: true };
 		}
@@ -566,7 +562,7 @@ ipcMain.handle('get-size-of-backups-folder', async () => {
 });
 
 ipcMain.on('open-backups-folder', async (event) => {
-	const folderPath = await store.get('backupsPath');
+	const folderPath = store.get('backupsPath');
 	console.log('Opening backups folder:', folderPath);
 	if (folderPath) {
 		shell.openPath(folderPath);
@@ -590,14 +586,14 @@ ipcMain.handle('login', async (event, { username, password }) => {
 
 		const data = await response.json();
 		if (data.token) {
-			await store.set('authToken', data.token);
+			store.set('authToken', data.token);
 			log.info('Login successful');
 			return { success: true, error: null };
 		} else {
 			log.info('Login failed invalid credentials');
 			return { success: false, error: 'invalid credentials' };
 		}
-	} catch (err) {
+	} catch (err: any) {
 		log.info('Login error:', err);
 		mainWindow?.webContents.send('connect-error', err);
 		return { success: false, error: `error logging in: ${err.code}` };
@@ -613,7 +609,7 @@ ipcMain.handle('request-files-data', async (event) => {
 		.fetch(SERVER_EXISTING_FILES_ENDPOINT, {
 			method: 'GET',
 			headers: {
-				Authorization: `Bearer ${await store.get('authToken')}`,
+				Authorization: `Bearer ${store.get('authToken')}`,
 			},
 		})
 		.then((response) => response.json())
@@ -622,7 +618,7 @@ ipcMain.handle('request-files-data', async (event) => {
 
 ipcMain.on('connect', async () => {
 	log.info('Connecting to server');
-	const token = await store.get('authToken');
+	const token = store.get('authToken');
 	socket.auth = { token };
 	socket.connect();
 });
@@ -659,7 +655,7 @@ socket.on('connect', () => {
 const totalReconnectAttempts = 15;
 let manualReconnectAttempt = 0;
 let reconnectScheduled = false;
-socket.on('connect_error', async (error) => {
+socket.on('connect_error', async (error: Error) => {
 	// change xhr poll error with server is not avaliable
 	if (error.message.includes('xhr poll error')) {
 		error = new Error('Server is unavailable.');
@@ -667,7 +663,7 @@ socket.on('connect_error', async (error) => {
 
 	mainWindow?.webContents.send('connect-error', error);
 	log.error('Connection error:', error);
-	const token = await store.get('authToken');
+	const token = store.get('authToken');
 
 	if (!socket.active && !reconnectScheduled && token && manualReconnectAttempt < totalReconnectAttempts) {
 		reconnectScheduled = true;
@@ -683,7 +679,7 @@ socket.on('connect_error', async (error) => {
 
 socket.on('disconnect', (reason, details) => {
 	log.info('Disconnected from server', reason, details);
-	mainWindow?.webContents.send('disconnect', (details && details.description) || reason);
+	mainWindow?.webContents.send('disconnect', (details || reason));
 });
 
 socket.on('new-file', (fileData) => {
@@ -716,7 +712,9 @@ socket.on('new-release', (data) => {
 	updatedRecheckTimer = setInterval(() => {
 		rechekTries++;
 		if (rechekTries > 6) {
-			clearInterval(updatedRecheckTimer);
+			if (updatedRecheckTimer) {
+				clearInterval(updatedRecheckTimer);
+			}
 			log.info('Recheck timer cleared');
 			return;
 		}
@@ -757,15 +755,15 @@ ipcMain.on('open-file-dialog-file', async () => {
 
 socket.on('not-enough-permissions', (data) => {
 	log.info('Not enough permissions:', data);
-	renderer_log('Not enough permissions:', data);
 });
 
-async function shouldDownloadFile(serverFile) {
-	if (!(await getWoWPath())) {
+async function shouldDownloadFile(serverFile: FileData): Promise<[boolean, string]> {
+	const wowPath = await getWoWPath();
+	if (!wowPath) {
 		return [false, L['No WoW Path set']];
 	}
 
-	const localFilePath = path.join(await getWoWPath(), serverFile.relativePath, serverFile.fileName.replace(/\.zip$/, ''));
+	const localFilePath = path.join(wowPath, serverFile.relativePath, serverFile.fileName.replace(/\.zip$/, ''));
 	log.info(`Checking file: ${localFilePath}`);
 	// Check if the file exists
 	if (!fs.existsSync(localFilePath)) {
@@ -788,7 +786,7 @@ async function shouldDownloadFile(serverFile) {
 	}
 }
 
-async function compressAndSend(folderPath, fileData) {
+async function compressAndSend(folderPath: string, fileData: FileData) {
 	log.info('Compressing and sending file:', folderPath, 'with data:', fileData);
 	const baseName = path.basename(folderPath);
 	const outputPath = path.join(TEMP_DIR, baseName + '.zip');
@@ -802,9 +800,8 @@ async function compressAndSend(folderPath, fileData) {
 		log.info('File compressed and saved:', outputPath);
 		// Send the file
 		await sendFile(outputPath, fileData);
-	} catch (error) {
+	} catch (error: any) {
 		log.error('Error compressing and sending file:', error);
-		renderer_log('Error compressing and sending file:', error);
 		return;
 	} finally {
 		// Clean up the zip file after sending
@@ -812,7 +809,7 @@ async function compressAndSend(folderPath, fileData) {
 	}
 }
 
-async function sendFile(filePath, fileData) {
+async function sendFile(filePath: string, fileData: FileData) {
 	log.info('Sending file:', filePath, fileData);
 	const fileBuffer = await fsp.readFile(filePath);
 
@@ -828,7 +825,7 @@ async function sendFile(filePath, fileData) {
 		method: 'POST',
 		headers: {
 			'Content-Type': 'application/json',
-			Authorization: `Bearer ${await store.get('authToken')}`,
+			Authorization: `Bearer ${store.get('authToken')}`,
 		},
 	});
 
@@ -895,9 +892,13 @@ data = {
 */
 
 async function DeleteOverSizeBackupFiles() {
-	const backupsPath = await store.get('backupsPath');
+	const backupsPath = store.get('backupsPath');
+	if (!backupsPath) {
+		log.error('Backups path not set');
+		throw new Error('Backups path not set');
+	}
 	// delete old backups untill there is only 1 backup left or the folder size is less than maxSise setting
-	const maxSiseMB = await store.get('maxBackupsFolderSize'); // in MB
+	const maxSiseMB = store.get('maxBackupsFolderSize'); // in MB
 	if (!maxSiseMB) {
 		log.info('Max backup size not set');
 		return;
@@ -915,7 +916,7 @@ async function DeleteOverSizeBackupFiles() {
 			const filePath = path.join(backupsPath, file);
 			const stats = fs.statSync(filePath);
 			totalSize += stats.size;
-			files.push({ file, size: stats.size });
+			files.push({ file, size: stats.size, mtime: stats.mtime.getTime() }); // todo test
 		}
 	}
 	log.info('Total size of backups:', totalSize);
@@ -941,8 +942,16 @@ async function DeleteOverSizeBackupFiles() {
 
 async function BackupWTFFolder() {
 	const wowPath = await getWoWPath();
+	if (!wowPath) {
+		log.error('WoW path not set');
+		throw new Error('WoW path not set');
+	}
 	const wtfPath = path.join(wowPath, '_retail_', 'WTF');
-	const backupsPath = await store.get('backupsPath');
+	const backupsPath = store.get('backupsPath');
+	if (!backupsPath) {
+		log.error('Backups path not set');
+		throw new Error('Backups path not set');
+	}
 
 	if (!fs.existsSync(wtfPath)) {
 		log.error('WTF folder not found:', wtfPath);
@@ -966,12 +975,12 @@ let isBackupRunning = false;
 const ONE_WEEK = 1000 * 60 * 60 * 24 * 7;
 // const ONE_MINUTE = 1000 * 60;
 
-function UpdateBackupStatus(status) {
+function UpdateBackupStatus(status: string) {
 	mainWindow?.webContents.send('backup-status', status);
 }
 
-let backupProgressTimer = null;
-function ScheduleBackupStatus(status) {
+let backupProgressTimer: NodeJS.Timeout | null = null;
+function ScheduleBackupStatus(status: string) {
 	if (backupProgressTimer) {
 		clearInterval(backupProgressTimer);
 	}
@@ -983,7 +992,7 @@ function ScheduleBackupStatus(status) {
 	}, 500);
 }
 
-async function InitiateBackup(force) {
+async function InitiateBackup(force: boolean) {
 	if (!socket.connected) {
 		log.info('Socket is not connected, skipping backup');
 		return;
@@ -994,7 +1003,7 @@ async function InitiateBackup(force) {
 		return;
 	}
 
-	const backupsEnabled = await store.get('backupsEnabled');
+	const backupsEnabled = store.get('backupsEnabled');
 	if (!backupsEnabled && !force) {
 		log.info('Backups are disabled, skipping');
 		UpdateBackupStatus('Backups are disabled');
@@ -1002,7 +1011,7 @@ async function InitiateBackup(force) {
 	}
 	log.info('Initiating backup');
 
-	const lastBackup = await store.get('lastBackupTime');
+	const lastBackup = store.get('lastBackupTime');
 	// 1 week
 	const backupInterval = ONE_WEEK;
 	const now = Date.now();
@@ -1013,7 +1022,7 @@ async function InitiateBackup(force) {
 			await DeleteOverSizeBackupFiles();
 			ScheduleBackupStatus('Creating backup');
 			await BackupWTFFolder();
-			await store.set('lastBackupTime', now);
+			store.set('lastBackupTime', now);
 			ScheduleBackupStatus('Deleting old backups');
 			await DeleteOverSizeBackupFiles();
 			UpdateBackupStatus('Backup completed!');
@@ -1022,7 +1031,9 @@ async function InitiateBackup(force) {
 			UpdateBackupStatus('Backup failed ' + error);
 		} finally {
 			isBackupRunning = false;
-			clearInterval(backupProgressTimer);
+			if (backupProgressTimer) {
+				clearInterval(backupProgressTimer);
+			}
 		}
 	} else {
 		const nextBackup = lastBackup + backupInterval;
@@ -1038,5 +1049,5 @@ ipcMain.on('initiate-backup', (event, data) => {
 
 // every 10 min
 setInterval(async () => {
-	InitiateBackup();
+	InitiateBackup(false);
 }, 1000 * 60 * 10);

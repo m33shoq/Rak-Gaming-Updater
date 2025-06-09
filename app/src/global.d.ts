@@ -1,0 +1,59 @@
+declare type FileData = {
+	fileName: string; // Name of the file
+	displayName: string; // Display name for the file
+	hash: string; // Hash of the file or directory content
+	relativePath: string; // Relative path of the file from the root directory
+	timestamp: number; // Last modified timestamp in seconds
+}
+
+declare namespace api {
+	function on_i18n_ready(): Promise<any>;
+	function check_for_login(): Promise<any>;
+	function socket_connect(): void;
+	function socket_on_connect(callback: (event: Electron.IpcRendererEvent, ...args: any[]) => void): void;
+	function socket_on_connect_error(callback: (event: Electron.IpcRendererEvent, ...args: any[]) => void): void;
+	function socket_on_disconnect(callback: (event: Electron.IpcRendererEvent, ...args: any[]) => void): void;
+	function socket_on_new_file(callback: (event: Electron.IpcRendererEvent, ...args: any[]) => void): void;
+	function socket_on_file_not_found(callback: (event: Electron.IpcRendererEvent, ...args: any[]) => void): void;
+	function socket_on_file_deleted(callback: (event: Electron.IpcRendererEvent, ...args: any[]) => void): void;
+	function socket_emit_delete_file(data: FileData): void;
+	namespace store {
+		const set:(key: string, value: any) => Promise<void>;
+		const get:(key: string) => Promise<any>;
+	}
+	function IR_onLog(callback: (event: Electron.IpcRendererEvent, ...args: any[]) => void): void;
+	function IR_onFileChunkReceived(callback: (event: Electron.IpcRendererEvent, ...args: any[]) => void): void;
+	function IR_onFileDownloaded(callback: (event: Electron.IpcRendererEvent, ...args: any[]) => void): void;
+	function IR_onConnectedClients(callback: (event: Electron.IpcRendererEvent, ...args: any[]) => void): void;
+	function IR_sendLogin(credentials: { username: string; password: string }): Promise<any>;
+	function IR_minimizeApp(): void;
+	function IR_closeApp(): void;
+	function IR_setStartWithWindows(value: boolean): void;
+
+	function IR_openFileDialogFile(): void;
+	function IR_openFileDialogFolder(): void;
+	function IR_selectUpdatePath(): Promise<any>;
+	function IR_selectRelativePath(): Promise<any>;
+	function IR_selectBackupsPath(): Promise<any>;
+	function IR_GetAppVersion(): Promise<any>;
+	function IR_GetWoWPath(): Promise<any>;
+	function fetchFilesData(): Promise<any>;
+	function requestFile(data: FileData): void;
+	function shouldDownloadFile(data: FileData): Promise<any>;
+	function getSizeOfBackupsFolder(): Promise<any>;
+	function IR_openBackupsFolder(): void;
+	function IR_onBackupCreated(callback: (event: Electron.IpcRendererEvent, ...args: any[]) => void): void;
+	function IR_InitiateBackup(force: boolean): void;
+	function IR_onBackupStatus(callback: (event: Electron.IpcRendererEvent, ...args: any[]) => void): void;
+}
+
+declare interface ListUpdateButton extends HTMLButtonElement {
+    fileData: FileData;
+    Disable(text: string): void;
+    Enable(text: string): void;
+    Update(): Promise<void>;
+    UpdateDownloadTimer(): void;
+    downloadTimer?: NodeJS.Timeout;
+}
+
+// declare module 'i18n';

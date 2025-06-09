@@ -1,14 +1,17 @@
 {
 	"name": "rak-gaming-updater",
 	"description": "Rak Gaming Updater Application",
-	"version": "1.5.0",
+	"version": "1.6.0",
 	"author": {
 		"name": "m33shoq"
 	},
-	"main": "./src/main.js",
+	"main": "./dist/out-tsc/src/main.js",
 	"scripts": {
+		"cmp": "rimraf dist/out-tsc && npx tsc && copyfiles -V -u 1 \"app/**/*\" -e \"**/*.ts\" dist/out-tsc && echo \"Compiled to dist/out-tsc\"",
+		"prestart": "npm run cmp",
 		"start": "electron .",
 		"server": "server.sh",
+		"prebuild": "npm run cmp",
 		"build": "electron-builder",
 		"publish": "electron-builder --publish always"
 	},
@@ -16,7 +19,7 @@
 		"appId": "com.rak-gaming-updater",
 		"productName": "Rak Gaming Updater",
 		"directories": {
-			"output": "dist"
+			"output": "./dist/releases"
 		},
 		"publish": [
 			{
@@ -27,9 +30,7 @@
 			}
 		],
 		"files": [
-			"src",
-			"package.json",
-			"node_modules"
+			"./dist/out-tsc/"
 		],
 		"extraResources": [
 			{
@@ -39,7 +40,7 @@
 		],
 		"win": {
 			"target": "nsis",
-			"icon": "./src/taskbaricon.png"
+			"icon": "./app/assets/taskbaricon.png"
 		},
 		"nsis": {
 			"deleteAppDataOnUninstall": true
@@ -53,20 +54,26 @@
 		"crc": "^4.3.2",
 		"dotenv": "^16.4.5",
 		"electron-log": "^5.1.5",
-		"electron-store": "^10.0.0",
+		"electron-store": "^8.2.0",
 		"electron-updater": ">=6.3.0-alpha.6",
 		"extract-zip": "^2.0.1",
 		"fs": "^0.0.1-security",
-		"i18n": "^0.15.1",
 		"jwt-decode": "^4.0.0",
 		"node-fetch": "^3.3.2",
 		"path": "^0.12.7",
 		"regedit": "^5.1.3",
 		"socket.io-client": "^4.7.5",
+		"typescript": "^5.8.3",
 		"validator": "^13.12.0"
 	},
 	"devDependencies": {
+		"@types/archiver": "^6.0.3",
+		"@types/electron-store": "^1.3.1",
+		"@types/node": "^22.15.30",
+		"@types/validator": "^13.15.1",
+		"copyfiles": "^2.4.1",
 		"electron": "^31.0.2",
-		"electron-builder": "^24.13.3"
+		"electron-builder": "^24.13.3",
+		"rimraf": "^6.0.1"
 	}
 }
