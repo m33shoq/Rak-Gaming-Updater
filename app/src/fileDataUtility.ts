@@ -1,15 +1,15 @@
-const { app } = require('electron');
-const fsp = require('fs').promises;
-const path = require('path');
-const crc32 = require('crc').crc32;
-const { zipFile, unzipFile } = require('./zipHandler.js');
-const log = require('electron-log/main');
+import { app } from 'electron';
+import fsp from 'fs/promises';
+import path from 'path';
+import crc32 from 'crc/crc32';
+import { zipFile, unzipFile } from './zipHandler';
+import log from 'electron-log/main';
 
 __dirname = path.dirname(__filename);
 log.info('File:', __filename, 'Dir:', __dirname);
 const TEMP_DIR = path.join(app.getPath('appData'), 'temp'); // Temporary directory for unzipped/zipped files
 
-async function GetFileData(filePath, relativePath) {
+export async function GetFileData(filePath: string, relativePath: string): Promise<FileData> {
 	const fileName = path.basename(filePath);
 	const displayName = fileName;
 	const stats = await fsp.stat(filePath);
@@ -41,7 +41,7 @@ async function GetFileData(filePath, relativePath) {
 	return { fileName, displayName, hash, relativePath, timestamp };
 }
 
-async function CalculateHashForPath(filePath) {
+export async function CalculateHashForPath(filePath: string): Promise<string> {
 	const stats = await fsp.stat(filePath);
 	if (stats.isDirectory()) {
 		// Get all entries in the directory
@@ -61,4 +61,3 @@ async function CalculateHashForPath(filePath) {
 	}
 }
 
-module.exports = { GetFileData, CalculateHashForPath };

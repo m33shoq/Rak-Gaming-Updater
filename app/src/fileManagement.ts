@@ -1,22 +1,21 @@
-const { app } = require('electron');
-const fs = require('fs');
-const path = require('path');
-const fsp = require('fs').promises;
-const { net } = require('electron');
-const log = require('electron-log/main');
-const store = require('./store.js');
-const MainWindowWrapper = require('./MainWindowWrapper.js');
-const { getWoWPath, validateWoWPath } = require('./wowPathUtility.js');
-const { zipFile, unzipFile } = require('./zipHandler.js');
+import { app, net } from 'electron';
+import fs from 'fs';
+import path from 'path';
+const fsp = fs.promises;
+import log from 'electron-log/main';
+import store from './store';
+import mainWindowWrapper from './MainWindowWrapper';
+import { getWoWPath, validateWoWPath } from './wowPathUtility';
+import { zipFile, unzipFile } from './zipHandler';
 
-const { SERVER_URL, SERVER_LOGIN_ENDPOINT, SERVER_UPLOADS_ENDPOINT, SERVER_EXISTING_FILES_ENDPOINT, SERVER_DOWNLOAD_ENDPOINT } = require('./serverEndpoints.js');
+import { SERVER_URL, SERVER_LOGIN_ENDPOINT, SERVER_UPLOADS_ENDPOINT, SERVER_EXISTING_FILES_ENDPOINT, SERVER_DOWNLOAD_ENDPOINT } from './serverEndpoints';
 
 __dirname = path.dirname(__filename);
 log.info('File:', __filename, 'Dir:', __dirname);
 const TEMP_DIR = path.join(app.getPath('appData'), 'temp'); // Temporary directory for unzipped/zipped files
 
 // return file path for downloaded zip file
-async function DownloadFile(fileData, retries = 3) {
+export async function DownloadFile(fileData: FileData, retries = 3) {
 	try {
 		const { fileName, relativePath, timestamp, hash, displayName } = fileData;
 		const DOWNLOAD_URL = `${SERVER_DOWNLOAD_ENDPOINT}/${displayName}/${hash}`;
@@ -47,13 +46,14 @@ async function DownloadFile(fileData, retries = 3) {
 				});
 
 				req.on('response', (response) => {
-					const fileLength = parseInt(response.headers['content-length'] ?? '0', 10);
+					const contentLength = response.headers['content-length'] as string | undefined;
+  					const fileLength = parseInt(contentLength ?? '0', 10);
 
 					response.on('data', (data) => {
 						writer.write(data, () => {
 							size += data.length;
 							const percent = fileLength <= 0 ? 0 : Math.floor((size / fileLength) * 100);
-							MainWindowWrapper.webContents.send('file-chunk-received', fileData, percent);
+							mainWindowWrapper.webContents?.send('file-chunk-received', fileData, percent);
 							if (percent % 5 === 0 && percentMod !== percent) {
 								percentMod = percent;
 								log.debug(`Write: [${percent}] ${size}`);
@@ -68,7 +68,7 @@ async function DownloadFile(fileData, retries = 3) {
 
 						return resolve(undefined);
 					});
-					response.on('error', (err) => {
+					response.on('error', (err: Error) => {
 						return reject(err);
 					});
 				});
@@ -83,14 +83,23 @@ async function DownloadFile(fileData, retries = 3) {
 			log.warn(`Retrying download... (${retries} attempts left)`);
 			return DownloadFile(fileData, retries - 1);
 		}
-		log.error(`Error downloading file: ${error.message}`);
-		throw error;
+		if (error instanceof Error) {
+			log.error(`Error downloading file: ${error.message}`);
+			throw error;
+		} else {
+			log.error('Error downloading file:', error);
+			throw new Error(String(error));
+		}
 	}
 }
 
-async function InstallFile(fileData, zipPath) {
+export async function InstallFile(fileData: FileData, zipPath: string) {
 	const { fileName, relativePath } = fileData;
 	const updatePath = await getWoWPath();
+	if (!updatePath) {
+		log.error('WoW path is not set or invalid. Cannot install file:', fileData);
+		throw new Error('WoW path is not set or invalid.');
+	}
 	const expectedOutputFolder = path.join(updatePath, relativePath, fileName); // wow + relative + foler/file
 	const targetPath = path.join(updatePath, relativePath); // wow + relative
 
@@ -110,11 +119,10 @@ async function InstallFile(fileData, zipPath) {
 		console.log('Extracting file:', zipPath, 'to', targetPath);
 		await unzipFile(zipPath, targetPath);
 		log.info('File extracted successfully:', targetPath);
-		MainWindowWrapper.webContents.send('file-downloaded', fileData);
+		mainWindowWrapper.webContents?.send('file-downloaded', fileData);
 	} catch (error) {
 		log.error('Error extracting file:', error);
 		console.error('Error extracting file:', error);
 	}
 }
 
-module.exports = { DownloadFile, InstallFile };

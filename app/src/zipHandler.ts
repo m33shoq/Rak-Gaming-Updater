@@ -1,11 +1,10 @@
-const fs = require('fs');
-const path = require('path');
-const archiver = require('archiver');
-const extract = require('extract-zip');
-const log = require('electron-log/main');
+import fs from 'fs';
+import path from 'path';
+import archiver from 'archiver';
+import extract from 'extract-zip';
+import log from 'electron-log/main';
 
-
-async function zipFile(sourcePath, destinationPath) {
+export async function zipFile(sourcePath: string, destinationPath: string) {
 	return new Promise((resolve, reject) => {
 		const isFolder = fs.lstatSync(sourcePath)?.isDirectory();
 
@@ -13,12 +12,12 @@ async function zipFile(sourcePath, destinationPath) {
 
 		const output = fs.createWriteStream(destinationPath);
 		const archive = archiver('zip', {
-			zlib: { level: 9 } // Sets the compression level
+			zlib: { level: 9 }, // Sets the compression level
 		});
 
 		output.on('close', () => {
 			log.info(`Zipped ${archive.pointer()} total bytes`);
-			resolve();
+			resolve(undefined);
 		});
 
 		archive.on('error', (err) => {
@@ -35,12 +34,12 @@ async function zipFile(sourcePath, destinationPath) {
 	});
 }
 
-async function unzipFile(targetPath, destinationPath) {
+export async function unzipFile(targetPath: string, destinationPath: string) {
 	return new Promise((resolve, reject) => {
 		extract(targetPath, { dir: destinationPath })
 			.then(() => {
 				log.info(`Unzipped to ${destinationPath}`);
-				resolve();
+				resolve(undefined);
 			})
 			.catch((err) => {
 				log.error(`Error unzipping file: ${err}`);
@@ -49,4 +48,3 @@ async function unzipFile(targetPath, destinationPath) {
 	});
 }
 
-module.exports = { zipFile, unzipFile };

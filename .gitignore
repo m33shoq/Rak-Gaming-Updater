@@ -4,3 +4,4 @@ dist/
 changelog.txt
 scripts/*
 .vscode
+app/out-tsc
