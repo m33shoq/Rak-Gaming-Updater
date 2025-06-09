@@ -10,7 +10,7 @@ log.info('File:', __filename, 'Dir:', __dirname);
 const TEMP_DIR = path.join(app.getPath('appData'), 'temp'); // Temporary directory for unzipped/zipped files
 
 export async function GetFileData(filePath: string, relativePath: string): Promise<FileData> {
-	const fileName = path.basename(filePath);
+	let fileName = path.basename(filePath);
 	const displayName = fileName;
 	const stats = await fsp.stat(filePath);
 	const timestamp = stats.mtimeMs / 1000; // Convert to seconds
@@ -24,7 +24,16 @@ export async function GetFileData(filePath: string, relativePath: string): Promi
 			await fsp.mkdir(path.dirname(tempFilePath), { recursive: true });
 			try {
 				await unzipFile(filePath, tempFilePath); // Unzip the file to a temporary location
-				hash = await CalculateHashForPath(tempFilePath); // Calculate hash of the unzipped content
+
+				// we need the hash of the first folder/file in the unzipped content
+				const unzippedFiles = await fsp.readdir(tempFilePath);
+				if (unzippedFiles.length === 0) {
+					throw new Error(`Unzipped file ${filePath} is empty.`);
+				}
+				fileName = unzippedFiles[0];
+				const hashFilePath = path.join(tempFilePath, fileName);
+
+				hash = await CalculateHashForPath(hashFilePath); // Calculate hash of the unzipped content
 			} finally {
 				await fsp.rm(tempFilePath, { recursive: true }); // Clean up the temporary directory
 			}
@@ -41,7 +50,7 @@ export async function GetFileData(filePath: string, relativePath: string): Promi
 	return { fileName, displayName, hash, relativePath, timestamp };
 }
 
-export async function CalculateHashForPath(filePath: string): Promise<string> {
+async function getHashForPath(filePath: string): Promise<string> {
 	const stats = await fsp.stat(filePath);
 	if (stats.isDirectory()) {
 		// Get all entries in the directory
@@ -50,7 +59,7 @@ export async function CalculateHashForPath(filePath: string): Promise<string> {
 		let combinedHash = '';
 		for (let entry of sortedEntries) {
 			const fullPath = path.join(filePath, entry);
-			const entryHash = await CalculateHashForPath(fullPath); // Process each entry sequentially
+			const entryHash = await getHashForPath(fullPath); // Process each entry sequentially
 			combinedHash += entryHash; // Concatenate hashes
 		}
 		return crc32(combinedHash).toString(16);
@@ -61,3 +70,10 @@ export async function CalculateHashForPath(filePath: string): Promise<string> {
 	}
 }
 
+
+export async function CalculateHashForPath(filePath: string): Promise<string> {
+	const hash = await getHashForPath(filePath);
+	log.info(`HASH CALCULATION: ${filePath} -> ${hash}`)
+
+	return hash;
+}
