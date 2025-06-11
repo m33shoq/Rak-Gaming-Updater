@@ -1,7 +1,7 @@
 node_modules/
 dist/
+releases/
 .env
 changelog.txt
 scripts/*
 .vscode
-app/out-tsc
