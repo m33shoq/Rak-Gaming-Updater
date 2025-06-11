@@ -1,13 +1,17 @@
 {
 	"name": "rak-gaming-updater",
 	"description": "Rak Gaming Updater Application",
-	"version": "1.6.1",
+	"version": "2.0.0",
 	"author": {
 		"name": "m33shoq"
 	},
-	"main": "./dist/out-tsc/src/main.js",
+	"main": "./dist/main.js",
 	"scripts": {
-		"cmp": "rimraf dist/out-tsc && npx tsc && copyfiles -V -u 1 \"app/**/*\" -e \"**/*.ts\" dist/out-tsc && echo \"Compiled to dist/out-tsc\"",
+		"app:dev": "vite",
+		"app:build": "vue-tsc && vite build && electron-builder",
+		"app:preview": "vue-tsc && vite build && electron .",
+		"app:dev?": "npm run cmp && concurrently vite \" electron .\" \"tsc -w\"",
+		"cmp": "rimraf dist/ && tsc && copyfiles -V -u 1 \"app/**/*\" -e \"**/*.ts\" dist/ && echo \"Compiled to dist/\"",
 		"prestart": "npm run cmp",
 		"start": "electron .",
 		"server": "server.sh",
@@ -19,7 +23,7 @@
 		"appId": "com.rak-gaming-updater",
 		"productName": "Rak Gaming Updater",
 		"directories": {
-			"output": "./dist/releases"
+			"output": "./releases"
 		},
 		"publish": [
 			{
@@ -30,7 +34,7 @@
 			}
 		],
 		"files": [
-			"./dist/out-tsc/"
+			"./dist/"
 		],
 		"extraResources": [
 			{
@@ -48,22 +52,16 @@
 	},
 	"dependencies": {
 		"abort-controller": "^3.0.0",
-		"adm-zip": "^0.5.14",
 		"archiver": "^7.0.1",
-		"cors": "^2.8.5",
 		"crc": "^4.3.2",
 		"dotenv": "^16.4.5",
 		"electron-log": "^5.1.5",
 		"electron-store": "^8.2.0",
 		"electron-updater": ">=6.3.0-alpha.6",
 		"extract-zip": "^2.0.1",
-		"fs": "^0.0.1-security",
 		"jwt-decode": "^4.0.0",
-		"node-fetch": "^3.3.2",
-		"path": "^0.12.7",
 		"regedit": "^5.1.3",
 		"socket.io-client": "^4.7.5",
-		"typescript": "^5.8.3",
 		"validator": "^13.12.0"
 	},
 	"devDependencies": {
@@ -71,9 +69,19 @@
 		"@types/electron-store": "^1.3.1",
 		"@types/node": "^22.15.30",
 		"@types/validator": "^13.15.1",
+		"@vitejs/plugin-vue": "^5.2.4",
+		"concurrently": "^9.1.2",
 		"copyfiles": "^2.4.1",
 		"electron": "^31.0.2",
 		"electron-builder": "^24.13.3",
-		"rimraf": "^6.0.1"
+		"pinia": "^3.0.3",
+		"rimraf": "^6.0.1",
+		"typescript": "^5.8.3",
+		"vite": "^6.3.5",
+		"vite-plugin-electron": "^0.29.0",
+		"vite-plugin-electron-renderer": "^0.14.6",
+		"vite-plugin-vue-devtools": "^7.7.6",
+		"vue-router": "^4.5.1",
+		"vue-tsc": "^2.2.10"
 	}
 }

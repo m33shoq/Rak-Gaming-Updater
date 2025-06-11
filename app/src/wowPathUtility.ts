@@ -6,8 +6,13 @@ import { setExternalVBSLocation, promisified } from 'regedit';
 import store from './store';
 
 
-const vbsPath = path.join(app.getAppPath(), '..', 'vbs');
-setExternalVBSLocation(vbsPath); // to allow packaged app to access registry
+let vbsPath: string;
+if (process.env.NODE_ENV === 'development') {
+	vbsPath = path.join(process.cwd(), 'node_modules', 'regedit', 'vbs');
+} else {
+	vbsPath = path.join(app.getAppPath(), '..', 'vbs');
+}
+setExternalVBSLocation(vbsPath);
 log.info('VBS Path:', vbsPath);
 async function wowDefaultPath(): Promise<string | null> {
 	if (process.platform === 'win32') {
@@ -16,8 +21,14 @@ async function wowDefaultPath(): Promise<string | null> {
 
 		try {
 			const results = await promisified.list([key]);
+			if (!results[key].exists) {
+				log.info('Registry key does not exist:', key);
+				// Optionally, prompt the user to manually select the WoW installation path
+				return null;
+			}
+			log.info('Registry results:', results);
 			const value = results[key].values.InstallPath.value;
-			// log.info('Registry WoW Path:', value, typeof value);
+			log.info('Registry WoW Path:', value, typeof value);
 			if (typeof value === 'string') {
 				let path = validateWoWPath(value);
 				// log.info('Validated WoW Path:', path);
@@ -28,7 +39,7 @@ async function wowDefaultPath(): Promise<string | null> {
 				return null;
 			}
 		} catch (e) {
-			log.error('Error accessing registry for WoW path:', JSON.stringify(e));
+			log.error('Error accessing registry for WoW path:', e);
 			// Show an error dialog to the user or log the error
 			// Optionally, prompt the user to manually select the WoW installation path
 			return null;

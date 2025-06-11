@@ -3,17 +3,21 @@
 	<head>
 		<meta charset="UTF-8" />
 		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
-		<meta http-equiv="Content-Security-Policy" content="default-src 'self'" />
+		<meta http-equiv="Content-Security-Policy" content="default-src 'self';
+													style-src 'self' 'unsafe-inline';
+													script-src 'self' 'unsafe-eval';">
 		<title>Rak Gaming Updater</title>
-		<link rel="stylesheet" href="styles.css" />
+		<!-- <link rel="stylesheet" href="styles.css" /> -->
+		<link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700&display=swap" rel="stylesheet" />
 	</head>
 	<body>
-		<div id="title-container">
+		<div id="app"></div>
+		<script type="module" src="./renderer.ts"></script>
+		<!-- <div id="title-container">
 			<div class="header-container">
 				<img src="assets/icon.png" alt="Tray Icon" id="headericon" />
 				<h1>RG Updater</h1>
 			</div>
-			<!-- Tab Buttons Container -->
 			<div id="tab-buttons-container">
 				<button id="main-tab-btn" class="tab-button" data-tab-name="main">Updater</button>
 				<button id="admin-tab-btn" class="tab-button" data-tab-name="admin">Pusher</button>
@@ -77,10 +81,6 @@
 				<input type="checkbox" id="quit-on-close" />
 				<label>Close the application instead of minimizing when clicking close</label>
 			</div>
-			<!-- <div class="checkbox-container">
-				<input type="checkbox" id="auto-update-checkbox" name="auto-update">
-				<label>???????</label>
-			</div> -->
 			<div id="logs" class="logs-header">
 				<h2>Logs</h2>
 			</div>
@@ -91,7 +91,6 @@
 		<div id="status-container" class="tab-content">
 			<div id="status" class="status-header">
 				<h2>Clients Status</h2>
-				<!-- <button id="toggle-clients-btn" class="rounded-button toggle-button">Toggle Clients Status</button> -->
 			</div>
 			<div id="status-frame" class="scroll-frame">
 				<ul id="clients-list" class="scroll-frame-text"></ul>
@@ -107,8 +106,6 @@
 					<button id="set-backups-path-btn" class="rounded-button">Set Backups Folder Path</button>
 					<button id="open-backups-path-btn" class="rounded-button">Open Backups Folder</button>
 				</div>
-				<!-- <button id="set-backups-path-btn" class="rounded-button">Set Backups Folder Path</button> -->
-				<!-- <button id="open-backups-path-btn" class="rounded-button">Open Backups Folder</button> -->
 				<p id="backups-path">Backups Path:</p>
 				<p id="backups-folder-size">Current Folder Size:</p>
 				<p id="backups-last-backup-time">Last backup time:</p>
@@ -127,8 +124,6 @@
 					<option value="33536">32GB</option>
 				</select>
 			</div>
-
-		</div>
-		<script src="./src/renderer.js"></script>
+		</div> -->
 	</body>
 </html>

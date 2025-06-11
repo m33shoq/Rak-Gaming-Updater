@@ -1,5 +1,6 @@
 import * as dotenv from 'dotenv';
 dotenv.config();
+
 import { app, BrowserWindow, ipcMain, dialog, Tray, Menu, nativeImage, protocol, shell, Notification, net } from 'electron';
 import { autoUpdater } from 'electron-updater';
 import log from 'electron-log/main';
@@ -18,17 +19,11 @@ import mainWindowWrapper from './MainWindowWrapper';
 import store from './store';
 
 import Locale from './locale';
-import {
-	SERVER_URL,
-	SERVER_LOGIN_ENDPOINT,
-	SERVER_UPLOADS_ENDPOINT,
-	SERVER_EXISTING_FILES_ENDPOINT,
-	SERVER_DOWNLOAD_ENDPOINT
-} from './serverEndpoints';
+import { SERVER_URL, SERVER_LOGIN_ENDPOINT, SERVER_UPLOADS_ENDPOINT, SERVER_EXISTING_FILES_ENDPOINT, SERVER_DOWNLOAD_ENDPOINT } from './serverEndpoints';
 const L = Locale.L;
 let isQuiting = false;
 
-log.info("LOCALE:", Locale.selectedLocale)
+log.info('LOCALE:', Locale.selectedLocale);
 ipcMain.handle('i18n', () => Locale.translations);
 
 __dirname = path.dirname(__filename);
@@ -40,6 +35,7 @@ log.info('SERVER_URL:', SERVER_URL);
 import Socket from 'socket.io-client';
 const socket = Socket(SERVER_URL, { autoConnect: false });
 
+const isDev = process.env.npm_lifecycle_event === 'app:dev' ? true : false;
 
 // store.delete('authToken'); // Clear auth token on startup for testing
 function updateStartWithWindows() {
@@ -64,19 +60,31 @@ ipcMain.on('set-start-with-windows', async (event, value) => {
 log.initialize({ preload: true });
 log.info('App starting...');
 
-// @ts-ignore
-const currentLocale = Locale.selectedLocale;
-console.log('Current locale:', currentLocale);
-const preload = path.join(__dirname, 'preload.js');
-const taskBarIconPath = path.join(__dirname, '..', 'assets','taskbaricon.png');
-const notificationIconPath = path.join(__dirname, '..', 'assets','icon.png');
-console.log('Taskbar icon:', taskBarIconPath, 'Notification icon:', notificationIconPath);
-console.log( path.join(__dirname, '..', ))
-console.log( path.join(__dirname ));
-const html = path.join(__dirname, '..', 'index.html');
+import taskBarIcon from '@/assets/taskbaricon.png';
+import notificationIcon from '@/assets/icon.png';
 
-const taskBarIcon = nativeImage.createFromPath(taskBarIconPath);
-const notificationIcon = nativeImage.createFromPath(notificationIconPath);
+let taskBarIconImage: Electron.NativeImage;
+let notificationIconImage: Electron.NativeImage;
+
+// 1) data:… ⇒ use createFromDataURL
+if (taskBarIcon.startsWith('data:')) {
+	taskBarIconImage = nativeImage.createFromDataURL(taskBarIcon);
+	// 2) “/assets/…” or “assets/…” ⇒ resolve to your built files
+} else {
+	// __dirname in your bundled main.js points to dist/
+	const iconOnDisk = path.join(__dirname, taskBarIcon.replace(/^\//, ''));
+	taskBarIconImage = nativeImage.createFromPath(iconOnDisk);
+}
+
+if (notificationIcon.startsWith('data:')) {
+	notificationIconImage = nativeImage.createFromDataURL(notificationIcon);
+} else {
+	const iconOnDisk = path.join(__dirname, notificationIcon.replace(/^\//, ''));
+	notificationIconImage = nativeImage.createFromPath(iconOnDisk);
+}
+
+const preload = path.join(__dirname, 'preload.js');
+const html = path.join(__dirname, 'index.html');
 
 protocol.registerSchemesAsPrivileged([{ scheme: 'app', privileges: { secure: true, standard: true } }]);
 
@@ -86,9 +94,9 @@ autoUpdater.allowPrerelease = false;
 log.transports.file.level = 'info';
 autoUpdater.logger = log;
 
-const queuedDialogs = [] as Array<{dialogOptions: Electron.MessageBoxOptions, onSuccessCallback: (value: Electron.MessageBoxReturnValue) => void}>;
+const queuedDialogs = [] as Array<{ dialogOptions: Electron.MessageBoxOptions; onSuccessCallback: (value: Electron.MessageBoxReturnValue) => void }>;
 
-function queueDialog(dialogOptions: Electron.MessageBoxOptions,	onSuccessCallback: (value: Electron.MessageBoxReturnValue) => void) {
+function queueDialog(dialogOptions: Electron.MessageBoxOptions, onSuccessCallback: (value: Electron.MessageBoxReturnValue) => void) {
 	if (mainWindow?.isVisible()) {
 		dialog.showMessageBox(mainWindow, dialogOptions).then(onSuccessCallback);
 	} else {
@@ -113,12 +121,12 @@ async function startProcess() {
 }
 
 async function createWindow() {
-	const startMinimized = process.argv.includes('--hidden') && (store.get('startMinimized'));
+	const startMinimized = process.argv.includes('--hidden') && store.get('startMinimized');
 	log.info('Creating window', { startMinimized });
 	mainWindow = new BrowserWindow({
 		width: 850,
 		height: 600,
-		icon: taskBarIcon,
+		icon: taskBarIconImage,
 		maximizable: false,
 		minimizable: true,
 		resizable: false,
@@ -138,6 +146,7 @@ async function createWindow() {
 	});
 
 	mainWindowWrapper.init(mainWindow);
+	//123
 
 	mainWindow?.webContents.setWindowOpenHandler(({ url }) => {
 		if (url.startsWith('https:')) {
@@ -150,18 +159,24 @@ async function createWindow() {
 		renderer_log(`Ready to show. Start args: ${process.argv.join(' ')}`);
 		log.info(`Ready to show. Start args: ${process.argv.join(' ')}`);
 
-		log.debug(store.get('authToken'))
+		log.debug('AUTH TOKEN:', store.get('authToken'));
 		// mainWindow?.webContents.openDevTools({ mode: "detach" });
 	});
 
 	mainWindow?.setMenu(null);
 
-	log.info(`Loading File: ${html}`);
-	mainWindow?.loadFile(html);
+	if (isDev) {
+		log.info('Running in development mode');
+		mainWindow.loadURL('http://localhost:5173'); // Open the DevTools.
+		mainWindow.webContents.openDevTools({ mode: 'detach' });
+	} else {
+		log.info(`Loading File: ${html}`);
+		mainWindow?.loadFile(html);
+	}
 
 	mainWindow?.on('closed', () => (mainWindow = null));
 
-	tray = new Tray(taskBarIcon);
+	tray = new Tray(taskBarIconImage);
 	const contextMenu = Menu.buildFromTemplate([
 		{ label: 'Show', click: () => mainWindow?.show() },
 		{
@@ -195,7 +210,7 @@ async function createWindow() {
 
 	mainWindow?.webContents.on('will-navigate', (event) => {
 		// if (mainWindow?.webContents.getURL() !== winURL) {
-			event.preventDefault();
+		event.preventDefault();
 		// }
 	});
 
@@ -203,7 +218,7 @@ async function createWindow() {
 		mainWindow?.setSkipTaskbar(false);
 
 		if (queuedDialogs.length > 0) {
-			queuedDialogs.forEach(({ dialogOptions, onSuccessCallback  }) => {
+			queuedDialogs.forEach(({ dialogOptions, onSuccessCallback }) => {
 				if (onSuccessCallback) {
 					dialog.showMessageBox(mainWindow as BrowserWindow, dialogOptions).then(onSuccessCallback);
 				}
@@ -220,7 +235,7 @@ async function createWindow() {
 	});
 
 	mainWindow?.on('close', async (event: Electron.Event) => {
-		if (!isQuiting && !(store.get('quitOnClose'))) {
+		if (!isQuiting && !store.get('quitOnClose')) {
 			event.preventDefault();
 			mainWindow?.hide();
 		}
@@ -307,7 +322,7 @@ autoUpdater.on('update-available', (info) => {
 		new Notification({
 			title: 'Update available',
 			body: `Rak Gaming Updater ${info.version} is avalilable.`,
-			icon: notificationIcon,
+			icon: notificationIconImage,
 		}).show();
 
 		const dialogOpts = {
@@ -320,7 +335,7 @@ autoUpdater.on('update-available', (info) => {
 			parent: mainWindow,
 		} as Electron.MessageBoxOptions;
 
-		queueDialog(dialogOpts, ({ response  }) => {
+		queueDialog(dialogOpts, ({ response }) => {
 			if (response === 0) {
 				autoUpdater.downloadUpdate();
 			}
@@ -679,7 +694,7 @@ socket.on('connect_error', async (error: Error) => {
 
 socket.on('disconnect', (reason, details) => {
 	log.info('Disconnected from server', reason, details);
-	mainWindow?.webContents.send('disconnect', (details || reason));
+	mainWindow?.webContents.send('disconnect', details || reason);
 });
 
 socket.on('new-file', (fileData) => {

@@ -7,6 +7,8 @@ declare type FileData = {
 }
 
 declare namespace api {
+	function IPCinvoke(channel: string, ...args: any[]): Promise<any>;;
+	function IPCsend(channel: string, ...args: any[]): void;
 	function on_i18n_ready(): Promise<any>;
 	function check_for_login(): Promise<any>;
 	function socket_connect(): void;

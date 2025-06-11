@@ -1,9 +1,24 @@
+console.log('Renderer process started');
+import { createApp } from 'vue'
+import { createPinia } from 'pinia'
+
+import App from './App.vue'
+// import router from './router'
+
+const app = createApp(App)
+
+app.use(createPinia()) //use pinia
+// app.use(router) //use router
+app.mount('#app')
+
+/*
+
 let i18n: Record<string, string> = {};
 let L = new Proxy(i18n, {
-    get: (target, prop: string) => (prop in target ? target[prop] : prop),
+	get: (target, prop: string) => (prop in target ? target[prop] : prop),
 });
 
-api.on_i18n_ready().then(i18nReady => {
+api.on_i18n_ready().then((i18nReady) => {
 	Object.assign(i18n, i18nReady); // Update the proxy target with the actual i18n object
 	const translateDOM = () => {
 		const elements = document.querySelectorAll('*');
@@ -23,11 +38,10 @@ api.on_i18n_ready().then(i18nReady => {
 	translateDOM();
 });
 
-
 const logsList = document.getElementById('logs-list') as HTMLUListElement;
 
 let isConnected = false;
-let userData: {username: string, role: string} | null = null;
+let userData: { username: string; role: string } | null = null;
 const widgetContainerMap = new Map();
 const filesListMap = new Map();
 const widgetContainer = document.getElementById('updater-frame') as HTMLDivElement;
@@ -59,7 +73,6 @@ const SET_RELATIVE_PATH_BTN = document.getElementById('set-relative-path-btn') a
 const CLIENTS_LIST = document.getElementById('clients-list') as HTMLDivElement;
 
 let filesData: { files: FileData[] } = { files: [] };
-
 
 async function onNewFile(fileData: FileData) {
 	addFileToWidget(fileData);
@@ -192,7 +205,6 @@ api.IR_GetAppVersion().then((version) => {
 });
 
 function log(...args: string[]) {
-
 	const logItem = document.createElement('li');
 	logItem.innerText = args.join(' ');
 	if (logsList.firstChild) {
@@ -210,8 +222,8 @@ function isAdmin() {
 	return userData && userData.role === 'admin';
 }
 
-const tab_buttons: { [tabName: string]: HTMLButtonElement} = {}
-const admin_tabs: { [tabName:string]: true } = {
+const tab_buttons: { [tabName: string]: HTMLButtonElement } = {};
+const admin_tabs: { [tabName: string]: true } = {
 	admin: true,
 	status: true,
 };
@@ -295,16 +307,16 @@ function generateUniqueId({ fileName, relativePath, timestamp, hash }: FileData)
 }
 
 function ButtonEnable(this: ListUpdateButton, text: string) {
-    this.disabled = false;
-    this.classList.remove('disabled-btn');
-    this.textContent = text;
+	this.disabled = false;
+	this.classList.remove('disabled-btn');
+	this.textContent = text;
 }
 
 function ButtonDisable(this: ListUpdateButton, text: string) {
-    console.log('Disabling button:', text);
-    this.disabled = true;
-    this.classList.add('disabled-btn');
-    this.textContent = text;
+	console.log('Disabling button:', text);
+	this.disabled = true;
+	this.classList.add('disabled-btn');
+	this.textContent = text;
 }
 
 function ButtonOnClick(this: ListUpdateButton) {
@@ -315,15 +327,15 @@ function ButtonOnClick(this: ListUpdateButton) {
 }
 
 async function ButtonUpdate(this: ListUpdateButton) {
-    const data = this.fileData;
-    this.Disable(L['Checking...']);
-    const [shouldDownload, reason] = await api.shouldDownloadFile(data);
-    if (!shouldDownload) {
-        this.Disable(reason);
-    } else {
-        this.Enable(reason);
-        this.addEventListener('click', ButtonOnClick);
-    }
+	const data = this.fileData;
+	this.Disable(L['Checking...']);
+	const [shouldDownload, reason] = await api.shouldDownloadFile(data);
+	if (!shouldDownload) {
+		this.Disable(reason);
+	} else {
+		this.Enable(reason);
+		this.addEventListener('click', ButtonOnClick);
+	}
 }
 
 function ButtonUpdateDownloadTimer(this: ListUpdateButton) {
@@ -567,11 +579,11 @@ SET_RELATIVE_PATH_BTN.addEventListener('click', async () => {
 });
 
 MAX_BACKUPS_FOLDER_SIZE_SELECT.addEventListener('change', async (event) => {
-  const selectElement = event.target as HTMLSelectElement;
-  const value = parseInt(selectElement.value, 10);
-  await api.store.set('maxBackupsFolderSize', value);
-  updateBackupsTexts();
-  api.IR_InitiateBackup(false);
+	const selectElement = event.target as HTMLSelectElement;
+	const value = parseInt(selectElement.value, 10);
+	await api.store.set('maxBackupsFolderSize', value);
+	updateBackupsTexts();
+	api.IR_InitiateBackup(false);
 });
 
 BACKUPS_ENABLE.addEventListener('change', async () => {
@@ -611,7 +623,7 @@ api.IR_onConnectedClients((event, clients) => {
 	if (!isAdmin) return;
 
 	CLIENTS_LIST.innerHTML = '';
-	clients.forEach((client: { username: string, role: string}) => {
+	clients.forEach((client: { username: string; role: string }) => {
 		const clientItem = document.createElement('li');
 		clientItem.innerText = `${client.username}(${client.role})`;
 		if (CLIENTS_LIST.firstChild) {
@@ -623,3 +635,6 @@ api.IR_onConnectedClients((event, clients) => {
 });
 
 showLogin();
+
+*/
+console.log('Renderer process initialized');

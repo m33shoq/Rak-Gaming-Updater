@@ -93,15 +93,7 @@ body {
 	box-sizing: border-box; /* Include padding in the element's total width and height */
 }
 
-.input-field {
-	width: 100%;
-	padding: 10px;
-	margin-top: 10px;
-	border-radius: 5px;
-	border: 1px solid #333333; /* Subtle border */
-	background-color: #333333; /* Darker element background */
-	color: #FFFFFF;
-}
+
 
 .rounded-button {
 	background-color: #007ACC; /* Accent color */
@@ -319,15 +311,6 @@ li {
   text-align: right;
 }
 
-#toggle-panel-btn {
-  -webkit-app-region: no-drag;
-  position: relative;
-  bottom: 5px; /* Keeps the button's upward position */
-  height: 30px; /* Adjust this value to decrease the button's height */
-  padding: 5px 10px; /* Adjust vertical padding to reduce space above and below the text */
-  font-size: 14px; /* Optional: Adjust font size for better fit in the smaller button */
-}
-
 #add-folder-btn, #add-files-btn {
   line-height: 15px; /* Centers text vertically */
   text-align: center; /* Centers text horizontally */
@@ -386,10 +369,11 @@ li {
 	vertical-align: middle;
 }
 
-#main-tab-btn, #admin-tab-btn, #settings-tab-btn, #status-tab-btn, #main-container, #admin-container, #settings-container, #status-container {
+/* #main-tab-btn, #admin-tab-btn, #settings-tab-btn, #status-tab-btn, #backups-tab-btn, #main-container, #admin-container, #settings-container, #status-container {
 	display: none;
 }
 
+*/
 .dropdown-container {
 	margin-top: 20px;
 }
