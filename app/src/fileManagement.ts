@@ -1,7 +1,7 @@
 import { app, net } from 'electron';
 import fs from 'fs';
 import path from 'path';
-const fsp = fs.promises;
+import fsp from 'fs/promises';
 import log from 'electron-log/main';
 import store from './store';
 import mainWindowWrapper from './MainWindowWrapper';
@@ -10,8 +10,10 @@ import { zipFile, unzipFile } from './zipHandler';
 
 import { SERVER_URL, SERVER_LOGIN_ENDPOINT, SERVER_UPLOADS_ENDPOINT, SERVER_EXISTING_FILES_ENDPOINT, SERVER_DOWNLOAD_ENDPOINT } from './serverEndpoints';
 
-__dirname = path.dirname(__filename);
-log.info('File:', __filename, 'Dir:', __dirname);
+import { fileURLToPath } from "node:url";
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+// log.info('File:', __filename, 'Dir:', __dirname);
 const TEMP_DIR = path.join(app.getPath('appData'), 'temp'); // Temporary directory for unzipped/zipped files
 
 // return file path for downloaded zip file

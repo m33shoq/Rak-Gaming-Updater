@@ -1,4 +1,5 @@
-import { BrowserWindow, WebContents } from 'electron';
+import { BrowserWindow } from 'electron';
+import type { WebContents } from 'electron/main';
 
 class MainWindowWrapper {
   private window: BrowserWindow | null = null;

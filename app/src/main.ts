@@ -1,14 +1,22 @@
-import * as dotenv from 'dotenv';
+
+import { fileURLToPath } from "node:url";
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+import log from 'electron-log/main';
+log.transports.file.level = 'info';
+log.initialize({ preload: true });
+
+import dotenv from 'dotenv';
 dotenv.config();
 
 import { app, BrowserWindow, ipcMain, dialog, Tray, Menu, nativeImage, protocol, shell, Notification, net } from 'electron';
 import { autoUpdater } from 'electron-updater';
-import log from 'electron-log/main';
 import AbortController from 'abort-controller';
 import { jwtDecode } from 'jwt-decode';
-import * as fs from 'fs';
-import * as fsp from 'fs/promises';
-import * as path from 'path';
+import fs from 'fs';
+import fsp from 'fs/promises';
+import path from 'path';
 import validator from 'validator';
 
 import { GetFileData, CalculateHashForPath } from './fileDataUtility';
@@ -23,15 +31,10 @@ import { SERVER_URL, SERVER_LOGIN_ENDPOINT, SERVER_UPLOADS_ENDPOINT, SERVER_EXIS
 const L = Locale.L;
 let isQuiting = false;
 
-log.info('LOCALE:', Locale.selectedLocale);
 ipcMain.handle('i18n', () => Locale.translations);
-
-__dirname = path.dirname(__filename);
-log.info('File:', __filename, 'Dir:', __dirname);
 
 const TEMP_DIR = path.join(app.getPath('appData'), 'temp'); // Temporary directory for unzipped/zipped files
 
-log.info('SERVER_URL:', SERVER_URL);
 import Socket from 'socket.io-client';
 const socket = Socket(SERVER_URL, { autoConnect: false });
 
@@ -57,8 +60,6 @@ ipcMain.on('set-start-with-windows', async (event, value) => {
 	updateStartWithWindows();
 });
 
-log.initialize({ preload: true });
-log.info('App starting...');
 
 import taskBarIcon from '@/assets/taskbaricon.png';
 import notificationIcon from '@/assets/icon.png';
@@ -83,7 +84,7 @@ if (notificationIcon.startsWith('data:')) {
 	notificationIconImage = nativeImage.createFromPath(iconOnDisk);
 }
 
-const preload = path.join(__dirname, 'preload.js');
+const preload = path.join(__dirname, 'preload.mjs');
 const html = path.join(__dirname, 'index.html');
 
 protocol.registerSchemesAsPrivileged([{ scheme: 'app', privileges: { secure: true, standard: true } }]);
@@ -93,6 +94,8 @@ autoUpdater.autoInstallOnAppQuit = false;
 autoUpdater.allowPrerelease = false;
 log.transports.file.level = 'info';
 autoUpdater.logger = log;
+
+log.info('App starting...');
 
 const queuedDialogs = [] as Array<{ dialogOptions: Electron.MessageBoxOptions; onSuccessCallback: (value: Electron.MessageBoxReturnValue) => void }>;
 
@@ -445,13 +448,16 @@ ipcMain.handle('store-set', async (event, key, value) => store.set(key, value));
 ipcMain.handle('store-get', async (event, key) => store.get(key));
 ipcMain.on('store-sync-request', (event, key) => {
 	store.onDidChange(key, (newValue) => {
-		// log.info(`Main: Store value changed for key "${key}":`, newValue);
+		log.info(`Main: Store value changed for key "${key}":`, newValue);
 		mainWindow?.webContents.send('store-sync', key, newValue);
 	});
 });
 
 ipcMain.handle('get-app-version', () => {
-	return app.getVersion();
+	return {
+		version: app.getVersion(),
+		releaseType: app.isPackaged ? 'release' : 'development',
+	};
 });
 
 ipcMain.on('minimize-app', (event) => {

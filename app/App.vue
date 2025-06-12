@@ -22,9 +22,11 @@ const uploadedFilesStore = useUploadedFilesStore();
 const connectedClientsStore = useConnectedClientsStore();
 
 const appVersion = ref('x.x.x');
-api.IR_GetAppVersion().then((version) => {
-	log.info('App version:', version);
-	appVersion.value = version;
+const appReleseType = ref('unknown');
+api.IR_GetAppVersion().then((versionInfo) => {
+	log.info('App version:', versionInfo);
+	appVersion.value = versionInfo.version;
+	appReleseType.value = versionInfo.releaseType;
 });
 
 const selectedTab = ref('login');
@@ -141,7 +143,7 @@ onMounted(async () => {
 	<TabBackups v-else-if="selectedTab === 'backups'" />
 	<footer>
 		<p class="tab-title-label" v-text="loginStore.isConnected ? `Logged as: ${loginStore.getUsername} ${loginStore.getRole}` : ''"></p>
-		<p class="tab-title-label">Rak Gaming Updater {{ appVersion }} by m33shoq</p>
+		<p class="tab-title-label">Rak Gaming Updater {{ appVersion }}-{{ appReleseType }} by m33shoq</p>
 	</footer>
 </template>
 
