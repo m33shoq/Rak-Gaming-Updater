@@ -3,10 +3,10 @@ import { ref } from 'vue';
 import log from 'electron-log/renderer'
 import { storeToRefs } from 'pinia';
 
-import UIButton from "@/components/Button.vue";
-import Input from '@/components/Input.vue';
+import UIButton from "@/renderer/components/Button.vue";
+import Input from '@/renderer/components/Input.vue';
 
-import { useLoginStore } from '@/store/LoginStore';
+import { useLoginStore } from '@/renderer/store/LoginStore';
 
 const loginStore = useLoginStore();
 const { connectionError, disconnectReason } = storeToRefs(loginStore);

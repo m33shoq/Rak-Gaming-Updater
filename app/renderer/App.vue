@@ -4,18 +4,18 @@ import { ref, watchEffect, onMounted } from 'vue';
 
 import icon from '@/assets/icon.png';
 
-import UIButton from "@/components/Button.vue";
-import TabLogin from '@/components/TabLogin.vue';
-import TabUpdater from '@/components/TabUpdater.vue';
-import TabPusher from '@/components/TabPusher.vue';
-import TabSettings from '@/components/TabSettings.vue';
-import TabStatus from '@/components/StatusTab.vue';
-import TabBackups from '@/components/TabBackups.vue';
-import WinButtons from '@/components/WinButtons.vue';
+import UIButton from "@/renderer/components/Button.vue";
+import TabLogin from '@/renderer/components/TabLogin.vue';
+import TabUpdater from '@/renderer/components/TabUpdater.vue';
+import TabPusher from '@/renderer/components/TabPusher.vue';
+import TabSettings from '@/renderer/components/TabSettings.vue';
+import TabStatus from '@/renderer/components/StatusTab.vue';
+import TabBackups from '@/renderer/components/TabBackups.vue';
+import WinButtons from '@/renderer/components/WinButtons.vue';
 
-import { useLoginStore } from '@/store/LoginStore';
-import { useUploadedFilesStore } from '@/store/UploadedFilesStore';
-import { useConnectedClientsStore } from '@/store/ConnectedClientsStore';
+import { useLoginStore } from '@/renderer/store/LoginStore';
+import { useUploadedFilesStore } from '@/renderer/store/UploadedFilesStore';
+import { useConnectedClientsStore } from '@/renderer/store/ConnectedClientsStore';
 
 const loginStore = useLoginStore();
 const uploadedFilesStore = useUploadedFilesStore();

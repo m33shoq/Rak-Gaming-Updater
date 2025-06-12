@@ -27,11 +27,26 @@ import mainWindowWrapper from './MainWindowWrapper';
 import store from './store';
 
 import Locale from './locale';
-import { SERVER_URL, SERVER_LOGIN_ENDPOINT, SERVER_UPLOADS_ENDPOINT, SERVER_EXISTING_FILES_ENDPOINT, SERVER_DOWNLOAD_ENDPOINT } from './serverEndpoints';
+import {
+	SERVER_URL,
+	SERVER_LOGIN_ENDPOINT,
+	SERVER_UPLOADS_ENDPOINT,
+	SERVER_EXISTING_FILES_ENDPOINT,
+	SERVER_DOWNLOAD_ENDPOINT
+} from './serverEndpoints';
+
+import {
+	DOWNLOAD_REASON_NO_PATH_SET,
+	DOWNLOAD_REASON_SYMLINK,
+	DOWNLOAD_REASON_UPDATE,
+	DOWNLOAD_REASON_INSTALL,
+	DOWNLOAD_REASON_UP_TO_DATE,
+} from '@/constants'
+
 const L = Locale.L;
 let isQuiting = false;
 
-ipcMain.handle('i18n', () => Locale.translations);
+// ipcMain.handle('i18n', () => Locale.translations);
 
 const TEMP_DIR = path.join(app.getPath('appData'), 'temp'); // Temporary directory for unzipped/zipped files
 
@@ -85,7 +100,8 @@ if (notificationIcon.startsWith('data:')) {
 }
 
 const preload = path.join(__dirname, 'preload.mjs');
-const html = path.join(__dirname, 'index.html');
+const html = path.join(__dirname,  'index.html');
+log.info('html path:', html);
 
 protocol.registerSchemesAsPrivileged([{ scheme: 'app', privileges: { secure: true, standard: true } }]);
 
@@ -170,8 +186,8 @@ async function createWindow() {
 
 	if (isDev) {
 		log.info('Running in development mode');
-		mainWindow.loadURL('http://localhost:5173'); // Open the DevTools.
-		mainWindow.webContents.openDevTools({ mode: 'detach' });
+		mainWindow.loadURL('http://localhost:5173/');
+		mainWindow.webContents.openDevTools({ mode: 'detach' }); // Open the DevTools.
 	} else {
 		log.info(`Loading File: ${html}`);
 		mainWindow?.loadFile(html);
@@ -787,7 +803,7 @@ socket.on('not-enough-permissions', (data) => {
 async function shouldDownloadFile(serverFile: FileData): Promise<[boolean, string]> {
 	const wowPath = await getWoWPath();
 	if (!wowPath) {
-		return [false, L['No WoW Path set']];
+		return [false, DOWNLOAD_REASON_NO_PATH_SET];
 	}
 
 	const localFilePath = path.join(wowPath, serverFile.relativePath, serverFile.fileName.replace(/\.zip$/, ''));
@@ -795,21 +811,21 @@ async function shouldDownloadFile(serverFile: FileData): Promise<[boolean, strin
 	// Check if the file exists
 	if (!fs.existsSync(localFilePath)) {
 		log.info(`File does not exist: ${localFilePath}, should download`);
-		return [true, L['Install']]; // If the file doesn't exist, return true to download it
+		return [true, DOWNLOAD_REASON_INSTALL]; // If the file doesn't exist, return true to download it
 	}
 	const stats = fs.lstatSync(localFilePath);
 	if (stats.isSymbolicLink()) {
 		log.info(`File is a symbolic link: ${localFilePath}, should download`);
-		return [false, L['Is symbolic link']];
+		return [false, DOWNLOAD_REASON_SYMLINK];
 	}
 
 	const localFileHash = await CalculateHashForPath(localFilePath);
 	log.info(`Local File Hash: ${localFileHash}, Server File Hash: ${serverFile.hash}`);
 	const shouldDownload = localFileHash !== serverFile.hash;
 	if (shouldDownload) {
-		return [shouldDownload, L['Update']];
+		return [shouldDownload, DOWNLOAD_REASON_UPDATE];
 	} else {
-		return [shouldDownload, L['Up to date']];
+		return [shouldDownload, DOWNLOAD_REASON_UP_TO_DATE];
 	}
 }
 

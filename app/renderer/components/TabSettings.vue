@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import Checkbox from '@/components/Checkbox.vue';
+import Checkbox from '@/renderer/components/Checkbox.vue';
 import log from 'electron-log/renderer';
-import { getElectronStoreRef } from '@/store/ElectronRefStore';
+import { getElectronStoreRef } from '@/renderer/store/ElectronRefStore';
 
 const startWithWindows = getElectronStoreRef('startWithWindows', false);
 const startMinimized = getElectronStoreRef('startMinimized', false);

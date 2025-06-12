@@ -28,7 +28,7 @@ export default defineConfig(({ command }) => {
 			vue(),
 			electron([
 				{
-					entry: 'src/main.ts',
+					entry: 'main/main.ts',
 					onstart(options) {
 						options.startup();
 					},
@@ -57,7 +57,7 @@ export default defineConfig(({ command }) => {
 					},
 				},
 				{
-					entry: 'src/preload.ts',
+					entry: 'renderer/preload.ts',
 					onstart(options) {
 						options.reload();
 					},
@@ -95,6 +95,7 @@ export default defineConfig(({ command }) => {
 				},
 			}),
 		],
+		// base: path.resolve(__dirname, 'app', 'renderer', ),
 		base: './',
 		server: {
 			hmr: true,
