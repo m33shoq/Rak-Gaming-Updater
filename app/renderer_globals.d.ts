@@ -50,13 +50,3 @@ declare namespace api {
 	function IR_onBackupStatus(callback: (event: Electron.IpcRendererEvent, ...args: any[]) => void): void;
 }
 
-declare interface ListUpdateButton extends HTMLButtonElement {
-    fileData: FileData;
-    Disable(text: string): void;
-    Enable(text: string): void;
-    Update(): Promise<void>;
-    UpdateDownloadTimer(): void;
-    downloadTimer?: NodeJS.Timeout;
-}
-
-// declare module 'i18n';

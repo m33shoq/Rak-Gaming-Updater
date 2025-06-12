@@ -2,10 +2,10 @@
 import { ref, computed, watch, onMounted } from 'vue';
 import log from 'electron-log/renderer';
 
-import UIButton from '@/components/Button.vue';
-import Checkbox from '@/components/Checkbox.vue';
-import Dropdown from '@/components/Dropdown.vue';
-import { getElectronStoreRef } from '@/store/ElectronRefStore';
+import UIButton from '@/renderer/components/Button.vue';
+import Checkbox from '@/renderer/components/Checkbox.vue';
+import Dropdown from '@/renderer/components/Dropdown.vue';
+import { getElectronStoreRef } from '@/renderer/store/ElectronRefStore';
 
 const backupsEnabled = getElectronStoreRef('backupsEnabled', false);
 const maxBackupsFolderSize = getElectronStoreRef('maxBackupsFolderSize', 524); // Default to 500MB

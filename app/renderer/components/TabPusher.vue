@@ -1,10 +1,10 @@
 <script setup lang="ts">
-import UIButton from '@/components/Button.vue';
-import ScrollFrame from './ScrollFrame.vue';
-import { useUploadedFilesStore } from '@/store/UploadedFilesStore';
+import UIButton from '@/renderer/components/Button.vue';
+import ScrollFrame from '@/renderer/components/ScrollFrame.vue';
+import { useUploadedFilesStore } from '@/renderer/store/UploadedFilesStore';
 import { computed, ref } from 'vue';
 import log from 'electron-log/renderer';
-import { getElectronStoreRef } from '@/store/ElectronRefStore';
+import { getElectronStoreRef } from '@/renderer/store/ElectronRefStore';
 
 const uploadedFilesStore = useUploadedFilesStore();
 

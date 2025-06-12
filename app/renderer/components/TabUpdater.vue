@@ -1,13 +1,13 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue';
 import log from 'electron-log/renderer';
-import { useUploadedFilesStore } from '@/store/UploadedFilesStore';
-import { useLoginStore } from '@/store/LoginStore';
-import { getElectronStoreRef } from '@/store/ElectronRefStore';
+import { useUploadedFilesStore } from '@/renderer/store/UploadedFilesStore';
+import { useLoginStore } from '@/renderer/store/LoginStore';
+import { getElectronStoreRef } from '@/renderer/store/ElectronRefStore';
 
-import UIButton from '@/components/Button.vue';
-import Checkbox from '@/components/Checkbox.vue';
-import ScrollFrame from '@/components/ScrollFrame.vue';
+import UIButton from '@/renderer/components/Button.vue';
+import Checkbox from '@/renderer/components/Checkbox.vue';
+import ScrollFrame from '@/renderer/components/ScrollFrame.vue';
 
 const loginStore = useLoginStore();
 const uploadedFilesStore = useUploadedFilesStore();

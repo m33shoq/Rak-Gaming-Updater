@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import ScrollFrame from './ScrollFrame.vue';
-import { useConnectedClientsStore } from '@/store/ConnectedClientsStore';
+import { useConnectedClientsStore } from '@/renderer/store/ConnectedClientsStore';
 
 const connectedClientsStore = useConnectedClientsStore();
 

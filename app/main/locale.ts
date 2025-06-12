@@ -23,10 +23,10 @@ for (const lang of preferredLanguages) {
 	}
 }
 
-import en from '../translations/en.json';
-import ru from '../translations/ru.json';
-import ko from '../translations/ko.json';
-import uk from '../translations/uk.json';
+import en from '@/translations/en.json';
+import ru from '@/translations/ru.json';
+import ko from '@/translations/ko.json';
+import uk from '@/translations/uk.json';
 
 class Locale {
 	constructor(locale: string) {
