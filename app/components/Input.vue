@@ -9,18 +9,15 @@ defineProps<{
 
 const model = defineModel()
 
-
 </script>
 
 <template>
-	<input
-		v-text=label
+	<input v-text=label
 		:class
 		:placeholder
 		:type
 		@change="change"
-		v-model="model"
-	>
+		v-model="model">
 	</input>
 </template>
 
@@ -30,13 +27,20 @@ input {
 	padding: 10px;
 	margin-top: 10px;
 	border-radius: 5px;
-	border: 1px solid #333333; /* Subtle border */
-	background-color: #333333; /* Darker element background */
+	border: 2px solid #333333;
+	background-color: #333333;
 	color: #FFFFFF;
+	cursor: text;
+	white-space: nowrap;
+}
+
+input:focus {
+	outline: none;
+	border-color: #007ACC;
+	box-shadow: 0 0 2px rgba(0, 122, 204, 0.5);
 }
 
 input::placeholder {
-    user-select: none;
+	user-select: none;
 }
-
 </style>

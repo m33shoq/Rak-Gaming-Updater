@@ -6,5 +6,6 @@
 	"printWidth": 1000,
 	"proseWrap": "never",
 	"bracketSpacing": true,
-	"arrowParens": "always"
+	"arrowParens": "always",
+	"parser": "vue"
 }
