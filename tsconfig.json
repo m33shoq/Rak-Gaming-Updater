@@ -1,24 +1,38 @@
 {
 	"compilerOptions": {
-		"target": "esnext",
-		"useDefineForClassFields": true,
-		"module": "commonjs",
-		"moduleResolution": "node",
-		"strict": true,
-		"jsx": "preserve",
-		"sourceMap": true,
-		"resolveJsonModule": true,
-		"isolatedModules": false,
-		"esModuleInterop": true,
-		"lib": ["esnext", "dom"],
-		"skipLibCheck": true,
-		"outDir": "dist/",
 		"baseUrl": ".",
+		"outDir": "dist/",
+		"esModuleInterop": true,
+		"skipLibCheck": true,
+		"target": "es2022",
+		"allowJs": true,
+		"resolveJsonModule": true,
+		"moduleDetection": "force",
+		"isolatedModules": true,
+		"module": "preserve",
+		"noEmit": true,
+		"lib": [
+			"es2022",
+			"dom",
+			"dom.iterable"
+		],
+		"strict": true,
+		"strictNullChecks": false,
+		"noImplicitAny": false,
+		"allowSyntheticDefaultImports": true,
+		"forceConsistentCasingInFileNames": true,
+    	"verbatimModuleSyntax": true,
 		"paths": {
 			"@/*": ["app/*"]
 		}
 	},
-	"include": ["app/**/*.ts", "app/**/*.d.ts", "app/**/*.vue", "shims-assets.d.ts"],
+	"include": [
+		"app/**/*.ts",
+		"app/**/*.d.ts",
+		"app/**/*.vue",
+		"shims-assets.d.ts",
+		"package.json",
+	],
 	"references": [
 		{
 			"path": "./tsconfig.node.json"

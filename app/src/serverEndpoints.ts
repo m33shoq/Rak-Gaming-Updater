@@ -1,4 +1,4 @@
-import * as dotenv from 'dotenv';
+import dotenv from 'dotenv';
 dotenv.config();
 
 console.log('Using server URL:', process.env.ELECTRON_USE_DEV_URL);

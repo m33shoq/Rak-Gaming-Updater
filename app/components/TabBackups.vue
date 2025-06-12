@@ -101,7 +101,7 @@ onMounted(() => {
 
 <template>
 	<div class="tab-content">
-		<Checkbox label="'Do backups of WTF folder every 7 days'" v-model="backupsEnabled" />
+		<Checkbox label="Do backups of WTF folder every 7 days" v-model="backupsEnabled" />
 		<div id="backupsPath">
 			<div class="backups-button-container">
 				<UIButton label="Set Backups Folder Path"
