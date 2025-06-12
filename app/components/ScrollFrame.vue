@@ -8,8 +8,7 @@ defineProps<{
 
 <template>
 	<div class="scroll-frame" :style="{ height: `${height}px` }">
-
-		<slot class="line-item" />
+		<slot />
 	</div>
 </template>
 
@@ -17,13 +16,10 @@ defineProps<{
 .scroll-frame {
 	background-color: #1E1E1E;
 	color: #FFFFFF;
-	/* padding: 0px; */
 	margin-top: 15px;
 	overflow-y: auto;
 	border-radius: 6px;
 	border: 1px solid #3a3a3a;
-	display: grid;
-	grid-template-rows: 2fr;
 }
 
 .scroll-frame::-webkit-scrollbar {
@@ -47,19 +43,21 @@ defineProps<{
 
 .line-item {
 	display: grid;
-	grid-template-columns: 1fr;
+	grid-template-columns: 1fr auto auto;
 	align-items: center;
 	background-color: #2E2E2E;
 	margin: 4px;
-	border-radius: 6px; /* Rounded corners for the line item */
-	border: 1px solid #444; /* Optional: adds border to line items */
+	border-radius: 6px;
+	border: 1px solid #444;
+	height: 66px;
+}
+
+.line-item.mini {
+	height: 30px;
 }
 
 .line-item-element {
-	margin: 8px;
-	height: 8cqb;
-	align-items: center;
-	display: flex;
+	margin: 0 8px;
 }
 
 .scroll-list-item-main-text {
@@ -69,5 +67,4 @@ defineProps<{
 	font-size: 0.9em;
 	color: #888;
 }
-
 </style>

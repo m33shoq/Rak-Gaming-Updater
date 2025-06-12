@@ -1,7 +1,5 @@
 console.log('loading preload script');
 import { contextBridge, ipcRenderer } from 'electron';
-import log from 'electron-log/renderer';
-import { send } from 'process';
 
 async function store_get(key: any) {
 	if (key === 'authToken') return null;
@@ -11,6 +9,7 @@ async function store_get(key: any) {
 async function store_set(key: any, value: any) {
 	return await ipcRenderer.invoke('store-set', key, value);
 }
+
 
 contextBridge.exposeInMainWorld('api', {
 	IPCinvoke: ipcRenderer.invoke,
@@ -33,6 +32,10 @@ contextBridge.exposeInMainWorld('api', {
 	store: {
 		set: store_set,
 		get: store_get,
+		onSync: (key: string, callback: (event: Electron.IpcRendererEvent, ...args: any[]) => void) => {
+			ipcRenderer.send('store-sync-request', key); // subscribe to changes for the key
+			ipcRenderer.on('store-sync', (_, changedKey, val) => changedKey === key && callback(val))
+		},
 	},
 	// ipcRenderer callbacks
 	IR_onLog: (callback: (event: Electron.IpcRendererEvent, ...args: any[]) => void) => ipcRenderer.on('log', callback),

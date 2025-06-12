@@ -22,6 +22,7 @@ declare namespace api {
 	namespace store {
 		const set:(key: string, value: any) => Promise<void>;
 		const get:(key: string) => Promise<any>;
+		const onSync: (key: string, callback: (key, newValue) => void) => void;
 	}
 	function IR_onLog(callback: (event: Electron.IpcRendererEvent, ...args: any[]) => void): void;
 	function IR_onFileChunkReceived(callback: (event: Electron.IpcRendererEvent, ...args: any[]) => void): void;

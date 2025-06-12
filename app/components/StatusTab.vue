@@ -1,6 +1,8 @@
 <script setup lang="ts">
-import { ref } from 'vue';
+import ScrollFrame from './ScrollFrame.vue';
+import { useConnectedClientsStore } from '@/store/ConnectedClientsStore';
 
+const connectedClientsStore = useConnectedClientsStore();
 
 </script>
 
@@ -9,9 +11,16 @@ import { ref } from 'vue';
 		<div id="status" class="status-header">
 			<h2>Clients Status</h2>
 		</div>
-		<div id="status-frame" class="scroll-frame">
-			<ul id="clients-list" class="scroll-frame-text"></ul>
-		</div>
+		<ScrollFrame height="450">
+			<template #default>
+				<div v-for="client in connectedClientsStore.getClients" :key="client.id"
+					class="line-item mini">
+					<span class="line-item-element " style="user-select: text;">
+						{{ client.id }} - {{ client.username }} - {{ client.role || '' }}
+					</span>
+				</div>
+			</template>
+		</ScrollFrame>
 	</div>
 
 </template>

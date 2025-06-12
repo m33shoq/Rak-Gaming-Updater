@@ -51,7 +51,7 @@ button.normal:hover {
 
 button.normal.small {
 	padding: 5px 10px;
-	margin-left: 10px;
+	margin: 5px;
 }
 
 #add-folder-btn, #add-files-btn {
@@ -86,7 +86,7 @@ button.selected {
 	opacity: 1;
 }
 
-button.scroll-child {
+button.line-item-element {
 	width: 240px;
 }
 

@@ -17,7 +17,7 @@ export default defineConfig(({ command }) => {
 			},
 		},
 		plugins: [
-			VueDevTools(),
+			// VueDevTools(),
 			vue(),
 			electron([
 				{
@@ -37,8 +37,8 @@ export default defineConfig(({ command }) => {
 							outDir: path.resolve(__dirname, 'dist'),
 							target: 'esnext',
 							rollupOptions: {
-								external: ['ws', 'bufferutil', 'utf-8-validate']
-							}
+								external: ['ws', 'bufferutil', 'utf-8-validate'],
+							},
 						},
 					},
 				},
@@ -59,8 +59,8 @@ export default defineConfig(({ command }) => {
 							outDir: path.resolve(__dirname, 'dist'),
 							target: 'esnext',
 							rollupOptions: {
-								external: ['ws', 'bufferutil', 'utf-8-validate']
-							}
+								external: ['ws', 'bufferutil', 'utf-8-validate'],
+							},
 						},
 					},
 				},

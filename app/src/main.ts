@@ -136,7 +136,7 @@ async function createWindow() {
 		titleBarStyle: 'hidden',
 		webPreferences: {
 			preload: preload,
-			nodeIntegration: false,
+			nodeIntegration: true,
 			contextIsolation: true,
 			webSecurity: true,
 			allowRunningInsecureContent: false,
@@ -443,6 +443,12 @@ ipcMain.handle('check-for-login', async () => {
 
 ipcMain.handle('store-set', async (event, key, value) => store.set(key, value));
 ipcMain.handle('store-get', async (event, key) => store.get(key));
+ipcMain.on('store-sync-request', (event, key) => {
+	store.onDidChange(key, (newValue) => {
+		// log.info(`Main: Store value changed for key "${key}":`, newValue);
+		mainWindow?.webContents.send('store-sync', key, newValue);
+	});
+});
 
 ipcMain.handle('get-app-version', () => {
 	return app.getVersion();
