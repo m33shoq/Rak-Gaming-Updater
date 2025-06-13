@@ -9,6 +9,9 @@ import UIButton from '@/renderer/components/Button.vue';
 import Checkbox from '@/renderer/components/Checkbox.vue';
 import ScrollFrame from '@/renderer/components/ScrollFrame.vue';
 
+import { useI18n } from 'vue-i18n'
+const { t } = useI18n()
+
 const loginStore = useLoginStore();
 const uploadedFilesStore = useUploadedFilesStore();
 
@@ -18,7 +21,7 @@ api.IR_GetWoWPath().then((path) => {
 	selectedPath.value = path || '';
 });
 const selectedPathDisplay = computed(() => {
-	return selectedPath.value ? `WoW Path: ${selectedPath.value}` : 'WoW Path: Not Set';
+	return `${t('updater.wowpath')}: ${selectedPath.value || t('updater.wowpath.notset')}`;
 });
 
 async function selectUpdatePath() {
@@ -59,13 +62,13 @@ async function RefreshFiles() {
 <template>
 	<div class="tab-content">
 		<div id="select-path-container">
-			<UIButton label="Select wow path" @click="selectUpdatePath" style="margin: 5px; margin-left: 0px;">
+			<UIButton :label="$t('updater.setwowpath')" @click="selectUpdatePath" style="margin: 5px; margin-left: 0px;">
 			</UIButton>
 			<p id="selected-path" v-text="selectedPathDisplay"></p>
 		</div>
 		<div id="upater-frame-header">
-			<Checkbox label="Update Automatically" v-model="autoUpdate" />
-			<UIButton label="Refresh" @click="RefreshFiles" :class="{
+			<Checkbox :label="$t('updater.autoupdate')" v-model="autoUpdate" />
+			<UIButton :label="$t('updater.refresh')" @click="RefreshFiles" :class="{
 				normal: true,
 				disabled: fileRequestCooldown,
 }" />
@@ -89,7 +92,7 @@ async function RefreshFiles() {
 						{{ fileData.timestamp ? new Date(fileData.timestamp * 1000).toLocaleString() : 'Unknown' }}
 					</span>
 					<UIButton class="line-item-element"
-						:label="uploadedFilesStore.getDownloadStatusText(fileData)"
+						:label="$t(uploadedFilesStore.getDownloadStatusText(fileData), { percent: fileData.percentDownloaded || 0 })"
 						@click="uploadedFilesStore.downloadFile(fileData)"
 						:class="{
 							normal: true,

@@ -6,11 +6,14 @@ import { computed, ref } from 'vue';
 import log from 'electron-log/renderer';
 import { getElectronStoreRef } from '@/renderer/store/ElectronRefStore';
 
+import { useI18n } from 'vue-i18n'
+const { t } = useI18n()
+
 const uploadedFilesStore = useUploadedFilesStore();
 
 const relativePath = getElectronStoreRef('relativePath', '');
 const relativePathDisplay = computed(() => {
-	return relativePath.value ? `Relative Path: ${relativePath.value}` : 'Relative Path: Not Set';
+	return `${t('pusher.relativepath')}: ${relativePath.value || t('pusher.relativepath.notset')}`;
 });
 
 async function selectRelativePath() {
@@ -42,13 +45,13 @@ function deleteFile(fileData: FileData) {
 <template>
 	<div class="tab-content">
 		<div id="relative-path-container">
-			<UIButton label="Select relative path" @click="selectRelativePath" style="margin: 5px; margin-left: 0px;">
+			<UIButton :label="$t('pusher.setrelativepath')" @click="selectRelativePath" style="margin: 5px; margin-left: 0px;">
 			</UIButton>
 			<p v-text="relativePathDisplay"></p>
 		</div>
 		<div id="files-header-buttons">
-			<UIButton label="Add Folder" class="normal small" @click="onAddFolder" />
-			<UIButton label="Add File" class="normal small" @click="onAddFile" />
+			<UIButton :label="$t('pusher.addfolder')" class="normal small" @click="onAddFolder" />
+			<UIButton :label="$t('pusher.addfile')" class="normal small" @click="onAddFile" />
 		</div>
 		<!-- </div> -->
 		<ScrollFrame height='375' id="files-frame">
@@ -71,7 +74,7 @@ function deleteFile(fileData: FileData) {
 						{{ fileData.timestamp ? new Date(fileData.timestamp * 1000).toLocaleString() : 'Unknown' }}
 					</span>
 					<UIButton class="line-item-element"
-						:label="'Delete'"
+						:label="$t('pusher.deletefile')"
 						@click="deleteFile(fileData)"
 						:class="{
 							normal: true,

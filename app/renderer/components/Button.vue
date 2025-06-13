@@ -12,7 +12,8 @@ withDefaults(defineProps<ButtonProps>(), {
 </script>
 
 <template>
-	<button v-text=label :class @click="click">
+	<button :class @click="click">
+		{{ label }}
 	</button>
 </template>
 

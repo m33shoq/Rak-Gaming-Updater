@@ -1,6 +1,5 @@
 <script setup lang="ts">
 defineProps<{
-	label?: string;
 	class?: object;
 	change?: () => void;
 	placeholder?: string;
@@ -12,12 +11,14 @@ const model = defineModel()
 </script>
 
 <template>
-	<input v-text=label
+	<input
 		:class
 		:placeholder
 		:type
 		@change="change"
-		v-model="model">
+		v-model="model"
+	>
+
 	</input>
 </template>
 

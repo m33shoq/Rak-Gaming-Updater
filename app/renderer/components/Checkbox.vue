@@ -12,7 +12,9 @@ const model = defineModel();
 <template>
 	<div class="checkbox-container" :class>
 		<input type="checkbox" @change="change" v-model="model" />
-		<label v-text=label></label>
+		<label>
+			{{ label }}
+		</label>
 	</div>
 </template>
 

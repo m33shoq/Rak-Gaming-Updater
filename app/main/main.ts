@@ -26,7 +26,6 @@ import { getWoWPath, validateWoWPath } from './wowPathUtility';
 import mainWindowWrapper from './MainWindowWrapper';
 import store from './store';
 
-import Locale from './locale';
 import {
 	SERVER_URL,
 	SERVER_LOGIN_ENDPOINT,
@@ -43,10 +42,7 @@ import {
 	DOWNLOAD_REASON_UP_TO_DATE,
 } from '@/constants'
 
-const L = Locale.L;
 let isQuiting = false;
-
-// ipcMain.handle('i18n', () => Locale.translations);
 
 const TEMP_DIR = path.join(app.getPath('appData'), 'temp'); // Temporary directory for unzipped/zipped files
 
@@ -474,6 +470,28 @@ ipcMain.handle('get-app-version', () => {
 		version: app.getVersion(),
 		releaseType: app.isPackaged ? 'release' : 'development',
 	};
+});
+
+ipcMain.handle('get-language', async () => {
+	const storedLanguage = store.get('locale');
+	if (storedLanguage) {
+		log.info('Stored language found:', storedLanguage);
+		return storedLanguage;
+	}
+
+	let language = 'en'
+	const availableLocales = ['en', 'ru', 'ko', 'uk'];
+	const preferredLanguages: string[] = app.getPreferredSystemLanguages();
+	for (const lang of preferredLanguages) {
+		const processedLang = lang.split('-')[0];
+		if (availableLocales.includes(processedLang)) {
+			language = processedLang;
+			break;
+		}
+	}
+
+	log.info(`Most preffered locale: ${language}`)
+	return language;
 });
 
 ipcMain.on('minimize-app', (event) => {
