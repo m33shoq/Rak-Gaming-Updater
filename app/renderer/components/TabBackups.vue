@@ -7,20 +7,23 @@ import Checkbox from '@/renderer/components/Checkbox.vue';
 import Dropdown from '@/renderer/components/Dropdown.vue';
 import { getElectronStoreRef } from '@/renderer/store/ElectronRefStore';
 
+import { useI18n } from 'vue-i18n'
+const { t } = useI18n()
+
 const backupsEnabled = getElectronStoreRef('backupsEnabled', false);
 const maxBackupsFolderSize = getElectronStoreRef('maxBackupsFolderSize', 524); // Default to 500MB
 const backupsPath = getElectronStoreRef('backupsPath', '');
 const lastBackupTime = getElectronStoreRef('lastBackupTime', 0);
 const lastBackupTimeDisplay = computed(() => {
 	return lastBackupTime.value ?
-		`Last Backup Time: ${new Date(lastBackupTime.value).toLocaleString()}` :
-		'Last Backup Time: Not Set';
+		`${t('backups.lastbackuptime')}: ${new Date(lastBackupTime.value).toLocaleString()}` :
+		`${t('backups.lastbackuptime')}: ${t('backups.lastbackuptime.never')}`;
 });
 
 const backupsPathDisplay = computed(() => {
 	return backupsPath.value ?
-		`Backups Path: ${backupsPath.value}` :
-		'Backups Path: Not Set';
+		`${t('backups.backupspath')}: ${backupsPath.value}` :
+		`${t('backups.backupspath')}: ${t('backups.backupspath.notset')}`;
 });
 
 const backupsStatus = ref('???');
@@ -29,13 +32,13 @@ const backupCurrentFolderSize = ref(0);
 const backupChecksStatus = ref('');
 
 const backupCurrentFolderSizeDisplay = computed(() => {
-	return `Backups Folder Size: ${backupChecksStatus.value || `${backupCurrentFolderSize.value} MB`}`
+	return `${t('backups.backupssize')}: ${backupChecksStatus.value || `${backupCurrentFolderSize.value} MB`}`
 });
 
 
 function updateBackupsTexts() {
 	log.info('Updating backups texts...');
-	backupChecksStatus.value = 'In progress...';
+	backupChecksStatus.value = t('backups.status.inprogress');
 	api.getSizeOfBackupsFolder().then((backupsSize) => {
 		if (backupsSize.size) { // finished checks
 			backupCurrentFolderSize.value = backupsSize.size;
@@ -43,11 +46,11 @@ function updateBackupsTexts() {
 		} else if (backupsSize.aborted) { // retry in progress
 
 		} else { // .error or no folder found
-			backupChecksStatus.value = backupsSize.error || 'No backups folder found';
+			backupChecksStatus.value = backupsSize.error || t('backups.status.nofolder');
 			backupCurrentFolderSize.value = 0;
 		}
 	}).catch((error) => {
-		backupChecksStatus.value = 'Error checking backups folder size';
+		backupChecksStatus.value = t('backups.status.error') + `: ${error.message}`;
 		log.error('Error getting backups folder size:', error);
 		backupCurrentFolderSize.value = 0;
 	});
@@ -80,7 +83,7 @@ async function backupNow() {
 }
 
 api.IR_onBackupStatus((event, data) => {
-	backupsStatus.value = data
+	backupsStatus.value = t(data)
 });
 
 const backupFolderSizeOptions = [
@@ -101,34 +104,32 @@ onMounted(() => {
 
 <template>
 	<div class="tab-content">
-		<Checkbox label="Do backups of WTF folder every 7 days" v-model="backupsEnabled" />
+		<Checkbox :label="$t('backups.enablebackups')" v-model="backupsEnabled" />
 		<div id="backupsPath">
 			<div class="backups-button-container">
-				<UIButton label="Set Backups Folder Path"
+				<UIButton :label="$t('backups.setbackupspath')"
 					@click="selectBackupsPath"
 				/>
-				<UIButton label="Open Backups Folder"
+				<UIButton :label="$t('backups.openbackupspath')"
 					@click="openBackupsPath"
 				/>
 			</div>
 			<div>
-				<p class="backup-text" v-text="backupsPathDisplay"></p>
-				<p class="backup-text" v-text="backupCurrentFolderSizeDisplay"></p>
-				<p class="backup-text" v-text="lastBackupTimeDisplay"></p>
-				<p class="backup-text" v-text="backupsStatus"></p>
+				<p class="backup-text">{{ backupsPathDisplay }}</p>
+				<p class="backup-text">{{ backupCurrentFolderSizeDisplay }}</p>
+				<p class="backup-text">{{ lastBackupTimeDisplay }}</p>
+				<p class="backup-text">{{ backupsStatus }}</p>
 			</div>
-				<UIButton id="btn-backup-now" label="Backup Now"
+				<UIButton id="btn-backup-now" :label="$t('backups.backupnow')"
 				@click="backupNow"
 			/>
 		</div>
-		<Dropdown label="Max Backups Folder Size:"
+		<Dropdown :label="$t('backups.maxbackupsfoldersize')"
 			class="dropdown"
 			v-model="maxBackupsFolderSize"
-		>
-			<option v-for="option in backupFolderSizeOptions" :value="option.value" :key="option.value">
-				{{ option.label }}
-			</option>
-		</Dropdown>
+			:options="backupFolderSizeOptions"
+		/>
+
 	</div>
 </template>
 

@@ -31,11 +31,11 @@ api.IR_GetAppVersion().then((versionInfo) => {
 
 const selectedTab = ref('login');
 const tabs = [
-	{ name: 'main', label: 'Updater' },
-	{ name: 'pusher', label: 'Pusher', adminOnly: true },
-	{ name: 'settings', label: 'Settings' },
-	{ name: 'status', label: 'Status', adminOnly: true },
-	{ name: 'backups', label: 'Backups' }
+	{ name: 'main', label: 'tabname.updater' },
+	{ name: 'pusher', label: 'tabname.pusher', adminOnly: true },
+	{ name: 'settings', label: 'tabname.settings' },
+	{ name: 'status', label: 'tabname.status', adminOnly: true },
+	{ name: 'backups', label: 'tabname.backups' }
 ];
 
 function selectTab(tabName: string) {
@@ -126,7 +126,7 @@ onMounted(async () => {
 			<h1>RG Updater</h1>
 		</div>
 		<div id="tab-buttons-container" v-show="loginStore.isConnected">
-			<UIButton v-for="tab in tabs" :key="tab.name" :label="tab.label" @click="selectTab(tab.name)"
+			<UIButton v-for="tab in tabs" :key="tab.name" :label="$t(tab.label)" @click="selectTab(tab.name)"
 				v-show="!tab.adminOnly || loginStore.isAdmin" :class="{
 					'tab': true,
 					selected: selectedTab === tab.name,
@@ -142,7 +142,7 @@ onMounted(async () => {
 	<TabStatus v-else-if="selectedTab === 'status' && loginStore.isAdmin" />
 	<TabBackups v-else-if="selectedTab === 'backups'" />
 	<footer>
-		<p class="tab-title-label" v-text="loginStore.isConnected ? `Logged as: ${loginStore.getUsername} ${loginStore.getRole}` : ''"></p>
+		<p class="tab-title-label">{{ loginStore.isConnected ? `Logged as: ${loginStore.getUsername} ${loginStore.getRole}` : '' }}</p>
 		<p class="tab-title-label">Rak Gaming Updater {{ appVersion }}-{{ appReleseType }} by m33shoq</p>
 	</footer>
 </template>

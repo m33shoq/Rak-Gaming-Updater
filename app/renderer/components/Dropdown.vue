@@ -5,6 +5,10 @@ defineProps<{
 	change?: () => void;
 	placeholder?: string;
 	type?: string;
+	options?: Array<{
+		value: string | number;
+		label: string;
+	}>;
 }>();
 
 const model = defineModel()
@@ -13,7 +17,7 @@ const model = defineModel()
 
 <template>
 	<div class="dropdown-container">
-		<label class="dropdown-outer-text" v-text="label"></label>
+		<label class="dropdown-outer-text">{{ label }}:</label>
 		<select
 			:class
 			:placeholder
@@ -21,6 +25,9 @@ const model = defineModel()
 			@change="change"
 			v-model="model"
 		>
+		<option v-for="option in options" :value="option.value" :key="option.value">
+			{{ option.label }}
+		</option>
 			<slot/>
 		</select>
 	</div>

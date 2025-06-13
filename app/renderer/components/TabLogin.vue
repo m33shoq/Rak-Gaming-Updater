@@ -21,7 +21,7 @@ async function handleLogin() {
 	loginStore.setDisconnectReason('');
 
 	const credentials = { username: username.value, password: password.value };
-	const res = await api.IPCinvoke('login', credentials);
+	const res = await api.IR_sendLogin(credentials);
 	if (res.success) {
 		log.info('Login successful');
 		api.socket_connect();
@@ -39,7 +39,7 @@ async function handleLogin() {
 		<h1 class="tab-title-label">Login</h1>
 		<Input type="text" placeholder="Username" v-model="username" />
 		<Input type="password" placeholder="Password" v-model="password" />
-		<UIButton :label="'Login'" @click="handleLogin" style="margin-top: 15px;"> </UIButton>
+		<UIButton :label="$t('login.login')" @click="handleLogin" style="margin-top: 15px;"> </UIButton>
 		<p id="disconnect-reason" class="error-text" v-text="disconnectReason && `Disconnected: ${disconnectReason}`">
 		</p>
 		<p id="login-error" class="error-text" v-text="connectionError && `Connection ${connectionError}`"></p>

@@ -6,6 +6,7 @@ import renderer from 'vite-plugin-electron-renderer';
 import VueDevTools from "vite-plugin-vue-devtools";
 import path from 'path';
 import { rmSync } from 'node:fs';
+import VueI18nPlugin from "@intlify/unplugin-vue-i18n/vite";
 
 import pkg from "./package.json";
 
@@ -30,6 +31,7 @@ export default defineConfig(({ command }) => {
 				{
 					entry: 'main/main.ts',
 					onstart(options) {
+						console.log('Starting main process...');
 						options.startup();
 					},
 					vite: {
@@ -59,6 +61,7 @@ export default defineConfig(({ command }) => {
 				{
 					entry: 'renderer/preload.ts',
 					onstart(options) {
+						console.log('Starting preload script...');
 						options.reload();
 					},
 					vite: {
@@ -94,6 +97,13 @@ export default defineConfig(({ command }) => {
 					got: { type: "esm" },
 				},
 			}),
+			VueI18nPlugin({
+				include: path.resolve(__dirname, 'app', 'translations/**'),
+				onstart(options) {
+					console.log('Starting Vue I18n plugin...');
+					options.startup();
+				},
+		}),
 		],
 		// base: path.resolve(__dirname, 'app', 'renderer', ),
 		base: './',

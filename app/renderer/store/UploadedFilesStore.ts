@@ -1,6 +1,12 @@
 import { defineStore } from 'pinia';
 import log from 'electron-log/renderer';
 
+import {
+	DOWNLOAD_REASON_DOWNLOADING,
+	DOWNLOAD_REASON_UNZIPPING,
+	DOWNLOAD_REASON_CHECKING
+} from '@/constants';
+
 interface FileDataInfo extends FileData {
 	lastPacketTimestamp?: number
 	shouldDownload?: boolean;
@@ -62,7 +68,7 @@ export const useUploadedFilesStore = defineStore('UploadedFiles', {
 			return fileData ? (isUnzipping(fileData) ? false : wasRecentlyDownloaded(fileData) ? false : fileData.shouldDownload || false) : false;
 		},
 		getDownloadStatusText: (state) => (file: FileDataInfo) => {
-			return isUnzipping(file) ? 'Unzipping...' : isDownloading(file) ? `Downloading... ${file.percentDownloaded}%` : file.downloadReason || 'Checking...';
+			return isUnzipping(file) ? DOWNLOAD_REASON_UNZIPPING : isDownloading(file) ? DOWNLOAD_REASON_DOWNLOADING : file.downloadReason || DOWNLOAD_REASON_CHECKING;
 		},
 	},
 

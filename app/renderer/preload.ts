@@ -12,6 +12,7 @@ async function store_set(key: any, value: any) {
 
 
 contextBridge.exposeInMainWorld('api', {
+	getLanguage: () => ipcRenderer.invoke('get-language'),
 	IPCinvoke: ipcRenderer.invoke,
 	IPCsend: ipcRenderer.send,
 	// log: log,
