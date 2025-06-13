@@ -4,12 +4,12 @@ import { ref, watchEffect, onMounted } from 'vue';
 
 import icon from '@/assets/icon.png';
 
-import UIButton from "@/renderer/components/Button.vue";
+import ButtonTab from "@/renderer/components/ButtonTab.vue";
 import TabLogin from '@/renderer/components/TabLogin.vue';
 import TabUpdater from '@/renderer/components/TabUpdater.vue';
 import TabPusher from '@/renderer/components/TabPusher.vue';
 import TabSettings from '@/renderer/components/TabSettings.vue';
-import TabStatus from '@/renderer/components/StatusTab.vue';
+import TabStatus from '@/renderer/components/TabStatus.vue';
 import TabBackups from '@/renderer/components/TabBackups.vue';
 import WinButtons from '@/renderer/components/WinButtons.vue';
 
@@ -66,42 +66,37 @@ onMounted(async () => {
 
 
 </script>
+
 <template>
-	<div id="title-container">
-		<div class="header-container">
-			<img :src="icon" alt="Tray Icon" id="headericon" />
-			<h1>RG Updater</h1>
+	<div id="title-container" class="m-0 flex items-center justify-between w-full p-0 drag">
+		<div class="flex items-center gap-2">
+			<img :src="icon" alt="icon" class="h-[3em] mx-1 vertical-align align-middle" />
+			<h1 class="font-bold text-3xl bg-gradient-to-r from-sky-600 via-blue-500 to-blue-600 text-transparent bg-clip-text animate-gradient">RG Updater</h1>
 		</div>
 		<div id="tab-buttons-container" v-show="loginStore.isConnected">
-			<UIButton v-for="tab in tabs" :key="tab.name" :label="$t(tab.label)" @click="selectTab(tab.name)"
-				v-show="!tab.adminOnly || loginStore.isAdmin" :class="{
-					'tab': true,
-					selected: selectedTab === tab.name,
-					disabled: selectedTab === tab.name
-				}"></UIButton>
+			<ButtonTab v-for="tab in tabs"
+				:key="tab.name"
+				:label="$t(tab.label)"
+				@click="selectTab(tab.name)"
+				v-show="!tab.adminOnly || loginStore.isAdmin"
+				:disabled="selectedTab === tab.name"
+			/>
 		</div>
 		<WinButtons />
 	</div>
 	<TabLogin v-if="selectedTab === 'login'" />
-	<TabUpdater v-else-if="selectedTab === 'main'" />
+	<TabUpdater v-else-if="selectedTab === 'main'"/>
 	<TabPusher v-else-if="selectedTab === 'pusher' && loginStore.isAdmin" />
 	<TabSettings v-else-if="selectedTab === 'settings'" />
 	<TabStatus v-else-if="selectedTab === 'status' && loginStore.isAdmin" />
 	<TabBackups v-else-if="selectedTab === 'backups'" />
-	<footer>
-		<p class="tab-title-label">{{ loginStore.isConnected ? `Logged as: ${loginStore.getUsername} ${loginStore.getRole}` : '' }}</p>
-		<p class="tab-title-label">Rak Gaming Updater {{ appVersion }}-{{ appReleseType }} by m33shoq</p>
+	<footer class="bg-dark1 text-neutral-500 text-center p-1 absolute bottom-0 flex justify-between w-full text-sm">
+		<p>{{ loginStore.isConnected ? `Logged as: ${loginStore.getUsername} ${loginStore.getRole}` : '' }}</p>
+		<p>Rak Gaming Updater {{ appVersion }}-{{ appReleseType }} by m33shoq</p>
 	</footer>
 </template>
 
 <style>
-
-* {
-	box-sizing: border-box;
-	margin: 0;
-	padding: 0;
-	cursor: default;
-}
 
 body {
 	font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
@@ -114,86 +109,4 @@ body {
 	user-select: none;
 }
 
-#title-container {
-	margin: 0;
-	display: flex;
-	align-items: flex-start;
-	justify-content: space-between;
-	width: 100%;
-	padding: 0;
-	-webkit-app-region: drag;
-	user-select: none;
-}
-
-#title-container img {
-	height: 3em;
-	vertical-align: middle;
-	margin-right: 5px;
-	margin-left: 5px;
-}
-
-.header-container {
-	display: flex;
-	align-items: center;
-	gap: 5px;
-}
-
-#headericon {
-	vertical-align: middle;
-}
-
-.tab-button {
-	background-color: #f0f0f0;
-	border: 1px solid #ccc;
-	border-radius: 3px;
-	padding: 5px 15px;
-	margin: 2px;
-	cursor: pointer;
-	-webkit-app-region: no-drag;
-	transition: background-color 0.3s, border-color 0.3s, transform 0.3s;
-}
-
-.tab-button.selected {
-	background-color: #007bff;
-	color: white;
-	border-color: #0056b3;
-}
-
-#tab-buttons-container {
-	margin-top: 6px;
-	display: inline-flex;
-	align-items: center;
-	justify-content: center;
-}
-
-.tab-content {
-	background-color: #242424;
-	padding: 30px;
-	padding-top: 10px;
-	width: 100vw;
-	height: 100vh;
-	margin: 0;
-	box-sizing: border-box;
-}
-
-.tab-title-label {
-	user-select: none;
-}
-footer {
-	background-color: #181818;
-	color: #E0E0E0;
-	text-align: center;
-	padding: 4px;
-	position: absolute;
-	bottom: 0;
-	width: 100%;
-	display: flex;
-	justify-content: space-between;
-}
-
-.tab-title-label {
-	font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-	font-size: 0.9em;
-	color: #888;
-}
 </style>

@@ -7,6 +7,7 @@ import VueDevTools from "vite-plugin-vue-devtools";
 import path from 'path';
 import { rmSync } from 'node:fs';
 import VueI18nPlugin from "@intlify/unplugin-vue-i18n/vite";
+import tailwindcss from '@tailwindcss/vite';
 
 import pkg from "./package.json";
 
@@ -96,7 +97,8 @@ export default defineConfig(({ command }) => {
 			}),
 			VueI18nPlugin({
 				include: path.resolve(__dirname, 'app', 'translations/**'),
-		}),
+			}),
+			tailwindcss(),
 		],
 		// base: path.resolve(__dirname, 'app', 'renderer', ),
 		base: './',

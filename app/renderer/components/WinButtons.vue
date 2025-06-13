@@ -13,19 +13,13 @@ function onMinimizeClick() {
 </script>
 
 <template>
-	<div id="button-container">
+	<div id="button-container" class="flex items-start p-0 h-11">
 		<button id="minimize-btn" @click="onMinimizeClick">―</button>
 		<button id="close-btn" @click="onCloseClick">✖</button>
 	</div>
 </template>
 
 <style scoped>
-#button-container {
-	display: flex;
-	align-items: flex-start; /* Align buttons to the top */
-	padding: 0; /* Remove padding to ensure buttons are at the very top */
-	height: auto; /* Adjust height to fit the buttons */
-}
 
 #button-container button {
 	color: #FFFFFF;
@@ -34,12 +28,12 @@ function onMinimizeClick() {
 	background-color: transparent;
 	width: 30px;
 	height: 30px;
-	display: flex; /* Use flexbox */
-	justify-content: center; /* Center horizontally */
-	align-items: center; /* Center vertically */
+	display: flex;
+	justify-content: center;
+	align-items: center;
 	font-size: 12px;
 	border-radius: 0;
-	padding: 0; /* Adjust padding as needed */
+	padding: 0;
 }
 
 #button-container button:hover {

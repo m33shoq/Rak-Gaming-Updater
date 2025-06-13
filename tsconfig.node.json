@@ -2,9 +2,9 @@
   "compilerOptions": {
     "composite": true,
     "module": "esnext",
-    "moduleResolution": "node",
+    "moduleResolution": "bundler",
 	"allowSyntheticDefaultImports": true,
 	"resolveJsonModule": true,
   },
-  "include": ["vite.config.ts"]
+  "include": ["vite.config.ts", "shims-assets.d.ts"]
 }

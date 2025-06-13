@@ -2,6 +2,8 @@
 import { ref } from 'vue';
 import log from 'electron-log/renderer'
 
+import TabContent from '@/renderer/components/TabContent.vue';
+
 import UIButton from "@/renderer/components/Button.vue";
 import Input from '@/renderer/components/Input.vue';
 
@@ -33,15 +35,15 @@ async function handleLogin() {
 </script>
 
 <template>
-	<div class="tab-content">
-		<h1 class="tab-title-label">Login</h1>
+	<TabContent>
+		<h1 class="font-bold text-3xl">Login</h1>
 		<Input type="text" placeholder="Username" v-model="username" />
 		<Input type="password" placeholder="Password" v-model="password" />
 		<UIButton :label="$t('login.login')" @click="handleLogin" style="margin-top: 15px;"> </UIButton>
 		<p id="disconnect-reason" class="error-text" v-text="loginStore.getDisconnectReason && `Disconnected: ${loginStore.getDisconnectReason}`">
 		</p>
 		<p id="login-error" class="error-text" v-text="loginStore.getConnectionError && `Connection ${loginStore.getConnectionError}`"></p>
-	</div>
+	</TabContent>
 </template>
 
 <style scoped>

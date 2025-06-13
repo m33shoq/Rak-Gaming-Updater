@@ -5,12 +5,12 @@ interface ButtonProps {
 	click?: () => void;
 }
 
-const props = defineProps<ButtonProps>()
+defineProps<ButtonProps>()
 
 </script>
 
 <template>
-	<button class="inline-flex items-center gap-2 cursor-pointer rounded-md bg-primary px-3 py-1.5 text-base font-semibold text-white  disabled:opacity-50 disabled:pointer-events-none hover:bg-indigo-400 text-center "
+	<button class="min-w-24 bg-white rounded-md m-0.5 p-1.5 text-black font-semibold cursor-pointer no-drag disabled:bg-primary disabled:cursor-not-allowed disabled:pointer-events-none hover:bg-amber-200 disabled:text-white"
 		@click="click">
 		{{ label }}
 	</button>
@@ -43,18 +43,6 @@ button.normal {
 	transition: background-color 0.3s, border-color 0.3s, transform 0.3s;
 } */
 
-/* button.tab:hover {
-	background-color: #e0e0e0;
-	transform: scale(1.05);
-}
-
-button.selected {
-	background-color: #007ACC;
-	color: #FFFFFF;
-	border-color: #005EA6;
-	opacity: 1;
-} */
-
 /* button {
 	font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
 	font-weight: 600;
@@ -65,8 +53,6 @@ button.selected {
 	border-radius: 10px;
 	user-select: none;
 }
-
-
 
 
 
@@ -90,7 +76,17 @@ button.normal.small {
 
 
 
+button.tab:hover {
+	background-color: #e0e0e0;
+	transform: scale(1.05);
+}
 
+button.selected {
+	background-color: #007ACC;
+	color: #FFFFFF;
+	border-color: #005EA6;
+	opacity: 1;
+}
 
 button.line-item-element {
 	width: 240px;
