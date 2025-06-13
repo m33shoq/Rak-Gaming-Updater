@@ -92,17 +92,10 @@ export default defineConfig(({ command }) => {
 				resolve: {
 					archiver: { type: "cjs" },
 					regedit: { type: "cjs" },
-					sharp: { type: "cjs" },
-					tga: { type: "cjs" },
-					got: { type: "esm" },
 				},
 			}),
 			VueI18nPlugin({
 				include: path.resolve(__dirname, 'app', 'translations/**'),
-				onstart(options) {
-					console.log('Starting Vue I18n plugin...');
-					options.startup();
-				},
 		}),
 		],
 		// base: path.resolve(__dirname, 'app', 'renderer', ),

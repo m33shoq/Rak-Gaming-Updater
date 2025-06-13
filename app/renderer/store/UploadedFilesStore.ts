@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia';
 import log from 'electron-log/renderer';
+import { ref, computed } from 'vue';
 
 import {
 	DOWNLOAD_REASON_DOWNLOADING,
@@ -52,99 +53,161 @@ function wasRecentlyDownloaded(file: FileDataInfo): boolean {
 	return isWithin10Seconds(file.lastPacketTimestamp) && file.percentDownloaded !== undefined;
 }
 
-export const useUploadedFilesStore = defineStore('UploadedFiles', {
-	state: () => ({
-		files: [] as FileDataInfo[],
-	}),
+export const useUploadedFilesStore = defineStore('UploadedFiles', () => {
+	const files = ref<FileDataInfo[]>([]);
 
-	getters: {
-		getFiles: (state) => state.files,
-		getLastPacketTimestamp: (state) => (file: FileData) => {
-			const fileData = state.files.find((f) => isFilesSame(f, file));
-			return fileData ? fileData.lastPacketTimestamp : undefined;
-		},
-		getShouldDownload: (state) => (file: FileData) => {
-			const fileData = state.files.find((f) => isFilesSame(f, file));
-			return fileData ? (isUnzipping(fileData) ? false : wasRecentlyDownloaded(fileData) ? false : fileData.shouldDownload || false) : false;
-		},
-		getDownloadStatusText: (state) => (file: FileDataInfo) => {
-			return isUnzipping(file) ? DOWNLOAD_REASON_UNZIPPING : isDownloading(file) ? DOWNLOAD_REASON_DOWNLOADING : file.downloadReason || DOWNLOAD_REASON_CHECKING;
-		},
-	},
+	const getFiles = computed(() => files.value);
+	const getLastPacketTimestamp = computed(() => (file: FileData) => {
+		const fileData = files.value.find((f) => isFilesSame(f, file));
+		return fileData ? fileData.lastPacketTimestamp : undefined;
+	});
+	const getShouldDownload = computed(() => (file: FileData) => {
+		const fileData = files.value.find((f) => isFilesSame(f, file));
+		if (!fileData) return false;
+		if (isUnzipping(fileData)) return false;
+		if (wasRecentlyDownloaded(fileData)) return false;
+		return fileData.shouldDownload || false;
+	});
+	const getDownloadStatusText = computed(() => (file: FileDataInfo) => {
+		if (isUnzipping(file)) return DOWNLOAD_REASON_UNZIPPING;
+		if (isDownloading(file)) return DOWNLOAD_REASON_DOWNLOADING;
+		return file.downloadReason || DOWNLOAD_REASON_CHECKING;
+	});
 
-	actions: {
-		setFiles: async function (files: FileData[]) {
-			this.files = files;
-			for (const file of this.files) {
-				await this.checkDownloadStatus(file).catch((err) => {
-					console.error('Error checking download status for file:', file, err);
-				});
-			}
-		},
-		addFile: function (file: FileData) {
-			this.files.push(file);
-			this.checkDownloadStatus(file).catch((err) => {
-				console.error('Error checking download status for file:', file, err);
+
+	const setFiles = async (newFiles: FileData[]) => {
+		files.value = newFiles.map(file => ({
+			...file,
+			lastPacketTimestamp: 0,
+			shouldDownload: false,
+			downloadReason: DOWNLOAD_REASON_CHECKING,
+			percentDownloaded: 0,
+			isFullyDownloaded: false
+		}));
+		for (const file of files.value) {
+			await checkDownloadStatus(file).catch((err) => {
+				log.error('Error checking download status for file:', file, err);
 			});
-		},
-		deleteFile: function (file: FileData) {
-			this.files = this.files.filter((f) => !isFilesSame(f, file));
-		},
-		updateLastPacketInfo: function (file: FileData, percent: number, timestamp: number) {
-			const fileIndex = this.files.findIndex((f) => isFilesSame(f, file));
-			if (fileIndex !== -1) {
-				this.files[fileIndex].lastPacketTimestamp = timestamp;
-				this.files[fileIndex].percentDownloaded = percent;
-			}
-		},
-		checkDownloadStatus: async function (file: FileData) {
-			log.info('Checking download status for file:', file.displayName);
-			const fileIndex = this.files.findIndex((f) => isFilesSame(f, file));
-			if (fileIndex === -1) return;
-			this.files[fileIndex].shouldDownload = false;
-			this.files[fileIndex].downloadReason = 'Checking...';
+		}
+	};
+	const addFile = (file: FileData) => {
+		const fileData: FileDataInfo = {
+			...file,
+			lastPacketTimestamp: 0,
+			shouldDownload: false,
+			downloadReason: DOWNLOAD_REASON_CHECKING,
+			percentDownloaded: 0,
+			isFullyDownloaded: false
+		};
+		files.value.push(fileData);
+		checkDownloadStatus(fileData).catch((err) => {
+			log.error('Error checking download status for file:', fileData, err);
+		});
+	};
+	const deleteFile = (file: FileData) => {
+		files.value = files.value.filter((f) => !isFilesSame(f, file));
+	};
+	const updateLastPacketInfo = (file: FileData, percent: number, timestamp: number) => {
+		const fileIndex = files.value.findIndex((f) => isFilesSame(f, file));
+		if (fileIndex !== -1) {
+			files.value[fileIndex].lastPacketTimestamp = timestamp;
+			files.value[fileIndex].percentDownloaded = percent;
+		}
+	};
+	const checkDownloadStatus = async (file: FileData) => {
+		log.info('Checking download status for file:', file.displayName);
+		const fileIndex = files.value.findIndex((f) => isFilesSame(f, file));
+		if (fileIndex === -1) return;
+		files.value[fileIndex].shouldDownload = false;
+		files.value[fileIndex].downloadReason = DOWNLOAD_REASON_CHECKING;
+		const unreactiveFile = { ...file };
+		const [shouldDownload, downloadReason] = await api.shouldDownloadFile(unreactiveFile);
+		files.value[fileIndex].shouldDownload = shouldDownload;
+		files.value[fileIndex].downloadReason = downloadReason;
+		if (shouldDownload && (await api.store.get('autoUpdate'))) {
+			downloadFile(file).catch((err) => {
+				log.error('Error downloading file:', file.displayName, err);
+			});
+		}
+	};
+	const checkDownLoadStatusForAll = async () => {
+		log.info('Checking download status for all files...');
+		for (const file of files.value) {
+			await checkDownloadStatus(file).catch((err) => {
+				log.error('Error checking download status for file:', file, err);
+			});
+		}
+		log.info('Download status check completed.');
+	};
+	const setIsFullyDownloaded = (file: FileData, isFullyDownloaded: boolean) => {
+		const fileIndex = files.value.findIndex((f) => isFilesSame(f, file));
+		if (fileIndex !== -1) {
+			files.value[fileIndex].isFullyDownloaded = isFullyDownloaded;
+		} else {
+			log.warn('File not found in store:', file);
+		}
+	};
+	const fetchFiles = async () => {
+		log.info('Fetching files data from API...');
+		const filesData = await api.fetchFilesData();
+		log.info('Files data fetched:', filesData);
+		if (filesData.files) {
+			await setFiles(filesData.files);
+		} else {
+			await setFiles([]);
+		}
+	};
+	const downloadFile = async (file: FileData) => {
+		log.info('Downloading file:', file);
+		api.requestFile({ ...file });
+	};
 
-			const unreactiveFile = { ...file };
-			const [shouldDownload, downloadReason] = await api.shouldDownloadFile(unreactiveFile);
-			this.files[fileIndex].shouldDownload = shouldDownload;
-			this.files[fileIndex].downloadReason = downloadReason;
+	api.socket_on_connect(async () => {
+		fetchFiles();
+	});
 
-			if (shouldDownload && (await api.store.get('autoUpdate'))) {
-				this.downloadFile(file).catch((err) => {
-					log.error('Error downloading file:', file.displayName, err);
-				});
-			}
-		},
-		checkDownLoadStatusForAll: async function () {
-			log.info('Checking download status for all files...');
-			for (const file of this.files) {
-				await this.checkDownloadStatus(file).catch((err) => {
-					log.error('Error checking download status for file:', file, err);
-				});
-			}
-			log.info('Download status check completed.');
-		},
-		setIsFullyDownloaded: function (file: FileData, isFullyDownloaded: boolean) {
-			const fileIndex = this.files.findIndex((f) => isFilesSame(f, file));
-			if (fileIndex !== -1) {
-				this.files[fileIndex].isFullyDownloaded = isFullyDownloaded;
-			} else {
-				log.warn('File not found in store:', file);
-			}
-		},
-		fetchFiles: async function () {
-			log.info('Fetching files data from API...');
-			const filesData = await api.fetchFilesData();
-			log.info('Files data fetched:', filesData);
-			if (filesData.files) {
-				this.setFiles(filesData.files);
-			} else {
-				this.setFiles([]);
-			}
-		},
-		downloadFile: async function (file: FileData) {
-			log.info('Downloading file:', file);
-			api.requestFile({ ...file });
-		},
-	},
-});
+	api.IR_onFileChunkReceived((event, fileData: FileData, percent: number) => {
+		updateLastPacketInfo(fileData, percent, Date.now());
+	});
+
+	api.IR_onFileDownloaded((event, fileData: FileData) => {
+		log.info('File downloaded:', fileData.displayName);
+		checkDownloadStatus(fileData);
+		setIsFullyDownloaded(fileData, true);
+	});
+
+	api.socket_on_file_not_found((event, fileData: FileData) => {
+		log.info('File not found:', fileData);
+	});
+
+	api.socket_on_new_file(async (event, fileData: FileData) => {
+		log.info('New file received:', fileData);
+		addFile(fileData);
+	});
+
+	api.socket_on_file_deleted((event, fileData: FileData) => {
+		log.info('File deleted:', fileData);
+		deleteFile(fileData);
+	});
+
+	return {
+		files,
+
+		getFiles,
+		getLastPacketTimestamp,
+		getShouldDownload,
+		getDownloadStatusText,
+
+		setFiles,
+		addFile,
+		deleteFile,
+		updateLastPacketInfo,
+		checkDownloadStatus,
+		checkDownLoadStatusForAll,
+		setIsFullyDownloaded,
+		fetchFiles,
+		downloadFile
+	};
+})
+
+

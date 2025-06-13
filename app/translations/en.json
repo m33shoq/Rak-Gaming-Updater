@@ -33,12 +33,19 @@
 	"backups.openbackupspath": "Open Backups Folder",
 	"backups.backupspath": "Backups Path",
 	"backups.backupspath.notset": "Not set",
-	"backups.backupssize": "Backups Size",
+	"backups.foldersize": "Backups Size",
+	"backups.foldersize.inprogress": "In progress...",
 	"backups.lastbackuptime": "Last backup made",
 	"backups.lastbackuptime.never": "Never",
+	"backups.nextbackup": "Next backup",
 	"backups.backupnow": "Backup Now",
 	"backups.maxbackupsfoldersize": "Max Backups Folder Size",
-	"backups.status.inprogress": "In progress...",
-	"backups.status.nofolder": "No backups folder found",
-	"backups.status.error": "Error checking backups folder size"
+	"backups.error.nofolder": "No backups folder found",
+	"backups.status.error": "Error checking backups folder size",
+	"backups.status.disabled": "Backups are disabled",
+	"backups.status.deletingold": "Deleting old backups",
+	"backups.status.creating": "Creating backup",
+	"backups.status.completed": "Backup completed",
+	"backups.status.failed": "Backup failed",
+	"backups.status.deleted": "Deleted old backup"
 }

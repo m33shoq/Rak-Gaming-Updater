@@ -16,10 +16,13 @@ import WinButtons from '@/renderer/components/WinButtons.vue';
 import { useLoginStore } from '@/renderer/store/LoginStore';
 import { useUploadedFilesStore } from '@/renderer/store/UploadedFilesStore';
 import { useConnectedClientsStore } from '@/renderer/store/ConnectedClientsStore';
+import { useBackupStatusStore } from '@/renderer/store/BackupStatusStore';
 
+// initialize all stores
 const loginStore = useLoginStore();
 const uploadedFilesStore = useUploadedFilesStore();
 const connectedClientsStore = useConnectedClientsStore();
+const backupStatusStore = useBackupStatusStore();
 
 const appVersion = ref('x.x.x');
 const appReleseType = ref('unknown');
@@ -52,63 +55,7 @@ watchEffect(() => {
 	}
 });
 
-// connection logic
-api.socket_on_connect(async () => {
-	log.info('Connected to server');
-	loginStore.setConnected(true);
-	const authInfo = await api.check_for_login();
-	loginStore.setAuthInfo(authInfo);
 
-	loginStore.setConnectionError('');
-	loginStore.setDisconnectReason('');
-});
-
-api.socket_on_disconnect((event, reason) => {
-	log.error('Disconnected from server:', reason);
-	loginStore.setConnected(false);
-	loginStore.setDisconnectReason(reason.description);
-});
-
-api.socket_on_connect_error((event, description) => {
-	log.error('Connect failed:', description);
-	loginStore.setConnectionError(description);
-});
-
-
-// uploaded files logic
-api.socket_on_connect(async () => {
-	uploadedFilesStore.fetchFiles();
-});
-
-api.IR_onFileChunkReceived((event, fileData: FileData, percent: number) => {
-	log.info('File chunk received:', 'Progress:', percent);
-	uploadedFilesStore.updateLastPacketInfo(fileData, percent, Date.now());
-});
-
-api.IR_onFileDownloaded((event, fileData: FileData) => {
-	log.info('File downloaded:', fileData.displayName);
-	uploadedFilesStore.checkDownloadStatus(fileData);
-	uploadedFilesStore.setIsFullyDownloaded(fileData, true);
-});
-
-api.socket_on_file_not_found((event, fileData: FileData) => {
-	log.info('File not found:', fileData);
-});
-
-api.socket_on_new_file(async (event, fileData: FileData) => {
-	log.info('New file received:', fileData);
-	uploadedFilesStore.addFile(fileData);
-});
-
-api.socket_on_file_deleted((event, fileData: FileData) => {
-	log.info('File deleted:', fileData);
-	uploadedFilesStore.deleteFile(fileData);
-});
-
-// connected clients for status tab
-api.IR_onConnectedClients((event, clients) => {
-	connectedClientsStore.setClients(clients);
-});
 
 onMounted(async () => {
 	const authInfo = await api.check_for_login();

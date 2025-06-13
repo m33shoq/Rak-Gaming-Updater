@@ -6,9 +6,14 @@ import UIButton from '@/renderer/components/Button.vue';
 import Checkbox from '@/renderer/components/Checkbox.vue';
 import Dropdown from '@/renderer/components/Dropdown.vue';
 import { getElectronStoreRef } from '@/renderer/store/ElectronRefStore';
+import { useBackupStatusStore } from '@/renderer/store/BackupStatusStore';
+
+import { BACKUP_INTERVAL_ONE_WEK } from '@/constants'
 
 import { useI18n } from 'vue-i18n'
 const { t } = useI18n()
+
+const backupsStatusStore = useBackupStatusStore();
 
 const backupsEnabled = getElectronStoreRef('backupsEnabled', false);
 const maxBackupsFolderSize = getElectronStoreRef('maxBackupsFolderSize', 524); // Default to 500MB
@@ -19,6 +24,11 @@ const lastBackupTimeDisplay = computed(() => {
 		`${t('backups.lastbackuptime')}: ${new Date(lastBackupTime.value).toLocaleString()}` :
 		`${t('backups.lastbackuptime')}: ${t('backups.lastbackuptime.never')}`;
 });
+const nextBackupTimeDisplay = computed(() => {
+	return lastBackupTime.value ?
+		`${t('backups.nextbackup')}: ${new Date(lastBackupTime.value + BACKUP_INTERVAL_ONE_WEK).toLocaleString()}` :
+		`${t('backups.nextbackup')}: ${t('backups.lastbackuptime.never')}`;
+});
 
 const backupsPathDisplay = computed(() => {
 	return backupsPath.value ?
@@ -26,27 +36,23 @@ const backupsPathDisplay = computed(() => {
 		`${t('backups.backupspath')}: ${t('backups.backupspath.notset')}`;
 });
 
-const backupsStatus = ref('???');
-
 const backupCurrentFolderSize = ref(0);
 const backupChecksStatus = ref('');
 
 const backupCurrentFolderSizeDisplay = computed(() => {
-	return `${t('backups.backupssize')}: ${backupChecksStatus.value || `${backupCurrentFolderSize.value} MB`}`
+	return `${t('backups.foldersize')}: ${backupChecksStatus.value || `${backupCurrentFolderSize.value} MB`}`
 });
-
 
 function updateBackupsTexts() {
 	log.info('Updating backups texts...');
-	backupChecksStatus.value = t('backups.status.inprogress');
+	backupChecksStatus.value = t('backups.foldersize.inprogress');
 	api.getSizeOfBackupsFolder().then((backupsSize) => {
+		if (backupsSize.aborted) return // retry in progress
 		if (backupsSize.size) { // finished checks
 			backupCurrentFolderSize.value = backupsSize.size;
 			backupChecksStatus.value = ''
-		} else if (backupsSize.aborted) { // retry in progress
-
 		} else { // .error or no folder found
-			backupChecksStatus.value = backupsSize.error || t('backups.status.nofolder');
+			backupChecksStatus.value = t(backupsSize.error);
 			backupCurrentFolderSize.value = 0;
 		}
 	}).catch((error) => {
@@ -82,10 +88,6 @@ async function backupNow() {
 	api.IR_InitiateBackup(true);
 }
 
-api.IR_onBackupStatus((event, data) => {
-	backupsStatus.value = t(data)
-});
-
 const backupFolderSizeOptions = [
 	{ value: 524, label: '500MB' },
 	{ value: 1048, label: '1GB' },
@@ -118,7 +120,8 @@ onMounted(() => {
 				<p class="backup-text">{{ backupsPathDisplay }}</p>
 				<p class="backup-text">{{ backupCurrentFolderSizeDisplay }}</p>
 				<p class="backup-text">{{ lastBackupTimeDisplay }}</p>
-				<p class="backup-text">{{ backupsStatus }}</p>
+				<p class="backup-text">{{ nextBackupTimeDisplay }}</p>
+				<p class="backup-text">{{ backupsStatusStore.backupStatusText }}</p>
 			</div>
 				<UIButton id="btn-backup-now" :label="$t('backups.backupnow')"
 				@click="backupNow"
