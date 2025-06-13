@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import TabContent from '@/renderer/components/TabContent.vue';
 import UIButton from '@/renderer/components/Button.vue';
 import ScrollFrame from '@/renderer/components/ScrollFrame.vue';
 import { useUploadedFilesStore } from '@/renderer/store/UploadedFilesStore';
@@ -43,25 +44,27 @@ function deleteFile(fileData: FileData) {
 </script>
 
 <template>
-	<div class="tab-content">
-		<div id="relative-path-container">
-			<UIButton :label="$t('pusher.setrelativepath')" @click="selectRelativePath" style="margin: 5px; margin-left: 0px;">
-			</UIButton>
+	<TabContent>
+		<div id="relative-path-container" class="flex flex-row items-center my-2.5">
+			<UIButton :label="$t('pusher.setrelativepath')" @click="selectRelativePath" class="m-1 ml-0"/>
 			<p v-text="relativePathDisplay"></p>
 		</div>
-		<div id="files-header-buttons">
-			<UIButton :label="$t('pusher.addfolder')" class="normal small" @click="onAddFolder" />
-			<UIButton :label="$t('pusher.addfile')" class="normal small" @click="onAddFile" />
+		<div class="flex flex-row-reverse gap-2 h-11 items-center">
+			<UIButton
+				:label="$t('pusher.addfolder')"
+				@click="onAddFolder"
+			/>
+			<UIButton
+				:label="$t('pusher.addfile')"
+				@click="onAddFile"
+			/>
 		</div>
-		<!-- </div> -->
-		<ScrollFrame height='375' id="files-frame">
+		<ScrollFrame height='375'>
 			<template #default>
 				<div v-for="fileData in uploadedFilesStore.getFiles"
 					:key="fileData.displayName + fileData.hash + fileData.relativePath + fileData.timestamp" :fileData
 					class="line-item">
-					<span class="line-item-element"
-						style="display: flex; flex-direction: column; align-items: flex-start;"
-					>
+					<span class="line-item-element flex flex-col items-start">
 						<span class="scroll-list-item-main-text">
 							{{ fileData.displayName }}
 
@@ -73,7 +76,7 @@ function deleteFile(fileData: FileData) {
 					<span class="line-item-element">
 						{{ fileData.timestamp ? new Date(fileData.timestamp * 1000).toLocaleString() : 'Unknown' }}
 					</span>
-					<UIButton class="line-item-element"
+					<UIButton class="line-item-element w-54 justify-center-safe h-7/10"
 						:label="$t('pusher.deletefile')"
 						@click="deleteFile(fileData)"
 						:class="{
@@ -83,21 +86,9 @@ function deleteFile(fileData: FileData) {
 				</div>
 			</template>
 		</ScrollFrame>
-	</div>
+	</TabContent>
 </template>
 
 <style scoped>
-#relative-path-container {
-	display: flex;
-	flex-direction: row;
-	align-items: center;
-	margin-bottom: 10px;
-	margin-top: 10px;
-}
 
-#files-header-buttons {
-	margin: 10px;
-	display: flex;
-	flex-direction: row-reverse
-}
 </style>

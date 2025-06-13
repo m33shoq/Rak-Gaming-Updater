@@ -3,6 +3,7 @@ import { watch } from 'vue';
 import log from 'electron-log/renderer';
 import { getElectronStoreRef } from '@/renderer/store/ElectronRefStore';
 
+import TabContent from '@/renderer/components/TabContent.vue';
 import Checkbox from '@/renderer/components/Checkbox.vue';
 import Dropdown from '@/renderer/components/Dropdown.vue';
 
@@ -21,7 +22,7 @@ const quitOnClose = getElectronStoreRef('quitOnClose', false);
 </script>
 
 <template>
-	<div class="tab-content">
+	<TabContent>
 		<Checkbox :label="$t('settings.winstartup')" v-model="startWithWindows" />
 		<Checkbox :label="$t('settings.winminimized')" v-model="startMinimized" />
 		<Checkbox :label="$t('settings.exitonclose')" v-model="quitOnClose" />
@@ -31,7 +32,7 @@ const quitOnClose = getElectronStoreRef('quitOnClose', false);
 			{ value: 'uk', label: 'Українська' },
 			{ value: 'ko', label: '한국어' },
 		]" />
-	</div>
+	</TabContent>
 </template>
 
 <style scoped>

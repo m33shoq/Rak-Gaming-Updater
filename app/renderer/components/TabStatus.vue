@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import TabContent from '@/renderer/components/TabContent.vue';
 import ScrollFrame from './ScrollFrame.vue';
 import { useConnectedClientsStore } from '@/renderer/store/ConnectedClientsStore';
 
@@ -7,22 +8,21 @@ const connectedClientsStore = useConnectedClientsStore();
 </script>
 
 <template>
-	<div class="tab-content">
+	<TabContent>
 		<div id="status" class="status-header">
-			<h2>Clients Status</h2>
+			<h2 class="font-bold text-3xl">Clients Status</h2>
 		</div>
 		<ScrollFrame height="450">
 			<template #default>
 				<div v-for="client in connectedClientsStore.getClients" :key="client.id"
 					class="line-item mini">
-					<span class="line-item-element " style="user-select: text;">
+					<span class="line-item-element select-text">
 						{{ client.id }} - {{ client.username }} - {{ client.role || '' }}
 					</span>
 				</div>
 			</template>
 		</ScrollFrame>
-	</div>
-
+	</TabContent>
 </template>
 
 <style scoped>

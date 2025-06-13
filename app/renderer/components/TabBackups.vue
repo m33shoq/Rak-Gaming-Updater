@@ -2,6 +2,7 @@
 import { ref, computed, watch, onMounted } from 'vue';
 import log from 'electron-log/renderer';
 
+import TabContent from '@/renderer/components/TabContent.vue';
 import UIButton from '@/renderer/components/Button.vue';
 import Checkbox from '@/renderer/components/Checkbox.vue';
 import Dropdown from '@/renderer/components/Dropdown.vue';
@@ -105,14 +106,16 @@ onMounted(() => {
 </script>
 
 <template>
-	<div class="tab-content">
+	<TabContent>
 		<Checkbox :label="$t('backups.enablebackups')" v-model="backupsEnabled" />
 		<div id="backupsPath">
-			<div class="backups-button-container">
-				<UIButton :label="$t('backups.setbackupspath')"
+			<div class="backups-button-container fles flex-row justify-start mx-0 my-2.5">
+				<UIButton class="mr-2"
+					:label="$t('backups.setbackupspath')"
 					@click="selectBackupsPath"
 				/>
-				<UIButton :label="$t('backups.openbackupspath')"
+				<UIButton
+					:label="$t('backups.openbackupspath')"
 					@click="openBackupsPath"
 				/>
 			</div>
@@ -123,7 +126,8 @@ onMounted(() => {
 				<p class="backup-text">{{ nextBackupTimeDisplay }}</p>
 				<p class="backup-text">{{ backupsStatusStore.backupStatusText }}</p>
 			</div>
-				<UIButton id="btn-backup-now" :label="$t('backups.backupnow')"
+				<UIButton class="mt-2.5"
+				:label="$t('backups.backupnow')"
 				@click="backupNow"
 			/>
 		</div>
@@ -133,25 +137,15 @@ onMounted(() => {
 			:options="backupFolderSizeOptions"
 		/>
 
-	</div>
+	</TabContent>
 </template>
 
 <style scoped>
-.backups-button-container {
-	display: flex;
-	flex-direction: row;
-	justify-content: start;
-	gap: 10px;
-	margin: 10px 0;
-}
 
 .backup-text {
 	margin-top: 2px;
 	margin-bottom: 2px;
 }
 
-#btn-backup-now{
-	margin-top: 10px;
-}
 
 </style>

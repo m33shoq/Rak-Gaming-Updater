@@ -5,6 +5,7 @@ import { useUploadedFilesStore } from '@/renderer/store/UploadedFilesStore';
 import { useLoginStore } from '@/renderer/store/LoginStore';
 import { getElectronStoreRef } from '@/renderer/store/ElectronRefStore';
 
+import TabContent from '@/renderer/components/TabContent.vue';
 import UIButton from '@/renderer/components/Button.vue';
 import Checkbox from '@/renderer/components/Checkbox.vue';
 import ScrollFrame from '@/renderer/components/ScrollFrame.vue';
@@ -60,26 +61,21 @@ async function RefreshFiles() {
 </script>
 
 <template>
-	<div class="tab-content">
-		<div id="select-path-container">
-			<UIButton :label="$t('updater.setwowpath')" @click="selectUpdatePath" style="margin: 5px; margin-left: 0px;">
-			</UIButton>
-			<p id="selected-path" v-text="selectedPathDisplay"></p>
+	<TabContent>
+		<div class="flex flex-row items-center my-2.5">
+			<UIButton :label="$t('updater.setwowpath')" @click="selectUpdatePath" class="m-1 ml-0"/>
+			<p v-text="selectedPathDisplay"></p>
 		</div>
-		<div id="upater-frame-header">
-			<Checkbox :label="$t('updater.autoupdate')" v-model="autoUpdate" />
-			<UIButton :label="$t('updater.refresh')" @click="RefreshFiles" :class="{
-				normal: true,
-				disabled: fileRequestCooldown,
-}" />
+		<div class="flex justify-between items-center gap-2">
+			<Checkbox :label="$t('updater.autoupdate')" v-model="autoUpdate"/>
+			<UIButton :label="$t('updater.refresh')" @click="RefreshFiles" :disabled="fileRequestCooldown"/>
 		</div>
 		<ScrollFrame height="375">
 			<template #default>
 				<div v-for="fileData in uploadedFilesStore.getFiles"
 					:key="fileData.displayName + fileData.hash + fileData.relativePath + fileData.timestamp" :fileData
 					class="line-item">
-					<span class="line-item-element"
-						style="display: flex; flex-direction: column; align-items: flex-start;">
+					<span class="line-item-element flex flex-col items-start">
 						<span class="scroll-list-item-main-text">
 							{{ fileData.displayName }}
 
@@ -91,33 +87,17 @@ async function RefreshFiles() {
 					<span class="line-item-element">
 						{{ fileData.timestamp ? new Date(fileData.timestamp * 1000).toLocaleString() : 'Unknown' }}
 					</span>
-					<UIButton class="line-item-element"
+					<UIButton class="line-item-element w-54 justify-center-safe h-7/10"
 						:label="$t(uploadedFilesStore.getDownloadStatusText(fileData), { percent: fileData.percentDownloaded || 0 })"
 						@click="uploadedFilesStore.downloadFile(fileData)"
-						:class="{
-							normal: true,
-							disabled: uploadedFilesStore.getShouldDownload(fileData) == false,
-						}"
+						:disabled="!uploadedFilesStore.getShouldDownload(fileData)"
 					/>
 				</div>
 			</template>
 		</ScrollFrame>
-	</div>
+	</TabContent>
 </template>
 
 <style scoped>
-#select-path-container {
-	display: flex;
-	flex-direction: row;
-	align-items: center;
-	margin-bottom: 10px;
-	margin-top: 10px;
-}
-
-#upater-frame-header {
-	display: flex;
-	justify-content: space-between;
-	align-items: center;
-}
 
 </style>

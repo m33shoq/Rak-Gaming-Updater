@@ -11,7 +11,7 @@ const model = defineModel()
 </script>
 
 <template>
-	<input
+	<input class="placeholder:text-gray-500 placeholder:italic placeholder:select-none focus:outline-hidden focus:shadow-sm shadow-primary"
 		:class
 		:placeholder
 		:type
@@ -35,13 +35,4 @@ input {
 	white-space: nowrap;
 }
 
-input:focus {
-	outline: none;
-	border-color: #007ACC;
-	box-shadow: 0 0 2px rgba(0, 122, 204, 0.5);
-}
-
-input::placeholder {
-	user-select: none;
-}
 </style>
