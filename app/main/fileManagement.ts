@@ -8,13 +8,15 @@ import mainWindowWrapper from './MainWindowWrapper';
 import { getWoWPath, validateWoWPath } from './wowPathUtility';
 import { zipFile, unzipFile } from './zipHandler';
 
-import { SERVER_URL, SERVER_LOGIN_ENDPOINT, SERVER_UPLOADS_ENDPOINT, SERVER_EXISTING_FILES_ENDPOINT, SERVER_DOWNLOAD_ENDPOINT } from './serverEndpoints';
+import {
+	SERVER_URL,
+	SERVER_LOGIN_ENDPOINT,
+	SERVER_UPLOADS_ENDPOINT,
+	SERVER_EXISTING_FILES_ENDPOINT,
+	SERVER_DOWNLOAD_ENDPOINT
+} from './serverEndpoints';
 
-import { fileURLToPath } from "node:url";
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-// log.info('File:', __filename, 'Dir:', __dirname);
-const TEMP_DIR = path.join(app.getPath('appData'), 'temp'); // Temporary directory for unzipped/zipped files
+const TEMP_DIR = path.join(app.getPath('temp'), app.getName()); // Temporary directory for unzipped/zipped files
 
 // return file path for downloaded zip file
 export async function DownloadFile(fileData: FileData, retries = 3) {

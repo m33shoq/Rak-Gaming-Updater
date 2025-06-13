@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { ref } from 'vue';
 import log from 'electron-log/renderer'
-import { storeToRefs } from 'pinia';
 
 import UIButton from "@/renderer/components/Button.vue";
 import Input from '@/renderer/components/Input.vue';
@@ -9,7 +8,6 @@ import Input from '@/renderer/components/Input.vue';
 import { useLoginStore } from '@/renderer/store/LoginStore';
 
 const loginStore = useLoginStore();
-const { connectionError, disconnectReason } = storeToRefs(loginStore);
 
 const username = ref('');
 const password = ref('');
@@ -40,9 +38,9 @@ async function handleLogin() {
 		<Input type="text" placeholder="Username" v-model="username" />
 		<Input type="password" placeholder="Password" v-model="password" />
 		<UIButton :label="$t('login.login')" @click="handleLogin" style="margin-top: 15px;"> </UIButton>
-		<p id="disconnect-reason" class="error-text" v-text="disconnectReason && `Disconnected: ${disconnectReason}`">
+		<p id="disconnect-reason" class="error-text" v-text="loginStore.getDisconnectReason && `Disconnected: ${loginStore.getDisconnectReason}`">
 		</p>
-		<p id="login-error" class="error-text" v-text="connectionError && `Connection ${connectionError}`"></p>
+		<p id="login-error" class="error-text" v-text="loginStore.getConnectionError && `Connection ${loginStore.getConnectionError}`"></p>
 	</div>
 </template>
 

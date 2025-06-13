@@ -5,11 +5,7 @@ import crc32 from 'crc/crc32';
 import { zipFile, unzipFile } from './zipHandler';
 import log from 'electron-log/main';
 
-import { fileURLToPath } from "node:url";
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-log.info('File:', __filename, 'Dir:', __dirname);
-const TEMP_DIR = path.join(app.getPath('appData'), 'temp'); // Temporary directory for unzipped/zipped files
+const TEMP_DIR = path.join(app.getPath('temp'), app.getName()); // Temporary directory for unzipped/zipped files
 
 export async function GetFileData(filePath: string, relativePath: string): Promise<FileData> {
 	let fileName = path.basename(filePath);

@@ -33,12 +33,19 @@
 	"backups.openbackupspath": "Відкрити папку з бекапами",
 	"backups.backupspath": "Шлях для бекапів",
 	"backups.backupspath.notset": "Не встановлено",
-	"backups.backupssize": "Розмір бекапів",
+	"backups.foldersize": "Розмір бекапів",
+	"backups.foldersize.inprogress": "В процесі...",
 	"backups.lastbackuptime": "Останній бекап зроблено",
 	"backups.lastbackuptime.never": "Ніколи",
+	"backups.nextbackup": "Час наступного бекапу",
 	"backups.backupnow": "Зробити бекап зараз",
 	"backups.maxbackupsfoldersize": "Макс. розмір папки з бекапами",
-	"backups.status.inprogress": "В процесі...",
-	"backups.status.nofolder": "Папку з бекапами не знайдено",
-	"backups.status.error": "Помилка при перевірці розміру папки з бекапами"
+	"backups.error.nofolder": "Папку з бекапами не знайдено",
+	"backups.status.error": "Помилка при перевірці розміру папки",
+	"backups.status.disabled": "Бекапи вимкнено",
+	"backups.status.deletingold": "Видалення старих бекапів",
+	"backups.status.creating": "Створення бекапу",
+	"backups.status.completed": "Бекап завершено",
+	"backups.status.failed": "Помилка бекапу",
+	"backups.status.deleted": "Старий бекап видалено"
 }

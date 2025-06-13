@@ -33,12 +33,19 @@
 	"backups.openbackupspath": "백업 폴더 열기",
 	"backups.backupspath": "백업 경로",
 	"backups.backupspath.notset": "설정되지 않음",
-	"backups.backupssize": "백업 크기",
+	"backups.foldersize": "백업 크기",
+	"backups.foldersize.inprogress": "진행 중...",
 	"backups.lastbackuptime": "마지막 백업 시간",
 	"backups.lastbackuptime.never": "없음",
+	"backups.nextbackup": "다음 백업 시간",
 	"backups.backupnow": "지금 백업",
 	"backups.maxbackupsfoldersize": "최대 백업 폴더 크기",
-	"backups.status.inprogress": "진행 중...",
-	"backups.status.nofolder": "백업 폴더를 찾을 수 없음",
-	"backups.status.error": "백업 폴더 크기 확인 오류"
+	"backups.error.nofolder": "백업 폴더를 찾을 수 없음",
+	"backups.status.error": "백업 폴더 크기 확인 오류",
+	"backups.status.disabled": "백업이 비활성화됨",
+	"backups.status.deletingold": "이전 백업 삭제 중",
+	"backups.status.creating": "백업 생성 중",
+	"backups.status.completed": "백업 완료",
+	"backups.status.failed": "백업 실패",
+	"backups.status.deleted": "이전 백업 삭제됨"
 }

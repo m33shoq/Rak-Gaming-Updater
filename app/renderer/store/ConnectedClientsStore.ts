@@ -1,4 +1,5 @@
 import { defineStore } from 'pinia';
+import { ref, computed } from 'vue';
 
 type clientInfo = {
 	id: string;
@@ -16,18 +17,28 @@ type clientInfo = {
 // dummyClientInfoArray = [...dummyClientInfoArray, ...dummyClientInfoArray, ...dummyClientInfoArray]
 
 
-export const useConnectedClientsStore = defineStore('connectedClients', {
-	state: () => ({
-		connectedClients: [] as Array<clientInfo>,
-	}),
+	// connected clients for status tab
 
-	getters: {
-		getClients: (state) => state.connectedClients,
-	},
+export const useConnectedClientsStore = defineStore('connectedClients', () => {
+	const connectedClients = ref<Array<clientInfo>>([]);
 
-	actions: {
-		setClients: function (clients: Array<clientInfo>) {
-			this.connectedClients = clients;
-		}
-	},
+	const getClients = computed(() => connectedClients.value);
+
+	function setClients(clients: Array<clientInfo>) {
+		connectedClients.value = clients;
+	}
+
+	api.IR_onConnectedClients((event, clients) => {
+		setClients(clients);
+	});
+
+
+	return {
+		connectedClients,
+		getClients,
+		setClients,
+	};
+
+
 });
+

@@ -16,7 +16,7 @@ export function getElectronStoreRef<T>(key: string, defaultValue: T): ElectronSt
 	api.store.get(key).then((value: T) => {
 		refValue.value = value;
 		watch(refValue, (newValue) => {
-			//   log.info(`Updating store value for key "${key}":`, newValue);
+			log.info(`Updating store value for key "${key}":`, newValue, typeof newValue);
 			api.store.set(key, newValue).catch((error: any) => {
 				log.error(`Failed to set store value for key "${key}":`, error);
 			});

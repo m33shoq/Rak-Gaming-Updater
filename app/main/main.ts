@@ -1,30 +1,24 @@
-
-import { fileURLToPath } from "node:url";
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
-import log from 'electron-log/main';
-log.transports.file.level = 'info';
-log.initialize({ preload: true });
-
 import dotenv from 'dotenv';
 dotenv.config();
 
 import { app, BrowserWindow, ipcMain, dialog, Tray, Menu, nativeImage, protocol, shell, Notification, net } from 'electron';
 import { autoUpdater } from 'electron-updater';
+import log from 'electron-log/main';
+import Socket from 'socket.io-client';
 import AbortController from 'abort-controller';
 import { jwtDecode } from 'jwt-decode';
 import fs from 'fs';
 import fsp from 'fs/promises';
 import path from 'path';
 import validator from 'validator';
+import { fileURLToPath } from "node:url";
 
-import { GetFileData, CalculateHashForPath } from './fileDataUtility';
-import { zipFile, unzipFile } from './zipHandler';
-import { DownloadFile, InstallFile } from './fileManagement';
-import { getWoWPath, validateWoWPath } from './wowPathUtility';
-import mainWindowWrapper from './MainWindowWrapper';
-import store from './store';
+import { GetFileData, CalculateHashForPath } from '@/main/fileDataUtility';
+import { zipFile, unzipFile } from '@/main/zipHandler';
+import { DownloadFile, InstallFile } from '@/main/fileManagement';
+import { getWoWPath, validateWoWPath } from '@/main/wowPathUtility';
+import mainWindowWrapper from '@/main/MainWindowWrapper';
+import store from '@/main/store';
 
 import {
 	SERVER_URL,
@@ -32,7 +26,7 @@ import {
 	SERVER_UPLOADS_ENDPOINT,
 	SERVER_EXISTING_FILES_ENDPOINT,
 	SERVER_DOWNLOAD_ENDPOINT
-} from './serverEndpoints';
+} from '@/main/serverEndpoints';
 
 import {
 	DOWNLOAD_REASON_NO_PATH_SET,
@@ -40,13 +34,35 @@ import {
 	DOWNLOAD_REASON_UPDATE,
 	DOWNLOAD_REASON_INSTALL,
 	DOWNLOAD_REASON_UP_TO_DATE,
+	BACKUPS_ERROR_NO_PATH_SET,
+	BACKUP_STATUS_DISABLED,
+	BACKUP_STATUS_DELETING_OLD,
+	BACKUP_STATUS_CREATING,
+	BACKUP_STATUS_COMPLETED,
+	BACKUP_STATUS_FAILED,
+	BACKUP_STATUS_DELETED,
+	BACKUP_INTERVAL_ONE_WEK
 } from '@/constants'
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+log.transports.file.level = 'info';
+log.initialize({ preload: true });
+
+process.on("uncaughtException", (error) => {
+  log.error("uncaughtException", error);
+});
+
+process.on("unhandledRejection", (error) => {
+  log.error("unhandledRejection", error);
+});
+
 
 let isQuiting = false;
 
-const TEMP_DIR = path.join(app.getPath('appData'), 'temp'); // Temporary directory for unzipped/zipped files
+const TEMP_DIR = path.join(app.getPath('temp'), app.getName()); // Temporary directory for unzipped/zipped files
 
-import Socket from 'socket.io-client';
 const socket = Socket(SERVER_URL, { autoConnect: false });
 
 const isDev = process.env.npm_lifecycle_event === 'app:dev' ? true : false;
@@ -591,7 +607,7 @@ async function getFolderSize(folderPath: string, signal: AbortSignal): Promise<s
 
 	await calculateSize(folderPath);
 	const totalSizeInMB = totalSize / (1024 * 1024); // Convert bytes to megabytes
-	console.log('Total size:', totalSizeInMB.toFixed(2), 'MB');
+	log.info('Total size:', totalSizeInMB.toFixed(2), 'MB');
 	return totalSizeInMB.toFixed(2); // Return size in MB with 2 decimal places
 }
 
@@ -605,8 +621,8 @@ ipcMain.handle('get-size-of-backups-folder', async () => {
 
 	const folderPath = store.get('backupsPath');
 	if (!folderPath) {
-		console.log('No path set');
-		return { error: 'No path set' };
+		log.info('get-size-of-backups-folder: No path set');
+		return { error: BACKUPS_ERROR_NO_PATH_SET };
 	}
 
 	try {
@@ -624,7 +640,7 @@ ipcMain.handle('get-size-of-backups-folder', async () => {
 
 ipcMain.on('open-backups-folder', async (event) => {
 	const folderPath = store.get('backupsPath');
-	console.log('Opening backups folder:', folderPath);
+	log.info('Opening backups folder:', folderPath);
 	if (folderPath) {
 		shell.openPath(folderPath);
 	}
@@ -703,13 +719,14 @@ ipcMain.on('request-file', async (event, fileData) => {
 			await fsp.rm(zipPath, { recursive: false });
 		}
 	} catch (error) {
-		console.log('Error requesting file:', error);
+		log.info('Error requesting file:', error);
 	}
 });
 
 socket.on('connect', () => {
 	log.info('Connected to server');
 	mainWindow?.webContents.send('connect');
+	InitiateBackup(false);
 });
 
 // in case of something cursed happens we try to reconnect every 1 sec for 15 times
@@ -992,7 +1009,7 @@ async function DeleteOverSizeBackupFiles() {
 		await fsp.rm(filePath, { recursive: true });
 		deletedSize += file.size;
 		log.info('Deleted:', filePath);
-		UpdateBackupStatus('Backup deleted: ' + filePath);
+		UpdateBackupStatus(BACKUP_STATUS_DELETED, filePath);
 		if (totalSize - deletedSize < maxSise) {
 			break;
 		}
@@ -1033,11 +1050,8 @@ async function BackupWTFFolder() {
 }
 
 let isBackupRunning = false;
-const ONE_WEEK = 1000 * 60 * 60 * 24 * 7;
-// const ONE_MINUTE = 1000 * 60;
-
-function UpdateBackupStatus(status: string) {
-	mainWindow?.webContents.send('backup-status', status);
+function UpdateBackupStatus(status: string, desc?: string) {
+	mainWindow?.webContents.send('backup-status', { status, desc });
 }
 
 let backupProgressTimer: NodeJS.Timeout | null = null;
@@ -1047,7 +1061,7 @@ function ScheduleBackupStatus(status: string) {
 	}
 	let c = 1;
 	backupProgressTimer = setInterval(() => {
-		UpdateBackupStatus(status + '.'.repeat(c));
+		UpdateBackupStatus(status, '.'.repeat(c));
 		c++;
 		if (c > 3) c = 1;
 	}, 500);
@@ -1067,40 +1081,34 @@ async function InitiateBackup(force: boolean) {
 	const backupsEnabled = store.get('backupsEnabled');
 	if (!backupsEnabled && !force) {
 		log.info('Backups are disabled, skipping');
-		UpdateBackupStatus('Backups are disabled');
+		UpdateBackupStatus(BACKUP_STATUS_DISABLED);
 		return;
 	}
 	log.info('Initiating backup');
 
 	const lastBackup = store.get('lastBackupTime');
 	// 1 week
-	const backupInterval = ONE_WEEK;
 	const now = Date.now();
-	if (force || !lastBackup || now - lastBackup > backupInterval) {
+	if (force || !lastBackup || now - lastBackup > BACKUP_INTERVAL_ONE_WEK) {
 		isBackupRunning = true;
 		try {
-			ScheduleBackupStatus('Deleting old backups');
+			ScheduleBackupStatus(BACKUP_STATUS_DELETING_OLD);
 			await DeleteOverSizeBackupFiles();
-			ScheduleBackupStatus('Creating backup');
+			ScheduleBackupStatus(BACKUP_STATUS_CREATING);
 			await BackupWTFFolder();
 			store.set('lastBackupTime', now);
-			ScheduleBackupStatus('Deleting old backups');
+			ScheduleBackupStatus(BACKUP_STATUS_DELETING_OLD);
 			await DeleteOverSizeBackupFiles();
-			UpdateBackupStatus('Backup completed!');
-		} catch (error) {
+			UpdateBackupStatus(BACKUP_STATUS_COMPLETED);
+		} catch (error: any) {
 			log.error('Error during backup:', error);
-			UpdateBackupStatus('Backup failed ' + error);
+			UpdateBackupStatus(BACKUP_STATUS_FAILED, error?.message || 'Unknown error');
 		} finally {
 			isBackupRunning = false;
 			if (backupProgressTimer) {
 				clearInterval(backupProgressTimer);
 			}
 		}
-	} else {
-		const nextBackup = lastBackup + backupInterval;
-		const date = new Date(nextBackup);
-		UpdateBackupStatus('Next backup will be done: ' + date.toLocaleString());
-		console.log('Next backup in:', date.toLocaleString());
 	}
 }
 
