@@ -646,6 +646,15 @@ ipcMain.on('open-backups-folder', async (event) => {
 	}
 });
 
+ipcMain.on('open-logs-folder', async () => {
+	log.info('Main: Opening logs folder');
+	const logsPath = app.getPath('logs')
+	if (logsPath) {
+		shell.openPath(logsPath);
+	}
+
+});
+
 ipcMain.handle('login', async (event, { username, password }) => {
 	try {
 		const sanitizedUsername = sanitizeInput(username); // Implement sanitizeInput to sanitize user inputs
@@ -970,6 +979,10 @@ data = {
 */
 
 async function DeleteOverSizeBackupFiles() {
+	if (true) {
+		log.info('Skipping backup deletion in development mode');
+		return;
+	}
 	const backupsPath = store.get('backupsPath');
 	if (!backupsPath) {
 		log.error('Backups path not set');

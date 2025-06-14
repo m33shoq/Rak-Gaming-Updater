@@ -39,7 +39,7 @@ async function handleLogin() {
 		<h1 class="font-bold text-3xl">Login</h1>
 		<Input type="text" placeholder="Username" v-model="username" />
 		<Input type="password" placeholder="Password" v-model="password" />
-		<UIButton :label="$t('login.login')" @click="handleLogin" style="margin-top: 15px;"> </UIButton>
+		<UIButton :label="$t('login.login')" @click="handleLogin" class="mt-4 min-w-60"> </UIButton>
 		<p id="disconnect-reason" class="error-text" v-text="loginStore.getDisconnectReason && `Disconnected: ${loginStore.getDisconnectReason}`">
 		</p>
 		<p id="login-error" class="error-text" v-text="loginStore.getConnectionError && `Connection ${loginStore.getConnectionError}`"></p>

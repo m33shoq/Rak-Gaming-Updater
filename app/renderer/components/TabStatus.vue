@@ -15,7 +15,7 @@ const connectedClientsStore = useConnectedClientsStore();
 		<ScrollFrame height="450">
 			<template #default>
 				<div v-for="client in connectedClientsStore.getClients" :key="client.id"
-					class="line-item mini">
+					class="line-item mini dark:bg-dark4 bg-light4">
 					<span class="line-item-element select-text">
 						{{ client.id }} - {{ client.username }} - {{ client.role || '' }}
 					</span>

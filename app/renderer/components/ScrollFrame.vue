@@ -7,19 +7,18 @@ defineProps<{
 </script>
 
 <template>
-	<div class="scroll-frame" :style="{ height: `${height}px` }">
-		<slot />
+	<div class="scroll-frame dark:bg-dark2 bg-light2" :style="{ height: `${height}px` }"
+	>
+		<slot/>
 	</div>
 </template>
 
 <style>
 .scroll-frame {
-	background-color: #1E1E1E;
 	color: #FFFFFF;
 	margin-top: 15px;
 	overflow-y: auto;
 	border-radius: 6px;
-	border: 1px solid #3a3a3a;
 }
 
 .scroll-frame::-webkit-scrollbar {
@@ -45,10 +44,10 @@ defineProps<{
 	display: grid;
 	grid-template-columns: 1fr auto auto;
 	align-items: center;
-	background-color: #2E2E2E;
-	margin: 4px;
+	/* background-color: #2E2E2E; */
+	margin: 5px;
 	border-radius: 6px;
-	border: 1px solid #444;
+	/* border: 1px solid #444; */
 	height: 66px;
 }
 
@@ -63,8 +62,8 @@ defineProps<{
 .scroll-list-item-main-text {
 	font-weight: bold;
 }
-.scroll-list-item-secondary-text {
-	font-size: 0.9em;
-	color: #888;
-}
+/* .scroll-list-item-secondary-text { */
+	/* font-size: 0.9em; */
+	/* color: #888; */
+/* } */
 </style>

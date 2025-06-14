@@ -22,6 +22,7 @@
 	"settings.winstartup": "Windows 시작할 때 시작",
 	"settings.winminimized": "최소화 상태로 시작",
 	"settings.exitonclose": "닫기 버튼을 누를 때 최소화하지 않고 애플리케이션 종료",
+	"settings.darkmode": "어두운 모드",
 	"pusher.setrelativepath": "상대 경로 설정",
 	"pusher.relativepath": "상대 경로",
 	"pusher.relativepath.notset": "설정되지 않음",

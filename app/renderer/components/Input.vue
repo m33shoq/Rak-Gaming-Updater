@@ -11,7 +11,7 @@ const model = defineModel()
 </script>
 
 <template>
-	<input class="placeholder:text-gray-500 placeholder:italic placeholder:select-none focus:outline-hidden focus:shadow-sm shadow-primary"
+	<input class="placeholder:text-gray-500 placeholder:text-sm placeholder: placeholder:select-none focus:outline-hidden focus:shadow-sm shadow-primary"
 		:class
 		:placeholder
 		:type

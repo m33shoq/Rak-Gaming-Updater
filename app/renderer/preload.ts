@@ -67,6 +67,7 @@ contextBridge.exposeInMainWorld('api', {
 	requestFile: (data: FileData) => ipcRenderer.send('request-file', data),
 	shouldDownloadFile: (data: FileData) => ipcRenderer.invoke('should-download-file', data),
 	getSizeOfBackupsFolder: () => ipcRenderer.invoke('get-size-of-backups-folder'),
+	IR_OpenLogsFolder: () => ipcRenderer.send('open-logs-folder'),
 	IR_openBackupsFolder: () => ipcRenderer.send('open-backups-folder'),
 	IR_onBackupCreated: (callback: (event: Electron.IpcRendererEvent, ...args: any[]) => void) => ipcRenderer.on('backup-created', callback),
 	IR_InitiateBackup: (force: boolean) => ipcRenderer.send('initiate-backup', force),
