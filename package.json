@@ -11,6 +11,7 @@
 		"app:dev": "vite",
 		"app:build": "vue-tsc && vite build && electron-builder",
 		"app:preview": "vue-tsc && vite build && electron .",
+		"app:publish": "vue-tsc && vite build && electron-builder --publish always",
 		"app:dev?": "npm run cmp && concurrently vite \" electron .\" \"tsc -w\"",
 		"cmp": "rimraf dist/ && tsc && copyfiles -V -u 1 \"app/**/*\" -e \"**/*.ts\" dist/ && echo \"Compiled to dist/\"",
 		"prestart": "npm run cmp",
