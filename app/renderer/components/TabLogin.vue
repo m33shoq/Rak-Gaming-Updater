@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import { ref } from 'vue';
 import log from 'electron-log/renderer'
 
-import TabContent from '@/renderer/components/TabContent.vue';
+import { ref, onMounted, onBeforeUnmount, watch } from 'vue';
 
+import TabContent from '@/renderer/components/TabContent.vue';
 import UIButton from "@/renderer/components/Button.vue";
 import Input from '@/renderer/components/Input.vue';
 
@@ -13,6 +13,8 @@ const loginStore = useLoginStore();
 
 const username = ref('');
 const password = ref('');
+const connectionErrorDisplay = ref('');
+let connectionErrorInterval: NodeJS.Timeout | null = null;
 
 async function handleLogin() {
 	log.info('Login attempt with:', username.value, password.value);
@@ -32,24 +34,63 @@ async function handleLogin() {
 	}
 }
 
+function updateConnectionErrorDisplay() {
+	if (loginStore.connectionErrorAt) {
+		connectionErrorDisplay.value = `${loginStore.getConnectionError} (${Math.floor((Date.now() - loginStore.connectionErrorAt) / 1000)} sec ago)`;
+	} else {
+		connectionErrorDisplay.value = '';
+	}
+}
+
+watch(() => loginStore.connectionErrorAt, (newVal) => {
+	if (newVal) {
+		updateConnectionErrorDisplay();
+		if (!connectionErrorInterval) {
+			connectionErrorInterval = setInterval(updateConnectionErrorDisplay, 1000);
+		}
+	} else if (connectionErrorInterval) {
+		clearTimeout(connectionErrorInterval);
+		connectionErrorInterval = null;
+		connectionErrorDisplay.value = '';
+	}
+});
+
+onMounted(() => {
+	if (loginStore.connectionErrorAt) {
+		connectionErrorInterval = setInterval(updateConnectionErrorDisplay, 1000);
+	}
+});
+
+onBeforeUnmount(() => {
+	if (connectionErrorInterval) {
+		clearTimeout(connectionErrorInterval);
+		connectionErrorInterval = null;
+	}
+});
+
 </script>
 
 <template>
 	<TabContent>
-		<h1 class="font-bold text-3xl">Login</h1>
-		<Input type="text" placeholder="Username" v-model="username" />
-		<Input type="password" placeholder="Password" v-model="password" />
-		<UIButton :label="$t('login.login')" @click="handleLogin" class="mt-4 min-w-60"> </UIButton>
+		<div class="flex flex-col items-center-safe justify-center h-3/4">
+			<Input class="min-w-100"
+				type="text"
+				:placeholder="$t('login.username')"
+				v-model="username"
+			/>
+			<Input class="min-w-100"
+				type="password"
+				:placeholder="$t('login.password')"
+				v-model="password"
+			/>
+			<UIButton :label="$t('login.login')" @click="handleLogin" class="mt-4 h-9 w-50"> </UIButton>
+		</div>
 		<p id="disconnect-reason" class="error-text" v-text="loginStore.getDisconnectReason && `Disconnected: ${loginStore.getDisconnectReason}`">
 		</p>
-		<p id="login-error" class="error-text" v-text="loginStore.getConnectionError && `Connection ${loginStore.getConnectionError}`"></p>
+		<p id="login-error" class="error-text" v-text="connectionErrorDisplay"></p>
 	</TabContent>
 </template>
 
 <style scoped>
 
-.error-text {
-	color: #FF9494;
-	margin-top: 10px;
-}
 </style>

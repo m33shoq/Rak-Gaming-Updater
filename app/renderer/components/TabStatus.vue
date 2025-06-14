@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import TabContent from '@/renderer/components/TabContent.vue';
-import ScrollFrame from './ScrollFrame.vue';
+import ScrollFrame from '@/renderer/components/ScrollFrame.vue';
+
 import { useConnectedClientsStore } from '@/renderer/store/ConnectedClientsStore';
 
 const connectedClientsStore = useConnectedClientsStore();

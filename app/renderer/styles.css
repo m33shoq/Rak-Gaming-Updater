@@ -19,9 +19,14 @@
 
 @custom-variant dark (&:where(.dark, .dark *));
 
+@layer components {
+	.error-text {
+		@apply dark:text-red-500 text-red-500;
+	}
+}
+
 body {
   font-weight: 600;
-  /* color: #ffffff; */
   overflow: hidden;
   user-select: none;
 }

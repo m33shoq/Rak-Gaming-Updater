@@ -1,9 +1,6 @@
 <script setup lang="ts">
 defineProps<{
-	class?: object;
-	change?: () => void;
-	placeholder?: string;
-	type?: string;
+	placeholder: string;
 }>();
 
 const model = defineModel()
@@ -11,11 +8,24 @@ const model = defineModel()
 </script>
 
 <template>
-	<input class="placeholder:text-gray-500 placeholder:text-sm placeholder: placeholder:select-none focus:outline-hidden focus:shadow-sm shadow-primary"
-		:class
+	<input class="
+	dark:bg-dark4 dark:hover:bg-dark4/80
+	bg-light4 hover:bg-light4/80
+	p-2
+	m-1
+	w-60
+	cursor-text
+	whitespace-nowrap
+	text-white
+	rounded-md
+	placeholder:text-gray-300
+	placeholder:text-sm
+	placeholder:select-none
+	focus:outline-hidden
+	transition-all
+	ease-in
+"
 		:placeholder
-		:type
-		@change="change"
 		v-model="model"
 	>
 
@@ -23,7 +33,7 @@ const model = defineModel()
 </template>
 
 <style scoped>
-input {
+/* input {
 	width: 100%;
 	padding: 10px;
 	margin-top: 10px;
@@ -33,6 +43,6 @@ input {
 	color: #FFFFFF;
 	cursor: text;
 	white-space: nowrap;
-}
+} */
 
 </style>

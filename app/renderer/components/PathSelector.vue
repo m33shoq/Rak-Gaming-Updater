@@ -2,7 +2,7 @@
 defineProps<{
 	click: () => void;
 	placeholder: string;
-	label?: string;
+	label: string;
 	title: string;
 }>();
 

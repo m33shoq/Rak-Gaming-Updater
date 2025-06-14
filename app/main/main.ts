@@ -979,10 +979,6 @@ data = {
 */
 
 async function DeleteOverSizeBackupFiles() {
-	if (true) {
-		log.info('Skipping backup deletion in development mode');
-		return;
-	}
 	const backupsPath = store.get('backupsPath');
 	if (!backupsPath) {
 		log.error('Backups path not set');

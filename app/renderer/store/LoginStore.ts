@@ -9,6 +9,7 @@ export const useLoginStore = defineStore('Login', () =>{
 		role: '' as string,
 		disconnectReason: '' as string,
 		connectionError: '' as string,
+		connectionErrorAt: 0 as number,
 	})
 
 	const isConnected = computed(() => state.value.isSocketConnected);
@@ -17,6 +18,7 @@ export const useLoginStore = defineStore('Login', () =>{
 	const getDisconnectReason = computed(() => state.value.disconnectReason);
 	const getConnectionError = computed(() => state.value.connectionError);
 	const isAdmin = computed(() => state.value.isSocketConnected && state.value.role === 'admin');
+	const connectionErrorAt = computed(() => state.value.connectionErrorAt);
 
 	function setConnected(isSocketConnected: boolean) {
 		if (state.value.isSocketConnected === isSocketConnected) return;
@@ -36,6 +38,11 @@ export const useLoginStore = defineStore('Login', () =>{
 	}
 	function setConnectionError(error: string) {
 		state.value.connectionError = error;
+		if (error) {
+			state.value.connectionErrorAt = Date.now();
+		} else {
+			state.value.connectionErrorAt = 0;
+		}
 	}
 
 	api.socket_on_connect(async () => {
@@ -74,5 +81,6 @@ export const useLoginStore = defineStore('Login', () =>{
 		getDisconnectReason,
 		getConnectionError,
 		isAdmin,
+		connectionErrorAt,
 	};
 });
