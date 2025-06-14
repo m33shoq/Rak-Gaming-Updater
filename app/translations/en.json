@@ -22,6 +22,8 @@
 	"settings.winstartup": "Start with Windows",
 	"settings.winminimized": "Start minimized",
 	"settings.exitonclose": "Close the application instead of minimizing when clicking close",
+	"settings.darkmode": "Dark Mode",
+	"settings.openlogs": "Open Logs Folder",
 	"pusher.setrelativepath": "Set Relative Path",
 	"pusher.relativepath": "Relative Path",
 	"pusher.relativepath.notset": "Not set",

@@ -22,6 +22,8 @@
 	"settings.winstartup": "Запускати з Windows",
 	"settings.winminimized": "Запускати згорнутим",
 	"settings.exitonclose": "Закрити програму замість згортання при натисканні на закриття",
+	"settings.darkmode": "Темна тема",
+	"settings.openlogs": "Відкрити папку з логами",
 	"pusher.setrelativepath": "Встановити відносний шлях",
 	"pusher.relativepath": "Відносний шлях",
 	"pusher.relativepath.notset": "Не встановлено",

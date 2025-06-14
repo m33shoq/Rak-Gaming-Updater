@@ -13,6 +13,7 @@ interface StoreSchema {
   backupsFolderPath: string | null;
   backupsPath: string | null;
   lastBackupTime: number | null;
+  darkMode?: boolean;
 }
 
 const store = new Store<StoreSchema>({
@@ -29,6 +30,7 @@ const store = new Store<StoreSchema>({
     backupsFolderPath: null,
 	backupsPath: null,
 	lastBackupTime: null,
+	darkMode: true,
   },
 });
 

@@ -17,12 +17,14 @@ import { useLoginStore } from '@/renderer/store/LoginStore';
 import { useUploadedFilesStore } from '@/renderer/store/UploadedFilesStore';
 import { useConnectedClientsStore } from '@/renderer/store/ConnectedClientsStore';
 import { useBackupStatusStore } from '@/renderer/store/BackupStatusStore';
+import { getElectronStoreRef } from '@/renderer/store/ElectronRefStore';
 
 // initialize all stores
 const loginStore = useLoginStore();
 const uploadedFilesStore = useUploadedFilesStore();
 const connectedClientsStore = useConnectedClientsStore();
 const backupStatusStore = useBackupStatusStore();
+const darkMode = getElectronStoreRef('darkMode', true);
 
 const appVersion = ref('x.x.x');
 const appReleseType = ref('unknown');
@@ -68,45 +70,40 @@ onMounted(async () => {
 </script>
 
 <template>
-	<div id="title-container" class="m-0 flex items-center justify-between w-full p-0 drag">
-		<div class="flex items-center gap-2">
-			<img :src="icon" alt="icon" class="h-[3em] mx-1 vertical-align align-middle" />
-			<h1 class="font-bold text-3xl bg-gradient-to-r from-sky-600 via-blue-500 to-blue-600 text-transparent bg-clip-text animate-gradient">RG Updater</h1>
+	<div class="m-0 p-0 text-base  font-main h-full w-full
+	dark:bg-dark1 dark:text-gray-50
+	bg-light1 text-black" :class="{'dark': darkMode}">
+		<div id="title-container" class="m-0 flex items-center justify-between w-full p-0 drag">
+			<div class="flex items-center gap-2">
+				<img :src="icon" alt="icon" class="h-[3em] mx-1 vertical-align align-middle" />
+				<h1 class="font-bold text-3xl bg-gradient-to-r from-sky-600 via-blue-500 to-blue-600 text-transparent bg-clip-text animate-gradient">RG Updater</h1>
+			</div>
+			<div id="tab-buttons-container" v-show="loginStore.isConnected">
+				<ButtonTab v-for="tab in tabs"
+					:key="tab.name"
+					:label="$t(tab.label)"
+					@click="selectTab(tab.name)"
+					v-show="!tab.adminOnly || loginStore.isAdmin"
+					:disabled="selectedTab === tab.name"
+				/>
+			</div>
+			<WinButtons />
 		</div>
-		<div id="tab-buttons-container" v-show="loginStore.isConnected">
-			<ButtonTab v-for="tab in tabs"
-				:key="tab.name"
-				:label="$t(tab.label)"
-				@click="selectTab(tab.name)"
-				v-show="!tab.adminOnly || loginStore.isAdmin"
-				:disabled="selectedTab === tab.name"
-			/>
-		</div>
-		<WinButtons />
+		<TabLogin v-if="selectedTab === 'login'" />
+		<TabUpdater v-else-if="selectedTab === 'main'"/>
+		<TabPusher v-else-if="selectedTab === 'pusher' && loginStore.isAdmin" />
+		<TabSettings v-else-if="selectedTab === 'settings'" />
+		<TabStatus v-else-if="selectedTab === 'status' && loginStore.isAdmin" />
+		<TabBackups v-else-if="selectedTab === 'backups'" />
+		<footer class="text-center p-1 absolute bottom-0 flex justify-between w-full text-sm
+		dark:bg-dark1 text-neutral-500 font-medium
+		bg-light1">
+			<p>{{ loginStore.isConnected ? `Logged as: ${loginStore.getUsername} ${loginStore.getRole}` : '' }}</p>
+			<p>Rak Gaming Updater {{ appVersion }}-{{ appReleseType }} by m33shoq</p>
+		</footer>
 	</div>
-	<TabLogin v-if="selectedTab === 'login'" />
-	<TabUpdater v-else-if="selectedTab === 'main'"/>
-	<TabPusher v-else-if="selectedTab === 'pusher' && loginStore.isAdmin" />
-	<TabSettings v-else-if="selectedTab === 'settings'" />
-	<TabStatus v-else-if="selectedTab === 'status' && loginStore.isAdmin" />
-	<TabBackups v-else-if="selectedTab === 'backups'" />
-	<footer class="bg-dark1 text-neutral-500 text-center p-1 absolute bottom-0 flex justify-between w-full text-sm">
-		<p>{{ loginStore.isConnected ? `Logged as: ${loginStore.getUsername} ${loginStore.getRole}` : '' }}</p>
-		<p>Rak Gaming Updater {{ appVersion }}-{{ appReleseType }} by m33shoq</p>
-	</footer>
 </template>
 
 <style>
-
-body {
-	font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-	font-weight: 400;
-	background-color: #181818;
-	color: #E0E0E0;
-	padding: 0;
-	margin: 0;
-	overflow: hidden;
-	user-select: none;
-}
 
 </style>
