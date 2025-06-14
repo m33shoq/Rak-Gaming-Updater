@@ -60,7 +60,7 @@ export async function DownloadFile(fileData: FileData, retries = 3) {
 							mainWindowWrapper.webContents?.send('file-chunk-received', fileData, percent);
 							if (percent % 5 === 0 && percentMod !== percent) {
 								percentMod = percent;
-								log.debug(`Write: [${percent}] ${size}`);
+								log.info(`Write ${fileData.displayName}: [${percent}] ${size}`);
 							}
 						});
 					});

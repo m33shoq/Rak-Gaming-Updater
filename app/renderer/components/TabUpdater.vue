@@ -1,9 +1,7 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue';
 import log from 'electron-log/renderer';
-import { useUploadedFilesStore } from '@/renderer/store/UploadedFilesStore';
-import { useLoginStore } from '@/renderer/store/LoginStore';
-import { getElectronStoreRef } from '@/renderer/store/ElectronRefStore';
+
+import { ref } from 'vue';
 
 import TabContent from '@/renderer/components/TabContent.vue';
 import UIButton from '@/renderer/components/Button.vue';
@@ -11,8 +9,9 @@ import Checkbox from '@/renderer/components/Checkbox.vue';
 import ScrollFrame from '@/renderer/components/ScrollFrame.vue';
 import PathSelector from '@/renderer/components/PathSelector.vue';
 
-import { useI18n } from 'vue-i18n'
-const { t } = useI18n()
+import { useUploadedFilesStore } from '@/renderer/store/UploadedFilesStore';
+import { useLoginStore } from '@/renderer/store/LoginStore';
+import { getElectronStoreRef } from '@/renderer/store/ElectronRefStore';
 
 const loginStore = useLoginStore();
 const uploadedFilesStore = useUploadedFilesStore();
@@ -21,9 +20,6 @@ const selectedPath = ref('');
 api.IR_GetWoWPath().then((path) => {
 	log.info('Initial WoW path:', path);
 	selectedPath.value = path || '';
-});
-const selectedPathDisplay = computed(() => {
-	return `${t('updater.wowpath')}: ${selectedPath.value || t('updater.wowpath.notset')}`;
 });
 
 async function selectUpdatePath() {
@@ -45,11 +41,6 @@ const autoUpdate = getElectronStoreRef('autoUpdate', false)
 const fileRequestCooldown = ref(false);
 
 async function RefreshFiles() {
-	if (!loginStore.isConnected) {
-		log.warn('Not connected to server, cannot refresh files');
-		return;
-	}
-
 	fileRequestCooldown.value = true;
 	setTimeout(() => {
 		fileRequestCooldown.value = false;
@@ -63,7 +54,7 @@ async function RefreshFiles() {
 
 <template>
 	<TabContent>
-		<div class="min-h-26">
+		<div class="max-h-26">
 			<div class="flex flex-row items-center my-2.5">
 				<PathSelector
 					:title="$t('updater.wowpath')"
@@ -77,20 +68,27 @@ async function RefreshFiles() {
 				<UIButton :label="$t('updater.refresh')" @click="RefreshFiles" :disabled="fileRequestCooldown"/>
 			</div>
 		</div>
-		<ScrollFrame height="375">
-			<template #default>
-				<div v-for="fileData in uploadedFilesStore.getFiles"
+		<template v-if="!uploadedFilesStore.getFiles.length">
+			<div class="flex items-center justify-center h-50 dark:text-gray-300 text-gray-500">
+				<span class="text-5xl font-bold text-center">
+					{{ $t('updater.nouploadedfiles') }}
+				</span>
+			</div>
+		</template>
+		<template v-else>
+			<ScrollFrame height="375">
+				<template #default>
+					<div v-for="fileData in uploadedFilesStore.getFiles"
 					:key="fileData.displayName + fileData.hash + fileData.relativePath + fileData.timestamp" :fileData
 					class="line-item dark:bg-dark4 bg-light4">
-					<span class="line-item-element flex flex-col items-start">
+					<div class="line-item-element flex flex-col items-start">
 						<span class="scroll-list-item-main-text">
 							{{ fileData.displayName }}
-
 						</span>
 						<span class="scroll-list-item-secondary-text text-sm dark:text-zinc-400 text-zinc-300 font-normal">
 							{{ fileData.relativePath }}
 						</span>
-					</span>
+					</div>
 					<span class="line-item-element">
 						{{ fileData.timestamp ? new Date(fileData.timestamp * 1000).toLocaleString() : 'Unknown' }}
 					</span>
@@ -98,10 +96,11 @@ async function RefreshFiles() {
 						:label="$t(uploadedFilesStore.getDownloadStatusText(fileData), { percent: fileData.percentDownloaded || 0 })"
 						@click="uploadedFilesStore.downloadFile(fileData)"
 						:disabled="!uploadedFilesStore.getShouldDownload(fileData)"
-					/>
-				</div>
-			</template>
-		</ScrollFrame>
+						/>
+					</div>
+				</template>
+			</ScrollFrame>
+		</template>
 	</TabContent>
 </template>
 

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import log from 'electron-log/renderer';
+
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue';
 
 const props = defineProps<{
@@ -56,7 +57,8 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-	<div class="dropdown flex flex-col mt-2 min-w-60 max-w-fit relative" >
+	<!-- class dropdown is required here for global mouse click tracking -->
+	<div class="dropdown flex flex-col mt-2 min-w-60 max-w-fit relative">
 		<label>{{ label }}:</label>
 		<button
 			:class="[
@@ -95,24 +97,6 @@ onBeforeUnmount(() => {
 			</div>
 		</div>
 	</div>
-
-	<!-- <div class="dropdown-container">
-		<label class="dropdown-outer-text">{{ label }}:</label>
-		<select class="text-white
-				dark:bg-dark4 dark:hover:bg-dark4/80
-				bg-light4 hover:bg-light4/80"
-			@change="change"
-			v-model="model"
-		>
-		<option v-for="option in options" class=""
-			:value="option.value"
-			:key="option.value"
-		>
-			{{ option.label }}
-		</option>
-			<slot/>
-		</select>
-	</div> -->
 </template>
 
 <style scoped>

@@ -58,14 +58,12 @@ watchEffect(() => {
 });
 
 
-
 onMounted(async () => {
 	const authInfo = await api.check_for_login();
 	if (authInfo) {
 		api.socket_connect();
 	}
 })
-
 
 </script>
 
@@ -98,7 +96,7 @@ onMounted(async () => {
 		<footer class="text-center p-1 absolute bottom-0 flex justify-between w-full text-sm
 		dark:bg-dark1 text-neutral-500 font-medium
 		bg-light1">
-			<p>{{ loginStore.isConnected ? `Logged as: ${loginStore.getUsername} ${loginStore.getRole}` : '' }}</p>
+			<p>{{ loginStore.isConnected ? `Logged as: ${loginStore.getUsername} ${loginStore.getRole || ''}` : '' }}</p>
 			<p>Rak Gaming Updater {{ appVersion }}-{{ appReleseType }} by m33shoq</p>
 		</footer>
 	</div>
