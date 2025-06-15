@@ -4,6 +4,8 @@
 	--font-main: 'Segoe UI', 'Tahoma', 'Geneva', 'Verdana', 'sans-serif';
 
 	--color-primary: var(--color-blue-500);
+	--color-primary-faded-dark: var(--color-sky-700);
+	--color-primary-faded-light: var(--color-sky-600);
 	--color-secondary: var(--color-amber-400);
 
 	--color-dark1: var(--color-gray-900);

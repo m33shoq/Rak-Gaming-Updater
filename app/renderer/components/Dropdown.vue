@@ -87,11 +87,18 @@ onBeforeUnmount(() => {
 				:style="{ height: toggled ? height : '0px' }"
 
 			>
-				<button v-for="option in options" class="text-white last:rounded-b-md p-0.5 px-4 text-left h-[24px] last:h-[28px] dark:hover:bg-dark3 hover:bg-light3 w-full whitespace-nowrap"
+				<button v-for="option in options" class="text-white last:rounded-b-md p-0.5 px-2 text-left h-[24px] last:h-[28px] dark:hover:bg-dark3 hover:bg-light3 w-full whitespace-nowrap relative"
 
 					:key="option.value"
+					:selected="model === option.value"
 					@click="selectOption(option.value)"
 				>
+					<div class="w-[3px] h-full absolute left-0 top-0 delay-150"
+					:class="{
+						'bg-secondary border-0 border-black': model === option.value,
+						'bg-transparent border-0 border-black': model !== option.value
+					}">
+					</div>
 					{{ option.label }}
 				</button>
 			</div>
