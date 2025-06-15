@@ -22,7 +22,9 @@ const props = defineProps<ButtonProps>()
 		min-h-8
 		font-semibold
 		text-white
-		disabled:opacity-75
+		disabled:bg-sky-600
+		dark:disabled:bg-sky-700
+		disabled:text-gray-300
 		disabled:pointer-events-none
 		hover:bg-indigo-400
 		text-center
