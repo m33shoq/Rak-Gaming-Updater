@@ -51,7 +51,6 @@ contextBridge.exposeInMainWorld('api', {
 	IR_sendLogin: (credentials: { username: string; password: string }) => ipcRenderer.invoke('login', credentials),
 	IR_minimizeApp: () => ipcRenderer.send('minimize-app'),
 	IR_closeApp: () => ipcRenderer.send('close-app'),
-	IR_setStartWithWindows: (value: boolean) => ipcRenderer.send('set-start-with-windows', value),
 	//
 	IR_openFileDialogFile: () => ipcRenderer.send('open-file-dialog-file'),
 	IR_openFileDialogFolder: () => ipcRenderer.send('open-file-dialog-folder'),

@@ -17,8 +17,6 @@ type clientInfo = {
 // dummyClientInfoArray = [...dummyClientInfoArray, ...dummyClientInfoArray, ...dummyClientInfoArray]
 
 
-	// connected clients for status tab
-
 export const useConnectedClientsStore = defineStore('connectedClients', () => {
 	const connectedClients = ref<Array<clientInfo>>([]);
 

@@ -34,7 +34,6 @@ declare namespace api {
 	function IR_sendLogin(credentials: { username: string; password: string }): Promise<any>;
 	function IR_minimizeApp(): void;
 	function IR_closeApp(): void;
-	function IR_setStartWithWindows(value: boolean): void;
 
 	function IR_openFileDialogFile(): void;
 	function IR_openFileDialogFolder(): void;

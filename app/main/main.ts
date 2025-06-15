@@ -70,8 +70,21 @@ if (isDev) {
 	// store.delete('authToken'); // Clear auth token on startup for testing
 }
 
-function updateStartWithWindows() {
+const startupLoginItemSettings = app.getLoginItemSettings();
+log.info('Login item settings at startup:', startupLoginItemSettings);
+log.info('process.argv:', process.argv);
+
+function updateLoginItems() {
 	if (!app.isPackaged) return; // Don't set login item settings in development mode
+
+	// app was renamed at some point and
+	// this login item may break the startup
+	// settings so remove it
+	const oldAppUserModelId = 'electron.app.Rak Gaming Updater'
+	app.setLoginItemSettings({
+		name: oldAppUserModelId,
+		openAtLogin: false,
+	})
 
 	if (store.get('startWithWindows')) {
 		app.setLoginItemSettings({
@@ -84,11 +97,13 @@ function updateStartWithWindows() {
 		});
 	}
 }
-updateStartWithWindows();
 
-ipcMain.on('set-start-with-windows', async (event, value) => {
-	store.set('startWithWindows', value);
-	updateStartWithWindows();
+store.onDidChange('startWithWindows', (newValue) => {
+	updateLoginItems();
+});
+
+store.onDidChange('startMinimized', (newValue) => {
+	updateLoginItems();
 });
 
 
@@ -117,7 +132,6 @@ if (notificationIcon.startsWith('data:')) {
 
 const preload = path.join(__dirname, 'preload.mjs');
 const html = path.join(__dirname,  'index.html');
-log.info('html path:', html);
 
 protocol.registerSchemesAsPrivileged([{ scheme: 'app', privileges: { secure: true, standard: true } }]);
 
@@ -156,6 +170,8 @@ async function startProcess() {
 }
 
 async function createWindow() {
+	updateLoginItems();
+
 	const startMinimized = process.argv.includes('--hidden') && store.get('startMinimized');
 	log.info('Creating window', { startMinimized });
 	mainWindow = new BrowserWindow({
@@ -800,7 +816,7 @@ socket.on('new-release', (data) => {
 });
 
 socket.on('connected-clients', (data) => {
-	log.info('Connected clients:', data);
+	log.debug('Connected clients:', data);
 	mainWindow?.webContents.send('connected-clients', data);
 });
 
