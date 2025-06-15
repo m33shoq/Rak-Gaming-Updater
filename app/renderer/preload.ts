@@ -12,6 +12,7 @@ async function store_set(key: any, value: any) {
 
 
 contextBridge.exposeInMainWorld('api', {
+	onFileDownloadError: (callback: (event: Electron.IpcRendererEvent, ...args: any[]) => void) => ipcRenderer.on('file-download-error', callback),
 	getLanguage: () => ipcRenderer.invoke('get-language'),
 	IPCinvoke: ipcRenderer.invoke,
 	IPCsend: ipcRenderer.send,

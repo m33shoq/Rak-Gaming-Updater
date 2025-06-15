@@ -66,13 +66,18 @@ export async function DownloadFile(fileData: FileData, retries = 3) {
 					});
 
 					response.on('end', () => {
+						log.info('Download finished:', fileData.displayName, 'Size:', size, 'bytes', 'File Length:', fileLength, 'bytes');
+
 						if (response.statusCode < 200 || response.statusCode >= 300) {
+							mainWindowWrapper.webContents?.send('file-download-error', fileData, response.statusCode);
 							return reject(new Error(`Invalid response (${response.statusCode}): ${DOWNLOAD_URL}`));
 						}
 
 						return resolve(undefined);
 					});
 					response.on('error', (err: Error) => {
+						log.error('Error during response:', err);
+						mainWindowWrapper.webContents?.send('file-download-error', fileData, err.message);
 						return reject(err);
 					});
 				});

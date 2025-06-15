@@ -10,10 +10,8 @@ import ScrollFrame from '@/renderer/components/ScrollFrame.vue';
 import PathSelector from '@/renderer/components/PathSelector.vue';
 
 import { useUploadedFilesStore } from '@/renderer/store/UploadedFilesStore';
-import { useLoginStore } from '@/renderer/store/LoginStore';
 import { getElectronStoreRef } from '@/renderer/store/ElectronRefStore';
 
-const loginStore = useLoginStore();
 const uploadedFilesStore = useUploadedFilesStore();
 
 const selectedPath = ref('');
@@ -93,7 +91,11 @@ async function RefreshFiles() {
 						{{ fileData.timestamp ? new Date(fileData.timestamp * 1000).toLocaleString() : 'Unknown' }}
 					</span>
 					<UIButton class="line-item-element w-54 justify-center-safe h-7/10"
-						:label="$t(uploadedFilesStore.getDownloadStatusText(fileData), { percent: fileData.percentDownloaded || 0 })"
+						:label="$t(uploadedFilesStore.getDownloadStatusText(fileData),
+							{
+								percent: fileData.percentDownloaded || 0,
+								error: fileData.downloadError
+							})"
 						@click="uploadedFilesStore.downloadFile(fileData)"
 						:disabled="!uploadedFilesStore.getShouldDownload(fileData)"
 						/>

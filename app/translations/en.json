@@ -16,6 +16,7 @@
 	"downloadreason.unzipping": "Unzipping...",
 	"downloadreason.downloading": "Downloading... {percent}%",
 	"downloadreason.checking": "Checking...",
+	"downloadreason.downloaderror": "Error: {error}",
 	"tabname.updater": "Updater",
 	"tabname.pusher": "Pusher",
 	"tabname.settings": "Settings",

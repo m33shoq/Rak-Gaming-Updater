@@ -46,7 +46,6 @@ export const useLoginStore = defineStore('Login', () =>{
 	}
 
 	api.socket_on_connect(async () => {
-		log.info('Connected to server');
 		setConnected(true);
 		const authInfo = await api.check_for_login();
 		setAuthInfo(authInfo);
@@ -56,13 +55,11 @@ export const useLoginStore = defineStore('Login', () =>{
 	});
 
 	api.socket_on_disconnect((event, reason) => {
-		log.error('Disconnected from server:', reason);
 		setConnected(false);
 		setDisconnectReason(reason.description);
 	});
 
 	api.socket_on_connect_error((event, description) => {
-		log.error('Connect failed:', description);
 		setConnectionError(description);
 	});
 

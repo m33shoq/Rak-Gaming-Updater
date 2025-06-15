@@ -7,6 +7,7 @@ declare type FileData = {
 }
 
 declare namespace api {
+	function onFileDownloadError(callback: (event: Electron.IpcRendererEvent, ...args: any[]) => void): void;
 	function getLanguage(): Promise<string>;
 	function IPCinvoke(channel: string, ...args: any[]): Promise<any>;;
 	function IPCsend(channel: string, ...args: any[]): void;

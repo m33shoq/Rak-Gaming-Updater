@@ -16,6 +16,7 @@
 	"downloadreason.unzipping": "압축 해제 중...",
 	"downloadreason.downloading": "다운로드 중... {percent}%",
 	"downloadreason.checking": "확인 중...",
+	"downloadreason.downloaderror": "오류: {error}",
 	"tabname.updater": "업데이터",
 	"tabname.pusher": "푸셔",
 	"tabname.settings": "설정",

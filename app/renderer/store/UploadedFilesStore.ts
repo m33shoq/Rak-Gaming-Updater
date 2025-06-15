@@ -5,7 +5,8 @@ import { ref, computed } from 'vue';
 import {
 	DOWNLOAD_REASON_DOWNLOADING,
 	DOWNLOAD_REASON_UNZIPPING,
-	DOWNLOAD_REASON_CHECKING
+	DOWNLOAD_REASON_CHECKING,
+	DOWNLOAD_REASON_ERROR,
 } from '@/constants';
 
 interface FileDataInfo extends FileData {
@@ -14,6 +15,7 @@ interface FileDataInfo extends FileData {
 	downloadReason?: string;
 	percentDownloaded?: number;
 	isFullyDownloaded?: boolean;
+	downloadError?: string;
 }
 
 // const dummyFileData = {
@@ -69,6 +71,7 @@ export const useUploadedFilesStore = defineStore('UploadedFiles', () => {
 		return fileData.shouldDownload || false;
 	});
 	const getDownloadStatusText = computed(() => (file: FileDataInfo) => {
+		if (file.downloadError) return DOWNLOAD_REASON_ERROR;
 		if (isUnzipping(file)) return DOWNLOAD_REASON_UNZIPPING;
 		if (isDownloading(file)) return DOWNLOAD_REASON_DOWNLOADING;
 		return file.downloadReason || DOWNLOAD_REASON_CHECKING;
@@ -108,22 +111,26 @@ export const useUploadedFilesStore = defineStore('UploadedFiles', () => {
 		files.value = files.value.filter((f) => !isFilesSame(f, file));
 	};
 	const updateLastPacketInfo = (file: FileData, percent: number, timestamp: number) => {
-		const fileIndex = files.value.findIndex((f) => isFilesSame(f, file));
-		if (fileIndex !== -1) {
-			files.value[fileIndex].lastPacketTimestamp = timestamp;
-			files.value[fileIndex].percentDownloaded = percent;
+		const foundFile = files.value.find(f => isFilesSame(f, file));
+		if (foundFile) {
+			foundFile.lastPacketTimestamp = timestamp;
+			foundFile.percentDownloaded = percent;
 		}
 	};
 	const checkDownloadStatus = async (file: FileData) => {
 		log.info('Checking download status for file:', file.displayName);
-		const fileIndex = files.value.findIndex((f) => isFilesSame(f, file));
-		if (fileIndex === -1) return;
-		files.value[fileIndex].shouldDownload = false;
-		files.value[fileIndex].downloadReason = DOWNLOAD_REASON_CHECKING;
+		const foundFile = files.value.find(f => isFilesSame(f, file));
+		if (!foundFile) return;
+
+		foundFile.shouldDownload = false;
+		foundFile.downloadReason = DOWNLOAD_REASON_CHECKING;
+
 		const unreactiveFile = { ...file };
 		const [shouldDownload, downloadReason] = await api.shouldDownloadFile(unreactiveFile);
-		files.value[fileIndex].shouldDownload = shouldDownload;
-		files.value[fileIndex].downloadReason = downloadReason;
+
+		foundFile.shouldDownload = shouldDownload;
+		foundFile.downloadReason = downloadReason;
+
 		if (shouldDownload && (await api.store.get('autoUpdate'))) {
 			downloadFile(file).catch((err) => {
 				log.error('Error downloading file:', file.displayName, err);
@@ -140,9 +147,9 @@ export const useUploadedFilesStore = defineStore('UploadedFiles', () => {
 		log.info('Download status check completed.');
 	};
 	const setIsFullyDownloaded = (file: FileData, isFullyDownloaded: boolean) => {
-		const fileIndex = files.value.findIndex((f) => isFilesSame(f, file));
-		if (fileIndex !== -1) {
-			files.value[fileIndex].isFullyDownloaded = isFullyDownloaded;
+		const foundFile = files.value.find(f => isFilesSame(f, file));
+		if (foundFile) {
+			foundFile.isFullyDownloaded = isFullyDownloaded;
 		} else {
 			log.warn('File not found in store:', file);
 		}
@@ -168,6 +175,15 @@ export const useUploadedFilesStore = defineStore('UploadedFiles', () => {
 
 	api.IR_onFileChunkReceived((event, fileData: FileData, percent: number) => {
 		updateLastPacketInfo(fileData, percent, Date.now());
+	});
+
+	api.onFileDownloadError((event, fileData: FileData, errorCode: number) => {
+		const foundFile = files.value.find(f => isFilesSame(f, fileData));
+		if (foundFile) {
+			foundFile.downloadError = `${errorCode}`;
+			foundFile.shouldDownload = false;
+			foundFile.downloadReason = DOWNLOAD_REASON_ERROR;
+		}
 	});
 
 	api.IR_onFileDownloaded((event, fileData: FileData) => {

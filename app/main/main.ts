@@ -742,10 +742,6 @@ socket.on('connect', () => {
 	InitiateBackup(false);
 });
 
-// in case of something cursed happens we try to reconnect every 1 sec for 15 times
-const totalReconnectAttempts = 15;
-let manualReconnectAttempt = 0;
-let reconnectScheduled = false;
 socket.on('connect_error', async (error: Error) => {
 	// change xhr poll error with server is not avaliable
 	if (error.message.includes('xhr poll error')) {
@@ -753,19 +749,7 @@ socket.on('connect_error', async (error: Error) => {
 	}
 
 	mainWindow?.webContents.send('connect-error', error);
-	log.error('Connection error:', error);
-	const token = store.get('authToken');
-
-	if (!socket.active && !reconnectScheduled && token && manualReconnectAttempt < totalReconnectAttempts) {
-		reconnectScheduled = true;
-		socket.auth = { token };
-		setTimeout(() => {
-			reconnectScheduled = false;
-			manualReconnectAttempt++;
-			socket.connect();
-		}),
-			5000;
-	}
+	log.error('Connection error:', error.message);
 });
 
 socket.on('disconnect', (reason, details) => {

@@ -16,6 +16,7 @@
 	"downloadreason.unzipping": "Розпаковка...",
 	"downloadreason.downloading": "Завантаження... {percent}%",
 	"downloadreason.checking": "Перевірка...",
+	"downloadreason.downloaderror": "Помилка: {error}",
 	"tabname.updater": "Головна",
 	"tabname.pusher": "Пушер",
 	"tabname.settings": "Налаштування",
