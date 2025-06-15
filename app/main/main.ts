@@ -66,9 +66,13 @@ const TEMP_DIR = path.join(app.getPath('temp'), app.getName()); // Temporary dir
 const socket = Socket(SERVER_URL, { autoConnect: false });
 
 const isDev = process.env.npm_lifecycle_event === 'app:dev' ? true : false;
+if (isDev) {
+	// store.delete('authToken'); // Clear auth token on startup for testing
+}
 
-// store.delete('authToken'); // Clear auth token on startup for testing
 function updateStartWithWindows() {
+	if (!app.isPackaged) return; // Don't set login item settings in development mode
+
 	if (store.get('startWithWindows')) {
 		app.setLoginItemSettings({
 			openAtLogin: true,
