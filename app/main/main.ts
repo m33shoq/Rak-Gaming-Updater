@@ -156,10 +156,6 @@ function queueDialog(dialogOptions: Electron.MessageBoxOptions, onSuccessCallbac
 let mainWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
 
-function renderer_log(message: any) {
-	mainWindow?.webContents?.send('log', message);
-}
-
 async function startProcess() {
 	if (!app.isReady() || mainWindow) return;
 	createWindow();
@@ -167,6 +163,36 @@ async function startProcess() {
 		log.info('Update check results:', UpdateCheckResults);
 	});
 	InitiateBackup(false);
+}
+
+let forceClose = false;
+function shouldAppClose(): boolean {
+	if (backupRunning() && !forceClose) {
+		const dialogOpts = {
+			buttons: ['Okay', 'Force Close'],
+			title: 'Rak Gaming Updater',
+			message: `Backup in process`,
+			detail: `Backup is currently running. Please wait until it finishes.`,
+			noLink: true,
+			modal: true,
+			parent: mainWindow,
+		} as Electron.MessageBoxOptions;
+
+		queueDialog(dialogOpts, ({ response }) => {
+			if (response === 1) {
+				log.info('Forcing close of the app');
+				forceClose = true;
+				app.quit();
+			} else {
+				isQuiting = false;
+				log.info('User chose to wait for backup to finish');
+			}
+		});
+		mainWindow?.show();
+		return false;
+	}
+
+	return true; // if true then app should close
 }
 
 async function createWindow() {
@@ -207,7 +233,6 @@ async function createWindow() {
 	});
 
 	mainWindow?.once('ready-to-show', () => {
-		renderer_log(`Ready to show. Start args: ${process.argv.join(' ')}`);
 		log.info(`Ready to show. Start args: ${process.argv.join(' ')}`);
 
 		log.debug('AUTH TOKEN:', store.get('authToken'));
@@ -234,7 +259,9 @@ async function createWindow() {
 			label: 'Quit',
 			click: () => {
 				isQuiting = true;
-				app.quit();
+				if (shouldAppClose()) {
+					app.quit();
+				}
 			},
 		},
 	]);
@@ -285,12 +312,17 @@ async function createWindow() {
 		mainWindow?.hide();
 	});
 
+
 	mainWindow?.on('close', async (event: Electron.Event) => {
 		if (!isQuiting && !store.get('quitOnClose')) {
 			event.preventDefault();
 			mainWindow?.hide();
+			return;
 		}
-		return false;
+
+		if (!shouldAppClose()) {
+			event.preventDefault();
+		}
 	});
 }
 
@@ -363,7 +395,7 @@ let updatedRecheckTimer: NodeJS.Timeout | null = null;
 let rechekTries = 0;
 let wasNotificationShown = false;
 autoUpdater.on('update-available', (info) => {
-	renderer_log(`Update available Version: ${info.version} Release Date: ${info.releaseDate}`);
+	log.info(`Update available Version: ${info.version} Release Date: ${info.releaseDate}`);
 	if (updatedRecheckTimer) {
 		clearInterval(updatedRecheckTimer);
 		log.info('Recheck timer cleared');
@@ -395,11 +427,11 @@ autoUpdater.on('update-available', (info) => {
 });
 
 autoUpdater.on('update-not-available', () => {
-	renderer_log('Application is up to date');
+	log.info('Application is up to date');
 });
 
 autoUpdater.on('error', (err) => {
-	renderer_log('Error in auto-updater. ' + err);
+	log.info('Error in auto-updater. ' + err);
 });
 
 autoUpdater.on('download-progress', (progress) => {
@@ -411,28 +443,33 @@ autoUpdater.on('download-progress', (progress) => {
 	// Format the percent to 2 decimal places
 	const percentFormatted = progress.percent.toFixed(2);
 
-	renderer_log(`Download speed: ${speedInMbps} MB/s - Downloaded ${percentFormatted}% (${transferredInMB}/${totalInMB} MB)`);
+	log.info(`Download speed: ${speedInMbps} MB/s - Downloaded ${percentFormatted}% (${transferredInMB}/${totalInMB} MB)`);
 	mainWindow?.setProgressBar(progress.percent / 100);
 });
 
+let updatePending = false
 autoUpdater.on('update-downloaded', () => {
-	log.info('Update downloaded; will install in 5 seconds');
-	renderer_log('Update downloaded; will install in 5 seconds');
-
 	mainWindow?.setProgressBar(-1);
 
-	setTimeout(() => {
-		// Shenanigans to make sure the app closes properly
-		isQuiting = true;
-		if (mainWindow) {
-			mainWindow?.close();
-		}
-		autoUpdater.quitAndInstall(true, true);
-		setTimeout(() => {
-			app.quit();
-		}, 1000);
-	}, 5000);
+	updatePending = true;
+
+	CheckPendingAppUpdate()
 });
+
+function CheckPendingAppUpdate() {
+	if (updatePending && !backupRunning()) {
+		log.info('Update downloaded; will install in 5 seconds');
+		setTimeout(() => {
+			// Shenanigans to make sure the app closes properly
+			isQuiting = true;
+			mainWindow?.close();
+			autoUpdater.quitAndInstall(true, true);
+			setTimeout(() => {
+				app.quit();
+			}, 1000);
+		}, 5000);
+	}
+}
 
 function sanitizeInput(input: string): string {
 	let res = validator.escape(input);
@@ -449,7 +486,6 @@ async function onFilePathSelected(folderPath: string) {
 	log.info('Selected path:', folderPath, 'relative path:', relativePath);
 	if (!relativePath) {
 		log.info('Relative path not set, skipping');
-		renderer_log('Relative path not set, skipping');
 		return;
 	}
 
@@ -473,7 +509,6 @@ async function onFilePathSelected(folderPath: string) {
 		}
 	} else {
 		log.info('No path selected');
-		renderer_log('No path selected');
 	}
 }
 
@@ -572,7 +607,6 @@ ipcMain.handle('select-backups-path', async () => {
 		const wowPath = await getWoWPath();
 		if (wowPath && isPathWithin(wowPath, selectedPath)) {
 			log.info('Selected path is within WoW folder, skipping');
-			renderer_log('Selected path is within WoW folder, skipping');
 			return { success: false, message: 'Selected path is within WoW folder!!!' };
 		}
 
@@ -794,7 +828,6 @@ ipcMain.on('delete-file', (event, fileData) => {
 
 socket.on('new-release', (data) => {
 	log.info('New release:', data);
-	renderer_log('New release available');
 	rechekTries = 0;
 	if (updatedRecheckTimer) {
 		clearInterval(updatedRecheckTimer);
@@ -1063,6 +1096,11 @@ async function BackupWTFFolder() {
 }
 
 let isBackupRunning = false;
+
+function backupRunning() {
+	return isBackupRunning;
+}
+
 function UpdateBackupStatus(status: string, desc?: string) {
 	mainWindow?.webContents.send('backup-status', { status, desc });
 }
@@ -1118,6 +1156,7 @@ async function InitiateBackup(force: boolean) {
 			UpdateBackupStatus(BACKUP_STATUS_FAILED, error?.message || 'Unknown error');
 		} finally {
 			isBackupRunning = false;
+			CheckPendingAppUpdate();
 			if (backupProgressTimer) {
 				clearInterval(backupProgressTimer);
 			}
