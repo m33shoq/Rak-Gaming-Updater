@@ -703,7 +703,7 @@ ipcMain.on('open-backups-folder', async (event) => {
 });
 
 ipcMain.on('open-logs-folder', async () => {
-	log.info('Main: Opening logs folder');
+	log.info('Opening logs folder');
 	const logsPath = app.getPath('logs')
 	if (logsPath) {
 		shell.openPath(logsPath);

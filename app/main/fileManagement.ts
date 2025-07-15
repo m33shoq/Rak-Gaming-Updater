@@ -7,6 +7,7 @@ import store from './store';
 import mainWindowWrapper from './MainWindowWrapper';
 import { getWoWPath, validateWoWPath } from './wowPathUtility';
 import { zipFile, unzipFile } from './zipHandler';
+  import { nanoid } from 'nanoid';
 
 import {
 	SERVER_URL,
@@ -16,15 +17,19 @@ import {
 	SERVER_DOWNLOAD_ENDPOINT
 } from './serverEndpoints';
 
-const TEMP_DIR = path.join(app.getPath('temp'), app.getName()); // Temporary directory for unzipped/zipped files
-
 // return file path for downloaded zip file
 export async function DownloadFile(fileData: FileData, retries = 3) {
 	try {
 		const { fileName, relativePath, timestamp, hash, displayName } = fileData;
 		const DOWNLOAD_URL = `${SERVER_DOWNLOAD_ENDPOINT}/${displayName}/${hash}`;
 
-		const outputPath = path.join(TEMP_DIR, `${displayName}-${hash}.zip`);
+		const updatePath = await getWoWPath();
+		if (!updatePath) {
+			log.error('WoW path is not set or invalid. Cannot install file:', fileData);
+			throw new Error('WoW path is not set or invalid.');
+		}
+
+		const outputPath = path.join(updatePath, fileData.relativePath, `RG-UPDATER-${nanoid()}-${displayName}-${hash}.zip`);
 		// recursively create directories if they don't exist
 		await fsp.mkdir(path.dirname(outputPath), { recursive: true });
 
@@ -109,7 +114,7 @@ export async function InstallFile(fileData: FileData, zipPath: string) {
 		log.error('WoW path is not set or invalid. Cannot install file:', fileData);
 		throw new Error('WoW path is not set or invalid.');
 	}
-	const expectedOutputFolder = path.join(updatePath, relativePath, fileName); // wow + relative + foler/file
+	const expectedOutputFolder = path.join(updatePath, relativePath, fileName); // wow + relative + folder/file
 	const targetPath = path.join(updatePath, relativePath); // wow + relative
 
 	// Ensure the target path exists

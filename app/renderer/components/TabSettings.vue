@@ -31,7 +31,6 @@ const quitOnClose = getElectronStoreRef('quitOnClose', false);
 const darkMode = getElectronStoreRef('darkMode', true);
 
 function openLogsFolder() {
-	log.info('Renderer: Opening logs folder...');
 	api.IR_OpenLogsFolder();
 }
 

@@ -1,7 +1,7 @@
 {
 	"name": "rak-gaming-updater",
 	"description": "Rak Gaming Updater Application",
-	"version": "2.0.17",
+	"version": "2.0.18",
 	"author": {
 		"name": "m33shoq"
 	},
@@ -53,6 +53,7 @@
 		"electron-store": "^8.2.0",
 		"extract-zip": "^2.0.1",
 		"jwt-decode": "^4.0.0",
+		"nanoid": "^5.1.5",
 		"regedit": "^5.1.3",
 		"socket.io-client": "^4.7.5",
 		"tailwindcss": "^4.1.10",
