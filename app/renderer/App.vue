@@ -51,11 +51,15 @@ function selectTab(tabName: string) {
 
 const errorMessage = ref<string | null>(null);
 
+let errorResetTimer: NodeJS.Timeout | null = null;
 function showError(msg: string) {
-  errorMessage.value = msg;
-  setTimeout(() => {
-    errorMessage.value = null;
-  }, 3000); // Show for 3 seconds
+	if (errorResetTimer) {
+		clearTimeout(errorResetTimer);
+	}
+	errorMessage.value = msg;
+	errorResetTimer = setTimeout(() => {
+		errorMessage.value = null;
+	}, 3000); // Show for 3 seconds
 }
 
 api.IPC_onUncaughtException((event, error) => {
