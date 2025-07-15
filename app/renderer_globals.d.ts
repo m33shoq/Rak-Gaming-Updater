@@ -50,5 +50,7 @@ declare namespace api {
 	function IR_onBackupCreated(callback: (event: Electron.IpcRendererEvent, ...args: any[]) => void): void;
 	function IR_InitiateBackup(force: boolean): void;
 	function IR_onBackupStatus(callback: (event: Electron.IpcRendererEvent, ...args: any[]) => void): void;
+	function IPC_onUncaughtException(callback: (event: Electron.IpcRendererEvent, ...args: any[]) => void): void;
+	function IPC_onUnhandledRejection(callback: (event: Electron.IpcRendererEvent, ...args: any[]) => void): void;
 }
 

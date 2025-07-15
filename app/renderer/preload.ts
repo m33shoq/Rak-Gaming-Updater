@@ -72,6 +72,8 @@ contextBridge.exposeInMainWorld('api', {
 	IR_onBackupCreated: (callback: (event: Electron.IpcRendererEvent, ...args: any[]) => void) => ipcRenderer.on('backup-created', callback),
 	IR_InitiateBackup: (force: boolean) => ipcRenderer.send('initiate-backup', force),
 	IR_onBackupStatus: (callback: (event: Electron.IpcRendererEvent, ...args: any[]) => void) => ipcRenderer.on('backup-status', callback),
+	IPC_onUncaughtException: (callback: (event: Electron.IpcRendererEvent, ...args: any[]) => void) => ipcRenderer.on('uncaughtException', callback),
+	IPC_onUnhandledRejection: (callback: (event: Electron.IpcRendererEvent, ...args: any[]) => void) => ipcRenderer.on('unhandledRejection', callback),
 });
 
 console.log('preload script loaded');

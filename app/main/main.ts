@@ -52,10 +52,12 @@ log.initialize({ preload: true });
 
 process.on("uncaughtException", (error) => {
   log.error("uncaughtException", error);
+  mainWindow?.webContents.send('uncaughtException', error);
 });
 
 process.on("unhandledRejection", (error) => {
   log.error("unhandledRejection", error);
+  mainWindow?.webContents.send('unhandledRejection', error);
 });
 
 

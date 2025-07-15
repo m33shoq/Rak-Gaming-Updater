@@ -12,6 +12,7 @@ import TabSettings from '@/renderer/components/TabSettings.vue';
 import TabStatus from '@/renderer/components/TabStatus.vue';
 import TabBackups from '@/renderer/components/TabBackups.vue';
 import WinButtons from '@/renderer/components/WinButtons.vue';
+import ErrorNotification from '@/renderer/components/ErrorNotification.vue';
 
 import { useLoginStore } from '@/renderer/store/LoginStore';
 import { useUploadedFilesStore } from '@/renderer/store/UploadedFilesStore';
@@ -47,6 +48,23 @@ function selectTab(tabName: string) {
 	selectedTab.value = tabName;
 	log.debug(`Selected tab: ${tabName}`);
 }
+
+const errorMessage = ref<string | null>(null);
+
+function showError(msg: string) {
+  errorMessage.value = msg;
+  setTimeout(() => {
+    errorMessage.value = null;
+  }, 3000); // Show for 3 seconds
+}
+
+api.IPC_onUncaughtException((event, error) => {
+	showError(`Uncaught Exception: ${error.message}`);
+});
+
+api.IPC_onUnhandledRejection((event, error) => {
+	showError(`Unhandled Rejection: ${error.message}`);
+});
 
 watchEffect(() => {
 	if (selectedTab.value === 'login' && loginStore.isConnected) {
@@ -87,6 +105,9 @@ onMounted(async () => {
 			</div>
 			<WinButtons />
 		</div>
+		<transition name="fade">
+			<ErrorNotification v-if="errorMessage" :label="errorMessage" />
+		</transition>
 		<TabLogin v-if="selectedTab === 'login'" />
 		<TabUpdater v-else-if="selectedTab === 'main'"/>
 		<TabPusher v-else-if="selectedTab === 'pusher' && loginStore.isAdmin" />
@@ -103,5 +124,13 @@ onMounted(async () => {
 </template>
 
 <style>
-
+.fade-enter-active, .fade-leave-active {
+  transition: opacity 0.8s;
+}
+.fade-enter-from, .fade-leave-to {
+  opacity: 0;
+}
+.fade-enter-to, .fade-leave-from {
+  opacity: 1;
+}
 </style>
