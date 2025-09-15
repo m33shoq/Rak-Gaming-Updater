@@ -14,6 +14,7 @@ interface StoreSchema {
   backupsPath: string | null;
   lastBackupTime: number | null;
   darkMode?: boolean;
+  updaterInfo?: any;
 }
 
 const store = new Store<StoreSchema>({

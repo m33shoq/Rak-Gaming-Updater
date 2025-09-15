@@ -60,7 +60,6 @@ process.on("unhandledRejection", (error) => {
   mainWindow?.webContents.send('unhandledRejection', error);
 });
 
-
 let isQuiting = false;
 
 const TEMP_DIR = path.join(app.getPath('temp'), app.getName()); // Temporary directory for unzipped/zipped files
@@ -308,6 +307,7 @@ async function createWindow() {
 		}
 	});
 
+	// @ts-ignore
 	mainWindow?.on('minimize', (event: Electron.Event) => {
 		mainWindow?.setSkipTaskbar(true);
 		event.preventDefault();
@@ -792,6 +792,21 @@ socket.on('connect', () => {
 	log.info('Connected to server');
 	mainWindow?.webContents.send('connect');
 	InitiateBackup(false);
+
+	const updaterInfo = store.get('updaterInfo');
+	// clean old entries
+	if (updaterInfo && updaterInfo.byChar) {
+		for (const char in updaterInfo.byChar) {
+			const charInfo = updaterInfo.byChar[char];
+			// .lastUpdate is UNIX time in seconds, delete entries older than 7 days
+			if (charInfo.lastUpdate + 7 * 24 * 60 * 60 < Math.floor(Date.now() / 1000)) {
+				log.info('Removing old updater entry for character:', char);
+				delete updaterInfo.byChar[char];
+			}
+		}
+		store.set('updaterInfo', updaterInfo);
+		socket.emit('sv-updater-info', updaterInfo)
+	}
 });
 
 socket.on('connect_error', async (error: Error) => {
@@ -881,6 +896,10 @@ ipcMain.on('open-file-dialog-file', async () => {
 
 socket.on('not-enough-permissions', (data) => {
 	log.info('Not enough permissions:', data);
+});
+
+socket.on('server-shutdown', (data) => {
+	log.info('Server shutdown:', data);
 });
 
 async function shouldDownloadFile(serverFile: FileData): Promise<[boolean, string]> {
@@ -1174,3 +1193,46 @@ ipcMain.on('initiate-backup', (event, data) => {
 setInterval(async () => {
 	InitiateBackup(false);
 }, 1000 * 60 * 10);
+
+import { RegisterSVCallback } from '@/main/svWatcher';
+
+RegisterSVCallback('ExRT_Reminder', 'RGDB', (svPath, RGDB) => {
+	log.info('SV callback for ExRT_Reminder');
+	// Handle the changed SV file
+
+	const updaterInfo = store.get('updaterInfo') || { byChar: {} };
+	updaterInfo.byChar = updaterInfo.byChar || {};
+
+	// RGDB.UpdaterInfo
+	if (RGDB && RGDB.UpdaterInfo && RGDB.UpdaterInfo.byChar) {
+		for (const charName in RGDB.UpdaterInfo.byChar) {
+			if (!RGDB.UpdaterInfo.byChar.hasOwnProperty(charName)) continue;
+			const charInfo = RGDB.UpdaterInfo.byChar[charName];
+
+			// Validate charInfo structure
+			if (
+				!charInfo ||
+				typeof charInfo.lastUpdate !== 'number' ||
+				typeof charInfo.currencies !== 'object' ||
+				typeof charInfo.lastAddonVersion !== 'number'
+			) {
+				log.info(`Invalid character info for ${charName}:`, charInfo);
+				continue;
+			}
+
+			const prevInfo = updaterInfo.byChar[charName];
+			if (!prevInfo || prevInfo.lastUpdate < charInfo.lastUpdate) {
+				updaterInfo.byChar[charName] = charInfo;
+			}
+		}
+	}
+
+	store.set('updaterInfo', updaterInfo)
+
+	if (!socket.connected) {
+		log.info('Socket is not connected, skipping SV file change handling');
+		return;
+	}
+	socket.emit('sv-updater-info', updaterInfo);
+});
+
