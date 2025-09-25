@@ -1,30 +1,49 @@
 <script setup lang="ts">
 import log from 'electron-log/renderer';
 
-import { ref, computed, onMounted, onBeforeUnmount } from 'vue';
+import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue';
 
 const props = defineProps<{
-	label: string;
+	label?: string;
 	change?: () => void;
 	options: Array<{
-		value: string | number;
+		value: any;
 		label: string;
 	}>;
+	maxVisible?: number; // <-- Add this prop
+	placeholder?: string;
+	onOpen?: () => void;
+	onClose?: () => void;
 }>();
 
 const model = defineModel()
-
 const toggled = ref(false);
+const showScrollbar = ref(false);
+
+watch(toggled, (newVal) => {
+	if (newVal && props.onOpen) {
+		props.onOpen();
+	}
+	if (!newVal && props.onClose) {
+		props.onClose();
+	}
+});
 
 const height = computed(() => {
 	return props.options.length ? props.options.length * 24 + 4 + 'px' : '0px';
 });
 
+// Compute maxHeight for scrollable menu
+const maxHeight = computed(() => {
+    const max = props.maxVisible ?? 10; // default to 10 if not provided
+    return (max * 24 + 4) + 'px';
+});
+
 const innerText = computed(() => {
  	if (model.value) {
-		return props.options.find(option => option.value === model.value)?.label || 'Select an option';
+		return props.options.find(option => option.value === model.value)?.label || props.placeholder || 'Select an option';
 	}
-	return 'Select an option';
+	return props.placeholder || 'Select an option';
 });
 
 function selectOption(value) {
@@ -54,12 +73,22 @@ onBeforeUnmount(() => {
   document.removeEventListener('click', onClickOutside);
 });
 
+// Watch toggled to hide scrollbar when closing
+watch(toggled, (val) => {
+	showScrollbar.value = false;
+});
+function onTransitionEnd() {
+    if (toggled.value) {
+        showScrollbar.value = true;
+    }
+}
+
 </script>
 
 <template>
 	<!-- class dropdown is required here for global mouse click tracking -->
 	<div class="dropdown flex flex-col mt-2 min-w-60 max-w-fit relative">
-		<label>{{ label }}:</label>
+		<label v-if="label">{{ label }}:</label>
 		<button
 			:class="[
 				`text-white cursor-pointer flex items-center justify-between
@@ -81,10 +110,17 @@ onBeforeUnmount(() => {
 
 		</button>
 		<div>
-			<div class="absolute top-full left-0 grid grid-cols-1  overflow-hidden rounded-b-md min-w-full z-10
+			<div class="absolute top-full left-0 grid grid-cols-1 overflow-hidden rounded-b-md min-w-full z-10
 				dark:bg-dark4
 				bg-light4  transition-all"
-				:style="{ height: toggled ? height : '0px' }"
+				:class="[
+					showScrollbar ? 'overflow-y-auto' : 'overflow-y-hidden',
+				]"
+				:style="{
+					height: toggled ? height : '0px',
+					maxHeight: maxHeight
+				}"
+				@transitionend="onTransitionEnd"
 
 			>
 				<button v-for="option in options" class="text-white last:rounded-b-md p-0.5 px-2 text-left h-[24px] last:h-[28px] dark:hover:bg-dark3 hover:bg-light3 w-full whitespace-nowrap relative"
@@ -107,5 +143,39 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+/* Light theme */
+.dropdown-scrollbar-light {
+  scrollbar-width: thin;
+  scrollbar-color: #888 #eee;
+}
+.dropdown-scrollbar-light::-webkit-scrollbar {
+  width: 8px;
+  background: #eee;
+  border-radius: 4px;
+}
+.dropdown-scrollbar-light::-webkit-scrollbar-thumb {
+  background: #888;
+  border-radius: 4px;
+}
+.dropdown-scrollbar-light::-webkit-scrollbar-thumb:hover {
+  background: #aaa;
+}
 
+/* Dark theme */
+.dropdown-scrollbar-dark {
+  scrollbar-width: thin;
+  scrollbar-color: #555 #222;
+}
+.dropdown-scrollbar-dark::-webkit-scrollbar {
+  width: 8px;
+  background: #222;
+  border-radius: 4px;
+}
+.dropdown-scrollbar-dark::-webkit-scrollbar-thumb {
+  background: #555;
+  border-radius: 4px;
+}
+.dropdown-scrollbar-dark::-webkit-scrollbar-thumb:hover {
+  background: #888;
+}
 </style>

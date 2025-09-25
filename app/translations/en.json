@@ -22,6 +22,7 @@
 	"tabname.settings": "Settings",
 	"tabname.status": "Status",
 	"tabname.backups": "Backups",
+	"tabname.reviews": "Reviews",
 	"settings.language": "Language",
 	"settings.winstartup": "Start with Windows",
 	"settings.winminimized": "Start minimized",
@@ -54,5 +55,8 @@
 	"backups.status.creating": "Creating backup",
 	"backups.status.completed": "Backup completed",
 	"backups.status.failed": "Backup failed",
-	"backups.status.deleted": "Deleted old backup"
+	"backups.status.deleted": "Deleted old backup",
+	"reviews.add_youtube_stream": "Add YouTube Stream",
+	"reviews.select_report": "Select Report",
+	"reviews.select_fight": "Select Fight"
 }

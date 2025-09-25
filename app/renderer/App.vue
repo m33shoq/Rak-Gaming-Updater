@@ -11,6 +11,7 @@ import TabPusher from '@/renderer/components/TabPusher.vue';
 import TabSettings from '@/renderer/components/TabSettings.vue';
 import TabStatus from '@/renderer/components/TabStatus.vue';
 import TabBackups from '@/renderer/components/TabBackups.vue';
+import TabReviews from '@/renderer/components/TabReviews.vue';
 import WinButtons from '@/renderer/components/WinButtons.vue';
 import ErrorNotification from '@/renderer/components/ErrorNotification.vue';
 
@@ -41,7 +42,8 @@ const tabs = [
 	{ name: 'pusher', label: 'tabname.pusher', adminOnly: true },
 	{ name: 'settings', label: 'tabname.settings' },
 	{ name: 'status', label: 'tabname.status', adminOnly: true },
-	{ name: 'backups', label: 'tabname.backups' }
+	{ name: 'backups', label: 'tabname.backups' },
+	{ name: 'reviews', label: 'tabname.reviews' }
 ];
 
 function selectTab(tabName: string) {
@@ -118,6 +120,7 @@ onMounted(async () => {
 		<TabSettings v-else-if="selectedTab === 'settings'" />
 		<TabStatus v-else-if="selectedTab === 'status' && loginStore.isAdmin" />
 		<TabBackups v-else-if="selectedTab === 'backups'" />
+		<TabReviews v-else-if="selectedTab === 'reviews'" />
 		<footer class="text-center p-1 absolute bottom-0 flex justify-between w-full text-sm
 		dark:bg-dark1 text-neutral-500 font-medium
 		bg-light1">

@@ -20,6 +20,8 @@ import { getWoWPath, validateWoWPath } from '@/main/wowPathUtility';
 import mainWindowWrapper from '@/main/MainWindowWrapper';
 import store from '@/main/store';
 
+// store.set('youtubeVideoInfo', { byId: {} }); // reset
+
 import {
 	SERVER_URL,
 	SERVER_LOGIN_ENDPOINT,
@@ -202,13 +204,13 @@ async function createWindow() {
 	const startMinimized = process.argv.includes('--hidden') && store.get('startMinimized');
 	log.info('Creating window', { startMinimized });
 	mainWindow = new BrowserWindow({
-		width: 850,
-		height: 600,
+		width: 900, // 900
+		height: 600, // 600
 		icon: taskBarIconImage,
 		maximizable: false,
 		minimizable: true,
 		resizable: false,
-		fullscreenable: false,
+		fullscreenable: true,
 		frame: false,
 		backgroundColor: '#00000000',
 		titleBarStyle: 'hidden',
@@ -533,7 +535,7 @@ ipcMain.handle('store-set', async (event, key, value) => store.set(key, value));
 ipcMain.handle('store-get', async (event, key) => store.get(key));
 ipcMain.on('store-sync-request', (event, key) => {
 	store.onDidChange(key, (newValue) => {
-		log.info(`Main: Store value changed for key "${key}":`, newValue);
+		log.debug(`Main: Store value changed for key "${key}":`, newValue);
 		mainWindow?.webContents.send('store-sync', key, newValue);
 	});
 });
@@ -663,7 +665,7 @@ async function getFolderSize(folderPath: string, signal: AbortSignal): Promise<s
 
 	await calculateSize(folderPath);
 	const totalSizeInMB = totalSize / (1024 * 1024); // Convert bytes to megabytes
-	log.info('Total size:', totalSizeInMB.toFixed(2), 'MB');
+	log.info(`Total size for ${folderPath}:`, totalSizeInMB.toFixed(2), 'MB');
 	return totalSizeInMB.toFixed(2); // Return size in MB with 2 decimal places
 }
 
@@ -806,6 +808,29 @@ socket.on('connect', () => {
 		}
 		store.set('updaterInfo', updaterInfo);
 		socket.emit('sv-updater-info', updaterInfo)
+	}
+
+	const WCL_REFRESH_TOKEN = store.get('WCL_REFRESH_TOKEN');
+	if (WCL_REFRESH_TOKEN) {
+		socket.emit('wcl-refresh-token', { WCL_REFRESH_TOKEN }, (response: { success: boolean; error?: string }) => {
+			if (response.success) {
+				log.info('WCL refresh token sent successfully');
+			} else {
+				log.info('Error sending WCL refresh token:', response.error);
+			}
+		});
+	}
+
+	const youtubeVideoInfo = store.get('youtubeVideoInfo');
+	if (youtubeVideoInfo) {
+		socket.emit('youtube-video-info-on-connect', { youtubeVideoInfo }, response => {
+			if (response.youtubeVideoInfo) {
+				updateYoutubeVideoInfo(response.youtubeVideoInfo);
+				log.info('Youtube video info updated from server on connect');
+			} else {
+				log.info('Unexpected response for youtube-video-info-on-connect:', response);
+			}
+		});
 	}
 });
 
@@ -1225,6 +1250,10 @@ RegisterSVCallback('ExRT_Reminder', 'RGDB', (svPath, RGDB) => {
 				updaterInfo.byChar[charName] = charInfo;
 			}
 		}
+
+		updaterInfo.MY_NICKNAME = RGDB.UpdaterInfo.MY_NICKNAME || updaterInfo.MY_NICKNAME;
+		updaterInfo.LAST_RELOAD = RGDB.UpdaterInfo.LAST_RELOAD || updaterInfo.LAST_RELOAD;
+		updaterInfo.APP_VERSION = app.getVersion();
 	}
 
 	store.set('updaterInfo', updaterInfo)
@@ -1236,3 +1265,139 @@ RegisterSVCallback('ExRT_Reminder', 'RGDB', (svPath, RGDB) => {
 	socket.emit('sv-updater-info', updaterInfo);
 });
 
+async function requestWCLAuthLink() {
+	return new Promise<string>((resolve, reject) => {
+		console.log('Requesting WCL auth link');
+		socket.emit('wcl-auth-link', null, (response: { authLink: string; error?: string }) => {
+			if (response.error) {
+				reject(new Error(response.error));
+			} else {
+				console.log('WCL Auth Link:', response.authLink);
+				resolve(response.authLink);
+			}
+		});
+		setTimeout(() => {
+			reject(new Error('Timeout waiting for WCL auth link'));
+		}, 15000);
+	});
+}
+
+ipcMain.handle('wcl-request-auth-link', async () => {
+	try {
+		const link = await requestWCLAuthLink();
+		// follow link in default browser
+		void shell.openExternal(link);
+		return { success: true };
+	} catch (error: any) {
+		return { success: false, error: error.message };
+	}
+});
+
+socket.on('wcl-refresh-token-update', (data) => {
+	// log.info('Received WCL refresh token:', data);
+	store.set('WCL_REFRESH_TOKEN', data);
+});
+
+ipcMain.handle('wcl-request-reports', async () => {
+	return new Promise<any[]>((resolve) => {
+		log.info('Requesting WCL reports list');
+		socket.emit('wcl-reports-list', null, (response: { reports: any[]; error?: string }) => {
+			if (response.reports) {
+				log.info('Received reports list, count:', response.reports.length);
+				resolve(response.reports);
+			} else {
+				log.error('Error receiving reports list:', response.error);
+				resolve([]);
+			}
+		});
+		setTimeout(() => {
+			resolve([]);
+		}, 15000);
+	});
+});
+
+ipcMain.handle('wcl-request-report-data', async (event, { reportCode }) => {
+	// Handle the request for WCL fight details
+	return new Promise<any[]>((resolve) => {
+		log.info('Requesting WCL fight details for report', reportCode);
+		socket.emit('wcl-report-data', { reportCode }, (response: { reportData: any; error?: string }) => {
+			if (response.reportData) {
+				log.info('Received fight details for report', reportCode);
+				resolve(response.reportData);
+			} else {
+				log.error('Error receiving fight details for report', reportCode, response.error);
+				resolve([]);
+			}
+		});
+		setTimeout(() => {
+			resolve([]);
+		}, 15000);
+	});
+});
+
+ipcMain.handle('wcl-request-fight-events', async (event, { reportCode, fightID }) => {
+	return new Promise<any>((resolve) => {
+		log.info('Requesting WCL fight events for report', reportCode, 'fightID', fightID);
+		socket.emit('wcl-fight-events', { reportCode, fightID }, (response: { fightEvents: any; error?: string }) => {
+			if (response.fightEvents) {
+				log.info('Received fight events for report', reportCode, 'fightID', fightID);
+				resolve(response.fightEvents);
+			} else {
+				log.error('Error receiving fight events for report', reportCode, response.error);
+				resolve([]);
+			}
+		});
+		setTimeout(() => {
+			resolve([]);
+		}, 15000);
+	});
+});
+
+socket.on('youtube-video-info-added', (data) => {
+	addYoutubeVideoInfo(data.videoInfo);
+});
+
+socket.on('youtube-video-info-updated', (data) => {
+	updateYoutubeVideoInfo(data.youtubeVideoInfo);
+});
+
+function updateYoutubeVideoInfo(youtubeVideoInfoReceived) {
+	if (typeof youtubeVideoInfoReceived?.byId !== 'object') return;
+
+	const youtubeVideoInfo = store.get('youtubeVideoInfo')
+	let anyNew = false;
+
+	for (const videoId in youtubeVideoInfoReceived.byId) {
+		if (youtubeVideoInfoReceived.byId.hasOwnProperty(videoId) && !youtubeVideoInfo.byId[videoId]) {
+			youtubeVideoInfo.byId[videoId] = youtubeVideoInfoReceived.byId[videoId];
+			anyNew = true;
+		}
+	}
+
+	if (anyNew) {
+		store.set('youtubeVideoInfo', youtubeVideoInfo);
+	}
+};
+
+function addYoutubeVideoInfo(videoInfo) {
+	if (!videoInfo?.id) return;
+
+	const youtubeVideoInfo = store.get('youtubeVideoInfo')
+	if (!youtubeVideoInfo.byId[videoInfo.id]) {
+		youtubeVideoInfo.byId[videoInfo.id] = videoInfo;
+		store.set('youtubeVideoInfo', youtubeVideoInfo);
+	}
+}
+
+ipcMain.handle('request-youtube-video-info', async (event, URL) => {
+	return new Promise((resolve) => {
+		console.log('Requesting YouTube video info for URL:', URL);
+		socket.emit('youtube-video-info-add', { URL }, (response: { videoInfo: any; error?: string }) => {
+			if (response.videoInfo) {
+				addYoutubeVideoInfo(response.videoInfo);
+				log.info('Youtube video info added for URL:', URL);
+			}
+			resolve(response);
+		});
+	});
+});

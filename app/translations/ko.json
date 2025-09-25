@@ -22,6 +22,7 @@
 	"tabname.settings": "설정",
 	"tabname.status": "상태",
 	"tabname.backups": "백업",
+	"tabname.reviews": "Reviews",
 	"settings.language": "언어",
 	"settings.winstartup": "Windows 시작할 때 시작",
 	"settings.winminimized": "최소화 상태로 시작",

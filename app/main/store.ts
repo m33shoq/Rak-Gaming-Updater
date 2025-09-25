@@ -15,6 +15,8 @@ interface StoreSchema {
   lastBackupTime: number | null;
   darkMode?: boolean;
   updaterInfo?: any;
+  WCL_REFRESH_TOKEN?: string | null;
+  youtubeVideoInfo?: any;
 }
 
 const store = new Store<StoreSchema>({
@@ -32,6 +34,7 @@ const store = new Store<StoreSchema>({
 	backupsPath: null,
 	lastBackupTime: null,
 	darkMode: true,
+	youtubeVideoInfo: { byId: {} },
   },
 });
 

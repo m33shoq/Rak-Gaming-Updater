@@ -6,6 +6,15 @@ declare type FileData = {
 	timestamp: number; // Last modified timestamp in seconds
 }
 
+declare type YouTubeVideo = {
+  id: string;
+  title: string;
+  author: string;
+  authorID: string;
+  startTime: number; // UNIX ms
+  duration: number; // time in ms
+}
+
 declare namespace api {
 	function onFileDownloadError(callback: (event: Electron.IpcRendererEvent, ...args: any[]) => void): void;
 	function getLanguage(): Promise<string>;
@@ -52,5 +61,12 @@ declare namespace api {
 	function IR_onBackupStatus(callback: (event: Electron.IpcRendererEvent, ...args: any[]) => void): void;
 	function IPC_onUncaughtException(callback: (event: Electron.IpcRendererEvent, ...args: any[]) => void): void;
 	function IPC_onUnhandledRejection(callback: (event: Electron.IpcRendererEvent, ...args: any[]) => void): void;
+	// wcl
+	function IR_WCL_GetAuthLink(): Promise<any>;
+	function IR_requestWCLReports(): Promise<any>;
+	function IR_requestWCLReportData(reportCode: string): Promise<any>;
+	function IR_requestWCLFightEvents(reportCode: string, fightID: number): Promise<any>;
+	// youtube
+	function IR_requestYouTubeVideoInfo(URL: string): Promise<any>;
 }
 

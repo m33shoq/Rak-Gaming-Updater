@@ -74,6 +74,12 @@ contextBridge.exposeInMainWorld('api', {
 	IR_onBackupStatus: (callback: (event: Electron.IpcRendererEvent, ...args: any[]) => void) => ipcRenderer.on('backup-status', callback),
 	IPC_onUncaughtException: (callback: (event: Electron.IpcRendererEvent, ...args: any[]) => void) => ipcRenderer.on('uncaughtException', callback),
 	IPC_onUnhandledRejection: (callback: (event: Electron.IpcRendererEvent, ...args: any[]) => void) => ipcRenderer.on('unhandledRejection', callback),
+	// wcl
+	IR_WCL_GetAuthLink: () => ipcRenderer.invoke('wcl-request-auth-link'),
+	IR_requestWCLReports: () => ipcRenderer.invoke('wcl-request-reports'),
+	IR_requestWCLReportData: (reportCode: string) => ipcRenderer.invoke('wcl-request-report-data', { reportCode }),
+	IR_requestWCLFightEvents: (reportCode: string, fightID: string) => ipcRenderer.invoke('wcl-request-fight-events', { reportCode, fightID }),
+	IR_requestYouTubeVideoInfo: (URL: string) => ipcRenderer.invoke('request-youtube-video-info', URL),
 });
 
 console.log('preload script loaded');

@@ -18,7 +18,7 @@ const connectedClientsStore = useConnectedClientsStore();
 				<div v-for="client in connectedClientsStore.getClients" :key="client.id"
 					class="line-item mini dark:bg-dark4 bg-light4">
 					<span class="line-item-element select-text">
-						{{ client.id }} - {{ client.username }} - {{ client.role || '' }}
+						{{ client.NICKNAME || client.id }} - {{ client.username }} - {{ client.role || '' }} - Reload: {{ client.LAST_RELOAD ? new Date(client.LAST_RELOAD * 1000).toLocaleString() : '' }} - App Version: {{ client.APP_VERSION || '' }}
 					</span>
 				</div>
 			</template>

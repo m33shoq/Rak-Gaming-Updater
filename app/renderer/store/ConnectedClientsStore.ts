@@ -5,6 +5,9 @@ type clientInfo = {
 	id: string;
 	username: string;
 	role: string;
+	NICKNAME?: string;
+	LAST_RELOAD?: number; // UNIX seconds
+	APP_VERSION?: string;
 }
 
 // const dummyClientInfo: clientInfo = {
@@ -36,7 +39,5 @@ export const useConnectedClientsStore = defineStore('connectedClients', () => {
 		getClients,
 		setClients,
 	};
-
-
 });
 

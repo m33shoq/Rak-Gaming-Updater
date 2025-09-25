@@ -59,3 +59,18 @@ body {
 @utility no-drag {
 	-webkit-app-region: no-drag;
 }
+
+/* For Webkit browsers (Chrome, Electron, Edge, Safari) */
+::-webkit-scrollbar-track {
+  background: transparent !important;
+}
+
+/* If you use a custom class for your dropdown scroll area: */
+.dropdown .overflow-y-auto::-webkit-scrollbar-track {
+  background: transparent !important;
+}
+
+/* For Firefox */
+.dropdown .overflow-y-auto {
+  scrollbar-color: var(--scrollbar-thumb, #888) transparent;
+}
