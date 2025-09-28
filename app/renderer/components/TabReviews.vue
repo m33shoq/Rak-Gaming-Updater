@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import log from 'electron-log/renderer';
 
-import { ref, computed, watch, onMounted, onUnmounted } from 'vue';
+import { ref, computed, watch, onMounted, onUnmounted, watchEffect } from 'vue';
 
 import TabContent from '@/renderer/components/TabContent.vue';
 import UIButton from '@/renderer/components/Button.vue';
@@ -138,6 +138,22 @@ watch(selectedVideoInfo, () => {
 	}
 });
 
+watch(() => wclDataStore.selectedFightID, (newVal) => {
+	lastFightRelativeTime = 0;
+	if (selectedVideoInfo.value) {
+		const reportTimeOffset = wclDataStore.getReportDetails?.startTime || 0;
+		const fightStartTime = (reportTimeOffset + wclDataStore.getSelectedFight?.startTime || 0) / 1000; // in seconds
+		const videoStartTime = selectedVideoInfo.value.startTime / 1000; // in seconds
+
+		const seekTime = fightStartTime - videoStartTime + YOUTUBE_DELAY_OFFSET;
+
+		log.info(`New fight selected, seeking to ${seekTime}s (fight start: ${fightStartTime}s, video start: ${videoStartTime}s)`);
+
+		seekTo(seekTime);
+		playVideo();
+	}
+});
+
 function loadYouTubeAPI(): Promise<typeof YT> {
 	return new Promise((resolve) => {
 		if (window.YT && window.YT.Player) {
@@ -250,7 +266,7 @@ const videoList = computed<YouTubeVideo[]>(() => {
 			? video.startTime + TWELVE_HOURS_MS
 			: video.startTime + video.duration;
 
-		log.info(`Video ${video.id} ${video.title} (${video.author}) from ${new Date(video.startTime).toLocaleString()} to ${new Date(videoEnd).toLocaleString()} checkTime: ${new Date(video.checkTime).toLocaleString()}}	`);
+		// log.info(`Video ${video.id} ${video.title} (${video.author}) from ${new Date(video.startTime).toLocaleString()} to ${new Date(videoEnd).toLocaleString()} checkTime: ${new Date(video.checkTime).toLocaleString()}}	`);
 		// Check if video overlaps with fight time
 		return (video.startTime < fightEndTime) && (videoEnd > fightStartTime);
 	});
