@@ -56,6 +56,7 @@
 	"backups.status.completed": "Backup completed",
 	"backups.status.failed": "Backup failed",
 	"backups.status.deleted": "Deleted old backup",
+	"backups.openbackupsfolder": "Open Backups Folder",
 	"reviews.add_youtube_stream": "Add YouTube Stream",
 	"reviews.select_report": "Select Report",
 	"reviews.select_fight": "Select Fight"

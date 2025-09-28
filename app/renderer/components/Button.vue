@@ -1,7 +1,7 @@
 <script setup lang="ts">
 
 interface ButtonProps {
-	label: string;
+	label?: string;
 	click?: () => void;
 }
 
@@ -33,7 +33,8 @@ const props = defineProps<ButtonProps>()
 		ease-in"
 		@click="click"
 	>
-		{{ label }}
+		<span v-if="label">{{ label }}</span>
+		<slot></slot>
 	</button>
 </template>
 

@@ -36,14 +36,15 @@ api.IR_GetAppVersion().then((versionInfo) => {
 	appReleseType.value = versionInfo.releaseType;
 });
 
-const selectedTab = ref('login');
+const selectedTab = ref('main');
+
 const tabs = [
-	{ name: 'main', label: 'tabname.updater' },
-	{ name: 'pusher', label: 'tabname.pusher', adminOnly: true },
-	{ name: 'settings', label: 'tabname.settings' },
-	{ name: 'status', label: 'tabname.status', adminOnly: true },
-	{ name: 'backups', label: 'tabname.backups' },
-	{ name: 'reviews', label: 'tabname.reviews' }
+	{ name: 'main', svg: 'home', component: TabUpdater },
+	{ name: 'pusher', svg: 'pusher', adminOnly: true, component: TabPusher },
+	{ name: 'settings', svg: 'settings', component: TabSettings },
+	{ name: 'status', svg: 'status', adminOnly: true, component: TabStatus },
+	{ name: 'backups', label: 'tabname.backups', svg: 'backups', component: TabBackups },
+	{ name: 'reviews', label: 'tabname.reviews', svg: 'reviews', component: TabReviews }
 ];
 
 function selectTab(tabName: string) {
@@ -72,15 +73,6 @@ api.IPC_onUnhandledRejection((event, error) => {
 	showError(`Unhandled Rejection: ${error.message}`);
 });
 
-watchEffect(() => {
-	if (selectedTab.value === 'login' && loginStore.isConnected) {
-		selectedTab.value = 'main'
-	} else if (!loginStore.isConnected) {
-		selectedTab.value = 'login';
-		log.debug('User is not connected, switching to login tab');
-	}
-});
-
 
 onMounted(async () => {
 	const authInfo = await api.check_for_login();
@@ -92,37 +84,35 @@ onMounted(async () => {
 </script>
 
 <template>
-	<div class="m-0 p-0 text-base  font-main h-full w-full
+	<div class="m-0 p-0 text-base font-main flex flex-col h-screen
 	dark:bg-dark1 dark:text-gray-50
 	bg-light1 text-black" :class="{'dark': darkMode}">
-		<div id="title-container" class="m-0 flex items-center justify-between w-full p-0 drag">
+		<div class="m-0 flex items-center justify-between w-full p-0 drag">
 			<div class="flex items-center gap-2">
-				<img :src="icon" alt="icon" class="h-[3em] mx-1 vertical-align align-middle" />
+				<img :src="icon" alt="icon" class="h-10 mx-1 vertical-align align-middle" />
 				<h1 class="font-bold text-3xl bg-gradient-to-r from-sky-600 via-blue-500 to-blue-600 text-transparent bg-clip-text animate-gradient">RG Updater</h1>
 			</div>
-			<div id="tab-buttons-container" v-show="loginStore.isConnected">
+			<div v-show="loginStore.isConnected">
 				<ButtonTab v-for="tab in tabs"
 					:key="tab.name"
-					:label="$t(tab.label)"
+					:label="tab.label && $t(tab.label)"
 					@click="selectTab(tab.name)"
 					v-show="!tab.adminOnly || loginStore.isAdmin"
 					:disabled="selectedTab === tab.name"
+					:svg="tab.svg"
 				/>
 			</div>
-			<WinButtons />
+			<WinButtons class="w-22" />
 		</div>
-		<transition name="fade">
-			<ErrorNotification v-if="errorMessage" :label="errorMessage" />
-		</transition>
-		<TabLogin v-if="selectedTab === 'login'" />
-		<TabUpdater v-else-if="selectedTab === 'main'"/>
-		<TabPusher v-else-if="selectedTab === 'pusher' && loginStore.isAdmin" />
-		<TabSettings v-else-if="selectedTab === 'settings'" />
-		<TabStatus v-else-if="selectedTab === 'status' && loginStore.isAdmin" />
-		<TabBackups v-else-if="selectedTab === 'backups'" />
-		<TabReviews v-else-if="selectedTab === 'reviews'" />
-		<footer class="text-center p-1 absolute bottom-0 flex justify-between w-full text-sm
-		dark:bg-dark1 text-neutral-500 font-medium
+		<div class="flex-grow overflow-hidden">
+			<transition name="fade">
+				<ErrorNotification v-if="errorMessage" :label="errorMessage" />
+			</transition>
+			<TabLogin v-if="!loginStore.isConnected" />
+			<component v-else :is="tabs.find(tab => tab.name === selectedTab)?.component" />
+		</div>
+		<footer class="text-center p-1 bottom-0 flex justify-between w-full text-sm text-neutral-500 font-medium
+		dark:bg-dark1
 		bg-light1">
 			<p>{{ loginStore.isConnected ? `Logged as: ${loginStore.getUsername} ${loginStore.getRole || ''}` : '' }}</p>
 			<p>Rak Gaming Updater {{ appVersion }}-{{ appReleseType }} by m33shoq</p>

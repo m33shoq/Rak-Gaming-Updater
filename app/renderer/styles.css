@@ -21,16 +21,15 @@
 
 @custom-variant dark (&:where(.dark, .dark *));
 
-@layer components {
-	.error-text {
-		@apply dark:text-red-500 text-red-500;
-	}
-}
-
 body {
   font-weight: 600;
   overflow: hidden;
   user-select: none;
+  scrollbar-color: #555 transparent;
+}
+
+body .dark {
+  scrollbar-color: #888 transparent;
 }
 
 .animate-gradient {
@@ -60,17 +59,3 @@ body {
 	-webkit-app-region: no-drag;
 }
 
-/* For Webkit browsers (Chrome, Electron, Edge, Safari) */
-::-webkit-scrollbar-track {
-  background: transparent !important;
-}
-
-/* If you use a custom class for your dropdown scroll area: */
-.dropdown .overflow-y-auto::-webkit-scrollbar-track {
-  background: transparent !important;
-}
-
-/* For Firefox */
-.dropdown .overflow-y-auto {
-  scrollbar-color: var(--scrollbar-thumb, #888) transparent;
-}

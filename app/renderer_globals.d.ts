@@ -13,6 +13,7 @@ declare type YouTubeVideo = {
   authorID: string;
   startTime: number; // UNIX ms
   duration: number; // time in ms
+  checkTime: number; // UNIX ms - time when the video was checked/added to the list
 }
 
 declare namespace api {
@@ -43,6 +44,8 @@ declare namespace api {
 	function IR_sendLogin(credentials: { username: string; password: string }): Promise<any>;
 	function IR_minimizeApp(): void;
 	function IR_closeApp(): void;
+	function IR_maximizeAppToggle(): void;
+	function IR_onMaximizeAppToggle(callback: (event: Electron.IpcRendererEvent, ...args: any[]) => void): void;
 
 	function IR_openFileDialogFile(): void;
 	function IR_openFileDialogFolder(): void;

@@ -13,7 +13,6 @@ const model = defineModel()
 	bg-light4 hover:bg-light4/80
 	p-2
 	m-1
-	w-60
 	cursor-text
 	whitespace-nowrap
 	text-white

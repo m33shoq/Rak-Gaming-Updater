@@ -51,6 +51,8 @@ contextBridge.exposeInMainWorld('api', {
 	IR_sendLogin: (credentials: { username: string; password: string }) => ipcRenderer.invoke('login', credentials),
 	IR_minimizeApp: () => ipcRenderer.send('minimize-app'),
 	IR_closeApp: () => ipcRenderer.send('close-app'),
+	IR_maximizeAppToggle: () => ipcRenderer.send('maximize-app-toggle'),
+	IR_onMaximizeAppToggle: (callback: (event: Electron.IpcRendererEvent, ...args: any[]) => void) => ipcRenderer.on('maximize-app-changed', callback),
 	//
 	IR_openFileDialogFile: () => ipcRenderer.send('open-file-dialog-file'),
 	IR_openFileDialogFolder: () => ipcRenderer.send('open-file-dialog-folder'),

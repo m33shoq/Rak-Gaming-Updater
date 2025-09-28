@@ -17,6 +17,11 @@ interface StoreSchema {
   updaterInfo?: any;
   WCL_REFRESH_TOKEN?: string | null;
   youtubeVideoInfo?: any;
+  windowSettings: {
+	width: number;
+	height: number;
+	maximized: boolean;
+  };
 }
 
 const store = new Store<StoreSchema>({
@@ -35,6 +40,11 @@ const store = new Store<StoreSchema>({
 	lastBackupTime: null,
 	darkMode: true,
 	youtubeVideoInfo: { byId: {} },
+	windowSettings: {
+		width: 900,
+		height: 600,
+		maximized: false,
+	},
   },
 });
 

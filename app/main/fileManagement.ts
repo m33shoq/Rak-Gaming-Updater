@@ -45,7 +45,7 @@ export async function DownloadFile(fileData: FileData, retries = 3) {
 					redirect: 'manual',
 					method: 'GET',
 					headers: {
-						Authorization: `Bearer ${await store.get('authToken')}`,
+						Authorization: `Bearer ${store.get('authToken')}`,
 					},
 				});
 

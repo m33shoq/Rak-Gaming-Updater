@@ -55,5 +55,7 @@
 	"backups.status.creating": "Створення бекапу",
 	"backups.status.completed": "Бекап завершено",
 	"backups.status.failed": "Помилка бекапу",
-	"backups.status.deleted": "Старий бекап видалено"
+	"backups.status.deleted": "Старий бекап видалено",
+	"backups.openbackupsfolder": "Відкрити папку з бекапами"
 }
+

@@ -85,9 +85,9 @@ onBeforeUnmount(() => {
 			/>
 			<UIButton :label="$t('login.login')" @click="handleLogin" class="mt-4 h-9 w-50"> </UIButton>
 		</div>
-		<p id="disconnect-reason" class="error-text" v-text="loginStore.getDisconnectReason && `Disconnected: ${loginStore.getDisconnectReason}`">
+		<p class="text-red-500" v-text="loginStore.getDisconnectReason && `Disconnected: ${loginStore.getDisconnectReason}`">
 		</p>
-		<p id="login-error" class="error-text" v-text="connectionErrorDisplay"></p>
+		<p class="text-red-500" v-text="connectionErrorDisplay"></p>
 	</TabContent>
 </template>
 

@@ -1,13 +1,13 @@
 <script setup lang="ts">
 defineProps<{
-	height: string;
+
 }>();
 
 
 </script>
 
 <template>
-	<div class="scroll-frame dark:bg-dark2 bg-light2" :style="{ height: `${height}px` }"
+	<div class="scroll-frame dark:bg-dark2 bg-light2"
 	>
 		<slot/>
 	</div>

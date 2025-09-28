@@ -113,7 +113,7 @@ onMounted(() => {
 					:click="selectBackupsPath"
 					:label="backupsPath"
 				>
-					<button @click="openBackupsPath" v-show="backupsPath">
+					<button @click="openBackupsPath" v-show="backupsPath" :title="$t('backups.openbackupsfolder')">
 						<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"
 							class="size-7 hover:text-primary transition-all ease-in hover:scale-105"
 						>

@@ -21,6 +21,7 @@ import mainWindowWrapper from '@/main/MainWindowWrapper';
 import store from '@/main/store';
 
 // store.set('youtubeVideoInfo', { byId: {} }); // reset
+// store.set('authToken', null); // reset
 
 import {
 	SERVER_URL,
@@ -203,13 +204,15 @@ async function createWindow() {
 
 	const startMinimized = process.argv.includes('--hidden') && store.get('startMinimized');
 	log.info('Creating window', { startMinimized });
+	const windowSettings = store.get('windowSettings');
 	mainWindow = new BrowserWindow({
-		width: 900, // 900
-		height: 600, // 600
+		width: windowSettings?.width || 900,
+		height: windowSettings?.height || 600,
+		minWidth: 900,
+		minHeight: 600,
 		icon: taskBarIconImage,
-		maximizable: false,
 		minimizable: true,
-		resizable: false,
+		resizable: true,
 		fullscreenable: true,
 		frame: false,
 		backgroundColor: '#00000000',
@@ -224,6 +227,10 @@ async function createWindow() {
 		skipTaskbar: startMinimized,
 		show: !startMinimized,
 	});
+
+	if (windowSettings?.maximized) {
+		mainWindow?.maximize();
+	}
 
 	mainWindowWrapper.init(mainWindow);
 	//123
@@ -316,6 +323,28 @@ async function createWindow() {
 		mainWindow?.hide();
 	});
 
+	// @ts-ignore
+	mainWindow?.on('unmaximize', (event: Electron.Event) => {
+		mainWindow?.webContents.send('maximize-app-changed', false);
+
+		const windowSettings = store.get('windowSettings');
+		windowSettings.maximized = false;
+		store.set('windowSettings', windowSettings);
+	});
+
+	// @ts-ignore
+	mainWindow?.on('maximize', (event: Electron.Event) => {
+		mainWindow?.webContents.send('maximize-app-changed', true);
+		const windowSettings = store.get('windowSettings');
+		windowSettings.maximized = true;
+		store.set('windowSettings', windowSettings);
+	});
+
+	mainWindow?.on('resized', () => {
+		if (!mainWindow) return;
+		const { width, height } = mainWindow.getBounds();
+		store.set('windowSettings', { width, height, maximized: mainWindow.isMaximized() });
+	});
 
 	mainWindow?.on('close', async (event: Electron.Event) => {
 		if (!isQuiting && !store.get('quitOnClose')) {
@@ -577,6 +606,16 @@ ipcMain.on('close-app', (event) => {
 	mainWindow?.close();
 });
 
+ipcMain.on('maximize-app-toggle', (event) => {
+	if (!mainWindow) return;
+
+	if (mainWindow.isMaximized()) {
+		mainWindow.unmaximize();
+	} else {
+		mainWindow.maximize();
+	}
+});
+
 ipcMain.handle('select-update-path', async () => {
 	const result = await dialog.showOpenDialog(mainWindow as BrowserWindow, {
 		properties: ['openDirectory'],
@@ -763,7 +802,7 @@ ipcMain.handle('request-files-data', async (event) => {
 ipcMain.on('connect', async () => {
 	log.info('Connecting to server');
 	const token = store.get('authToken');
-	socket.auth = { token };
+	socket.auth = { token, APP_VERSION: app.getVersion() };
 	socket.connect();
 });
 
@@ -1368,7 +1407,11 @@ function updateYoutubeVideoInfo(youtubeVideoInfoReceived) {
 	let anyNew = false;
 
 	for (const videoId in youtubeVideoInfoReceived.byId) {
-		if (youtubeVideoInfoReceived.byId.hasOwnProperty(videoId) && !youtubeVideoInfo.byId[videoId]) {
+		if (youtubeVideoInfoReceived.byId.hasOwnProperty(videoId) &&
+		(
+			!youtubeVideoInfo.byId[videoId] ||
+			youtubeVideoInfo.byId[videoId].checkTime < youtubeVideoInfoReceived.byId[videoId].checkTime)
+		) {
 			youtubeVideoInfo.byId[videoId] = youtubeVideoInfoReceived.byId[videoId];
 			anyNew = true;
 		}
@@ -1383,7 +1426,7 @@ function addYoutubeVideoInfo(videoInfo) {
 	if (!videoInfo?.id) return;
 
 	const youtubeVideoInfo = store.get('youtubeVideoInfo')
-	if (!youtubeVideoInfo.byId[videoInfo.id]) {
+	if (!youtubeVideoInfo.byId[videoInfo.id] || youtubeVideoInfo.byId[videoInfo.id].checkTime < videoInfo.checkTime) {
 		youtubeVideoInfo.byId[videoInfo.id] = videoInfo;
 		store.set('youtubeVideoInfo', youtubeVideoInfo);
 	}

@@ -5,12 +5,11 @@ import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue';
 
 const props = defineProps<{
 	label?: string;
-	change?: () => void;
 	options: Array<{
 		value: any;
 		label: string;
 	}>;
-	maxVisible?: number; // <-- Add this prop
+	maxVisible?: number;
 	placeholder?: string;
 	onOpen?: () => void;
 	onClose?: () => void;
@@ -77,6 +76,7 @@ onBeforeUnmount(() => {
 watch(toggled, (val) => {
 	showScrollbar.value = false;
 });
+
 function onTransitionEnd() {
     if (toggled.value) {
         showScrollbar.value = true;
@@ -121,10 +121,8 @@ function onTransitionEnd() {
 					maxHeight: maxHeight
 				}"
 				@transitionend="onTransitionEnd"
-
 			>
 				<button v-for="option in options" class="text-white last:rounded-b-md p-0.5 px-2 text-left h-[24px] last:h-[28px] dark:hover:bg-dark3 hover:bg-light3 w-full whitespace-nowrap relative"
-
 					:key="option.value"
 					:selected="model === option.value"
 					@click="selectOption(option.value)"
@@ -143,39 +141,5 @@ function onTransitionEnd() {
 </template>
 
 <style scoped>
-/* Light theme */
-.dropdown-scrollbar-light {
-  scrollbar-width: thin;
-  scrollbar-color: #888 #eee;
-}
-.dropdown-scrollbar-light::-webkit-scrollbar {
-  width: 8px;
-  background: #eee;
-  border-radius: 4px;
-}
-.dropdown-scrollbar-light::-webkit-scrollbar-thumb {
-  background: #888;
-  border-radius: 4px;
-}
-.dropdown-scrollbar-light::-webkit-scrollbar-thumb:hover {
-  background: #aaa;
-}
 
-/* Dark theme */
-.dropdown-scrollbar-dark {
-  scrollbar-width: thin;
-  scrollbar-color: #555 #222;
-}
-.dropdown-scrollbar-dark::-webkit-scrollbar {
-  width: 8px;
-  background: #222;
-  border-radius: 4px;
-}
-.dropdown-scrollbar-dark::-webkit-scrollbar-thumb {
-  background: #555;
-  border-radius: 4px;
-}
-.dropdown-scrollbar-dark::-webkit-scrollbar-thumb:hover {
-  background: #888;
-}
 </style>

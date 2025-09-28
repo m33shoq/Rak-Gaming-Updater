@@ -23,7 +23,17 @@ type clientInfo = {
 export const useConnectedClientsStore = defineStore('connectedClients', () => {
 	const connectedClients = ref<Array<clientInfo>>([]);
 
-	const getClients = computed(() => connectedClients.value);
+	const getClients = computed(() => connectedClients.value?.sort((a, b) => {
+		if (a.NICKNAME && b.NICKNAME) {
+			return a.NICKNAME.localeCompare(b.NICKNAME);
+		} else if (a.NICKNAME) {
+			return -1;
+		} else if (b.NICKNAME) {
+			return 1;
+		} else {
+			return a.username.localeCompare(b.username);
+		}
+	}));
 
 	function setClients(clients: Array<clientInfo>) {
 		connectedClients.value = clients;
@@ -32,7 +42,6 @@ export const useConnectedClientsStore = defineStore('connectedClients', () => {
 	api.IR_onConnectedClients((event, clients) => {
 		setClients(clients);
 	});
-
 
 	return {
 		connectedClients,

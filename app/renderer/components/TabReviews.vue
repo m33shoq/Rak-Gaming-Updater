@@ -118,6 +118,8 @@ function seekTo(seconds: number) {
   	}
 }
 
+let lastFightRelativeTime = 0;
+let lastPlayerState = -1;
 watch(selectedVideoInfo, () => {
 	if (player.value) {
 		if (selectedVideoInfo.value) {
@@ -125,12 +127,11 @@ watch(selectedVideoInfo, () => {
 			const fightStartTime = (reportTimeOffset + wclDataStore.getSelectedFight?.startTime || 0) / 1000; // in seconds
 			const videoStartTime = selectedVideoInfo.value.startTime / 1000; // in seconds
 
-			const seekTime = fightStartTime - videoStartTime + YOUTUBE_DELAY_OFFSET;
+			const seekTime = fightStartTime - videoStartTime + YOUTUBE_DELAY_OFFSET + lastFightRelativeTime;
 
 			log.info(`Loading video ${selectedVideoInfo.value.id}, seeking to ${seekTime}s (fight start: ${fightStartTime}s, video start: ${videoStartTime}s)`);
 
 			player.value.loadVideoById(selectedVideoInfo.value?.id || '', seekTime);
-			// pauseVideo();
 		} else {
 			player.value.stopVideo();
 		}
@@ -171,11 +172,17 @@ onMounted(async () => {
 	player.value = new YT.Player("player", {
 		videoId: selectedVideoId.value,
 		events: {
-			onReady: () => {
+			onReady: (event) => {
 				console.log("YouTube player ready");
+				event.target.mute();
 			},
 			onStateChange: (event) => {
+				lastPlayerState = event.data;
 				console.log("State changed:", event.data);
+			},
+			onError: (event) => {
+				alert(`Error embedding video. Error code: ${event.data}`);
+				log.info("YouTube embed error:", event);
 			}
 		},
 		playerVars: {
@@ -183,7 +190,7 @@ onMounted(async () => {
 			controls: 1,
 			rel: 0,
 			showinfo: 0,
-			modestbranding: 1
+			modestbranding: 1,
 		}
 	});
 });
@@ -243,12 +250,13 @@ const videoList = computed<YouTubeVideo[]>(() => {
 			? video.startTime + TWELVE_HOURS_MS
 			: video.startTime + video.duration;
 
+		log.info(`Video ${video.id} ${video.title} (${video.author}) from ${new Date(video.startTime).toLocaleString()} to ${new Date(videoEnd).toLocaleString()} checkTime: ${new Date(video.checkTime).toLocaleString()}}	`);
 		// Check if video overlaps with fight time
 		return (video.startTime < fightEndTime) && (videoEnd > fightStartTime);
 	});
 });
 
-const YOUTUBE_DELAY_OFFSET = -8
+const YOUTUBE_DELAY_OFFSET = -10;
 
 // 0 - fight end, in seconds
 function seekToFightTimestamp(fightTimestamp) {
@@ -323,6 +331,7 @@ const currentFightCursor = computed(() => {
     // Clamp between 0 and fightDuration (in seconds)
     const fightDurationSec = fightDuration.value / 1000;
     const clamped = Math.max(0, Math.min(fightRelativeTime, fightDurationSec));
+	lastFightRelativeTime = clamped;
 
 	// log.debug(`Current video time: ${currentVideoTime}s, fight relative time: ${fightRelativeTime}s, clamped: ${clamped}s`);
 
@@ -385,11 +394,13 @@ const playerDeaths = computed(() => {
 			return {
 				name: event.target.name,
 				class: event.target.type,
-				spell: event.ability?.name ?? 'Unknown',
+				spell: event.killingAbility?.name ?? '???',
+				icon: event.killingAbility?.abilityIcon ?? '',
 				percent,
 				timestamp: (eventTimestamp - fightStartTime) / 1000, // in seconds
 			};
 		})
+		.filter(death => death.percent > 0 && death.percent < 1);
 });
 
 // watch(phaseTransitions, (newVal) => {
@@ -407,61 +418,58 @@ const playerDeaths = computed(() => {
 		<div v-if="!refreshToken" class="flex flex-col items-center">
 			<UIButton @click="wclAuth" label="Authorize WCL client" class="m-5 h-10 min-w-1/3"></UIButton>
 		</div>
-		<div v-else>
-			<div class="flex flex-row gap-4">
-				<div class="flex flex-col items-start mb-2">
-					<Dropdown :options="reportOptions" class="min-w-[36rem]"
+		<div v-else class="w-full h-full flex flex-col">
+			<div class="flex flex-row gap-0 h-9/10 flex-14 overflow-hidden">
+				<div class="flex flex-1 flex-col max-w-[calc(100vw-350px)]">
+					<Dropdown :options="reportOptions" class="min-w-[34rem]"
 						:placeholder="$t('reviews.select_report')"
 						v-model="wclDataStore.selectedReportCode"
 						:onOpen="wclDataStore.requestReports"
 					></Dropdown>
-					<Dropdown :options="fightOptions" class="min-w-[36rem]"
+					<Dropdown :options="fightOptions" class="min-w-[34rem]"
 						:placeholder="$t('reviews.select_fight')"
 						v-model="wclDataStore.selectedFightID"
 						:onOpen="wclDataStore.requestReportData"
 					></Dropdown>
-					<div
-						class="relative flex items-center justify-center mt-2"
-						style="width: 578px; height: 328px;"
-						>
-						<div
-							v-if="!selectedVideoInfo"
-							class="absolute inset-0 flex items-center justify-center bg-gray-200 dark:bg-dark3 rounded"
-							style="z-index: 1;"
-						>
-							<span class="text-gray-500 dark:text-gray-400 text-lg">Video will appear here</span>
-						</div>
-						<iframe
+					<div class="bg-gray-500 aspect-video max-w-[min(100%,80vw)] h-[calc(100%-85px)] rounded-md mt-2">
+						<iframe v-show="selectedVideoInfo"
 							id="player"
-							width="578"
-							height="328"
-							src="https://www.youtube.com/embed/xxxx?enablejsapi=1"
+							src="https://www.youtube-nocookie.com/embed/?enablejsapi=1"
 							frameborder="0"
 							allow="autoplay; encrypted-media; fullscreen"
-							allowfullscreen
-							class="rounded"
-							style="z-index: 2;"
+							class="rounded-md bg-gray-500 w-full h-full"
+							referrerpolicy="strict-origin-when-cross-origin"
 						></iframe>
 					</div>
 				</div>
-				<div>
+				<div class="w-full">
 					<div class="h-[70px]">
-						<div class="flex items-center gap-1">
-							<Input class="max-w-40 h-8"
+						<div class="flex items-center mt-1">
+							<Input class="flex-10 h-8"
 								:placeholder="$t('reviews.add_youtube_stream')"
 								v-model="youtubeLink"
 							></Input>
-							<UIButton @click="requestVideoInfo" label="Add" class="min-w-20"></UIButton>
+							<UIButton @click="requestVideoInfo" label="" class="flex-1 mr-1 h-8">
+								<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="size-6 inline-block">
+									<path
+										fill-rule="evenodd"
+										d="M12 3.75a.75.75 0 0 1 .75.75v6.75h6.75a.75.75 0 0 1 0 1.5h-6.75v6.75a.75.75 0 0 1-1.5 0v-6.75H4.5a.75.75 0 0 1 0-1.5h6.75V4.5a.75.75 0 0 1 .75-.75Z"
+										clip-rule="evenodd"
+										stroke="currentColor"
+										stroke-width="2"
+									/>
+								</svg>
+							</UIButton>
 						</div>
 						{{ youtubeLinkStatus }}
 					</div>
-					<ScrollFrame height='330' class="w-64">
+					<ScrollFrame class="max-h-[calc(100%-85px)] flex flex-col">
 						<template #default>
 							<button v-for="video in videoList"
-								:key="video.id" class="w-[96%] h-8 m-0.5 rounded-md"
+								:key="video.id" class=" h-8 m-0.5 rounded-md"
 								:class="{
 									'border-1 border-secondary dark:bg-dark1 bg-light1': video.id === selectedVideoId,
-									'clickable dark:bg-dark4 dark:hover:bg-dark3 bg-light4 hover:bg-light3 ': video.id !== selectedVideoId,
+									'dark:bg-dark4 dark:hover:bg-dark3 bg-light4 hover:bg-light3 ': video.id !== selectedVideoId,
 								}"
 								@click="selectedVideoInfo = video"
 							>
@@ -471,9 +479,9 @@ const playerDeaths = computed(() => {
 					</ScrollFrame>
 				</div>
 			</div>
-			<div>
+			<div class="flex-1 min-h-18 flex justify-center w-full">
 				<!-- Timeline -->
-				<button class="w-[800px] h-6 m-0.5 mt-6 rounded-md clickable
+				<button class="w-96/100 h-6 m-0.5 mt-6 rounded-md
 					dark:bg-dark4 dark:hover:bg-dark3
 					bg-light4 hover:bg-light3 relative"
 					@click="onTimelineClick"
@@ -483,8 +491,8 @@ const playerDeaths = computed(() => {
   					@mousedown.prevent
 				>
 					<!-- Time Labels -->
-					<p class="absolute left-0 bottom-[-22px]">0</p>
-					<p class="absolute right-0 bottom-[-22px]">{{ fightDurationDisplay }}</p>
+					<p class="absolute left-0 bottom-[-26px] bg-black/50 rounded-md p-0.5 px-1 pointer-events-none text-sm text-white">0</p>
+					<p class="absolute right-0 bottom-[-26px] bg-black/50 rounded-md p-0.5 px-1 pointer-events-none text-sm text-white">{{ fightDurationDisplay }}</p>
 					<!-- Phases -->
 					<template v-for="phase in phaseTransitions" :key="phase.name + phase.percent">
 						<div
@@ -507,10 +515,15 @@ const playerDeaths = computed(() => {
 								>
 								💀
 									<span
-										class="absolute left-1/2 -translate-x-1/2 -top-7 z-30 px-2 py-1 rounded bg-black/80 text-xs text-white whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none"
+										class="absolute left-1/2 -translate-x-1/2 -top-12 z-30 px-2 pr-8 py-1 rounded bg-black/80 text-xs text-white whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none"
 									>
-										{{ formatTime(death.timestamp) }} <span :class="getClassColor(death.class)">{{ death.name }}</span> died
-										<!-- <br to {{ death.spell }} -->
+										{{ formatTime(death.timestamp) }} <span :class="getClassColor(death.class)">{{ death.name }}</span><br /> died to
+										<img v-if ="death.icon"
+											:src="`https://wow.zamimg.com/images/wow/icons/large/${death.icon?.toLowerCase()}`"
+											alt="Spell Icon"
+											class="inline-block w-6 h-6 align-middle rounded"
+										/>
+										{{ death.spell }}
 									</span>
 								</p>
 							</div>
@@ -522,7 +535,11 @@ const playerDeaths = computed(() => {
 						class="absolute top-0 bottom-0 w-[2px] bg-amber-400 z-10 pointer-events-none"
 						:style="{ left: `calc(${(currentFightCursor * 100).toFixed(2)}%)` }"
 					></div>
-					<!-- Tooltip -->
+					<!-- Tooltip + Mover Cursor -->
+					<div v-if="timelineTooltip.visible"
+						class="absolute top-0 bottom-0 w-0.5 bg-white/50 z-20 pointer-events-none"
+						:style="{ left: timelineTooltip.x + 'px' }"
+					></div>
 					<span
 						v-if="timelineTooltip.visible && !isDeathTooltipShown"
 						:style="{ left: timelineTooltip.x + 'px' }"
@@ -533,21 +550,10 @@ const playerDeaths = computed(() => {
 				</button>
 			</div>
 		</div>
+
 	</TabContent>
 </template>
 
 <style scoped>
-/* Remove scrollbar background for dropdowns */
-.dropdown .overflow-y-auto::-webkit-scrollbar-track {
-  background: transparent !important;
-}
-.dropdown .overflow-y-auto {
-  scrollbar-color: #888 transparent; /* thumb color, track color */
-}
-
-.timeline-tooltip {
-  transform: translateX(-50%);
-  transition: left 0.05s;
-}
 
 </style>
