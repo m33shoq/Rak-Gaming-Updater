@@ -71,5 +71,7 @@ declare namespace api {
 	function IR_requestWCLFightEvents(reportCode: string, fightID: number): Promise<any>;
 	// youtube
 	function IR_requestYouTubeVideoInfo(URL: string): Promise<any>;
+
+	function IR_OpenWCLDeath(reportCode: string, fightID: number, deathID: number): Promise<any>;
 }
 

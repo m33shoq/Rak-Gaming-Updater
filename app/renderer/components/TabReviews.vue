@@ -402,9 +402,11 @@ const playerDeaths = computed(() => {
 	const reportTimeOffset = wclDataStore.getReportDetails?.startTime || 0;
 	const fightStartTime = (reportTimeOffset + wclDataStore.getSelectedFight?.startTime || 0); // in ms
 
+	let deathID = 0;
 	return wclDataStore.getFightEvents
 		.map(event => {
 			if (event.type !== 'death') return null;
+			deathID++;
 			const eventTimestamp = reportTimeOffset + event.timestamp; // in ms
 			const percent = (eventTimestamp - fightStartTime) / fightDuration.value;
 			return {
@@ -414,6 +416,7 @@ const playerDeaths = computed(() => {
 				icon: event.killingAbility?.abilityIcon ?? '',
 				percent,
 				timestamp: (eventTimestamp - fightStartTime) / 1000, // in seconds
+				id: deathID,
 			};
 		})
 		.filter(death => death.percent > 0 && death.percent < 1);
@@ -426,6 +429,11 @@ const playerDeaths = computed(() => {
 // watch(playerDeaths, (newVal) => {
 // 	log.info('Player deaths updated:', newVal);
 // }, { immediate: true });
+
+function openWCLDeath(deathID: number) {
+	if (!wclDataStore.selectedReportCode || !wclDataStore.selectedFightID) return;
+	api.IR_OpenWCLDeath(wclDataStore.selectedReportCode, wclDataStore.selectedFightID, deathID);
+}
 
 </script>
 
@@ -525,13 +533,15 @@ const playerDeaths = computed(() => {
 							:style="{ left: `calc(${(death.percent * 100).toFixed(2)}%)` }"
 							>
 							<div class="relative flex justify-center">
-								<p class="absolute top-[-20px] text-red-600 cursor-pointer pointer-events-auto group"
+								<p class="absolute top-[-20px] text-red-600 cursor-pointer pointer-events-auto group clickable"
 									@mouseover="isDeathTooltipShown = true"
 									@mouseout="isDeathTooltipShown = false"
+									@click="$event.stopPropagation(); seekToFightTimestamp(death.timestamp-10)"
+									@contextmenu="openWCLDeath(death.id)"
 								>
 								💀
 									<span
-										class="absolute left-1/2 -translate-x-1/2 -top-12 z-30 px-2 pr-8 py-1 rounded bg-black/80 text-xs text-white whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none"
+										class="absolute left-1/2 -translate-x-1/2 -top-18 z-30 px-2 pr-8 py-1 rounded bg-black/80 text-xs text-white whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none"
 									>
 										{{ formatTime(death.timestamp) }} <span :class="getClassColor(death.class)">{{ death.name }}</span><br /> died to
 										<img v-if ="death.icon"

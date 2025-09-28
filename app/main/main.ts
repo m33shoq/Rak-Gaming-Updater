@@ -1444,3 +1444,11 @@ ipcMain.handle('request-youtube-video-info', async (event, URL) => {
 		});
 	});
 });
+
+ipcMain.handle('open-wcl-death', async (event, { reportCode, fightID, deathID }) => {
+	// open in default browser
+	// https://www.warcraftlogs.com/reports/xmHw1b8M4aqVtzyv?fight=32&type=deaths&death=1
+	const url = `https://www.warcraftlogs.com/reports/${reportCode}?fight=${fightID}&type=deaths&death=${deathID}`;
+	log.info('Opening WCL death link:', url);
+	void shell.openExternal(url);
+});

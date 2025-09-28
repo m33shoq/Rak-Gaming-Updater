@@ -82,6 +82,7 @@ contextBridge.exposeInMainWorld('api', {
 	IR_requestWCLReportData: (reportCode: string) => ipcRenderer.invoke('wcl-request-report-data', { reportCode }),
 	IR_requestWCLFightEvents: (reportCode: string, fightID: string) => ipcRenderer.invoke('wcl-request-fight-events', { reportCode, fightID }),
 	IR_requestYouTubeVideoInfo: (URL: string) => ipcRenderer.invoke('request-youtube-video-info', URL),
+	IR_OpenWCLDeath: (reportCode: string, fightID: number, deathID: number) => ipcRenderer.invoke('open-wcl-death', { reportCode, fightID, deathID }),
 });
 
 console.log('preload script loaded');
