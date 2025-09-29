@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import log from 'electron-log/renderer';
 
-import { ref, computed, watch, onMounted, onUnmounted, watchEffect } from 'vue';
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue';
 
 import TabContent from '@/renderer/components/TabContent.vue';
 import UIButton from '@/renderer/components/Button.vue';
@@ -11,7 +11,7 @@ import Input from '@/renderer/components/Input.vue';
 import ScrollFrame from '@/renderer/components/ScrollFrame.vue';
 
 import { getElectronStoreRef } from '@/renderer/store/ElectronRefStore';
-import { useWCLDataStore } from '@/renderer/store/WCLDataStore';
+import { useReviewsStore } from '@/renderer/store/ReviewsStore';
 
 import { useI18n } from 'vue-i18n'
 const { t } = useI18n()
@@ -50,7 +50,7 @@ function formatTime(t) {
 	return `${minutes}:${seconds.toString().padStart(2, '0')}`;
 }
 
-const wclDataStore = useWCLDataStore();
+const reviewsStore = useReviewsStore();
 
 const refreshToken = getElectronStoreRef<string | null>('WCL_REFRESH_TOKEN', null);
 
@@ -82,8 +82,6 @@ async function requestVideoInfo() {
 	}
 }
 
-const selectedVideoInfo = ref<YouTubeVideo | null>(null)
-const selectedVideoId = computed(() => selectedVideoInfo.value?.id || null);
 
 /*
 player.playVideo() → Start playback
@@ -120,37 +118,44 @@ function seekTo(seconds: number) {
 
 let lastFightRelativeTime = 0;
 let lastPlayerState = -1;
-watch(selectedVideoInfo, () => {
+function onVideoIdChanged() {
 	if (player.value) {
-		if (selectedVideoInfo.value) {
-			const reportTimeOffset = wclDataStore.getReportDetails?.startTime || 0;
-			const fightStartTime = (reportTimeOffset + wclDataStore.getSelectedFight?.startTime || 0) / 1000; // in seconds
-			const videoStartTime = selectedVideoInfo.value.startTime / 1000; // in seconds
+		const videoId = reviewsStore.getSelectedVideoId;
+		if (videoId) {
+			const relativeFightStart = reviewsStore.getFightStartRelativeToVideo / 1000; // in seconds
 
-			const seekTime = fightStartTime - videoStartTime + YOUTUBE_DELAY_OFFSET + lastFightRelativeTime;
+			const seekTime = relativeFightStart + YOUTUBE_DELAY_OFFSET + lastFightRelativeTime;
 
-			log.info(`Loading video ${selectedVideoInfo.value.id}, seeking to ${seekTime}s (fight start: ${fightStartTime}s, video start: ${videoStartTime}s)`);
+			log.info(`Loading video ${videoId}, seeking to ${seekTime}s (relativeFightStart: ${relativeFightStart}s, lastFightRelativeTime: ${lastFightRelativeTime}s)`);
 
-			player.value.loadVideoById(selectedVideoInfo.value?.id || '', seekTime);
+			player.value.loadVideoById(videoId, seekTime);
 		} else {
 			player.value.stopVideo();
 		}
 	}
+}
+
+watch(() => reviewsStore.getSelectedVideoId, (newId) => {
+	onVideoIdChanged();
 });
 
-watch(() => wclDataStore.selectedFightID, (newVal) => {
+watch(() => reviewsStore.selectedFightID, (newVal) => {
 	lastFightRelativeTime = 0;
-	if (selectedVideoInfo.value) {
-		const reportTimeOffset = wclDataStore.getReportDetails?.startTime || 0;
-		const fightStartTime = (reportTimeOffset + wclDataStore.getSelectedFight?.startTime || 0) / 1000; // in seconds
-		const videoStartTime = selectedVideoInfo.value.startTime / 1000; // in seconds
+	if (reviewsStore.selectedVideoInfo) {
+		const relativeFightStart = reviewsStore.getFightStartRelativeToVideo / 1000; // in seconds
 
-		const seekTime = fightStartTime - videoStartTime + YOUTUBE_DELAY_OFFSET;
+		const seekTime = relativeFightStart + YOUTUBE_DELAY_OFFSET;
 
-		log.info(`New fight selected, seeking to ${seekTime}s (fight start: ${fightStartTime}s, video start: ${videoStartTime}s)`);
+		log.info(`New fight selected, seeking to ${seekTime}s (relativeFightStart: ${relativeFightStart}s)`);
 
 		seekTo(seekTime);
 		playVideo();
+	}
+});
+
+watch(() => reviewsStore.selectedReportCode, (newVal, oldVal) => {
+	if (newVal !== oldVal) {
+		lastFightRelativeTime = 0;
 	}
 });
 
@@ -174,7 +179,7 @@ let cursorUpdateInterval = null as number | null;
 const currentVideoTime = ref(0);
 
 onMounted(async () => {
-	wclDataStore.requestReports();
+	reviewsStore.requestReports();
 	cursorUpdateInterval = window.setInterval(() => {
         if (player.value) {
 			currentVideoTime.value = player.value.getCurrentTime?.() ?? 0;
@@ -186,11 +191,12 @@ onMounted(async () => {
   	const YT = await loadYouTubeAPI();
 
 	player.value = new YT.Player("player", {
-		videoId: selectedVideoId.value,
+		videoId: reviewsStore.getSelectedVideoId,
 		events: {
 			onReady: (event) => {
 				console.log("YouTube player ready");
 				event.target.mute();
+				onVideoIdChanged();
 			},
 			onStateChange: (event) => {
 				lastPlayerState = event.data;
@@ -221,55 +227,87 @@ async function wclAuth() {
 }
 
 const reportOptions = computed(() => {
-	return wclDataStore.getReports.map(r => ({
+	return reviewsStore.getReports.map(r => ({
 		label: `${r.title} - ${new Date(r.startTime).toLocaleString()}`,
 		value: r.code,
 	}));
 });
 
 const fightOptions = computed(() => {
-	if (!wclDataStore.getSelectedReport || !wclDataStore.getReportDetails?.fights) return [];
+	if (!reviewsStore.getSelectedReport || !reviewsStore.getReportDetails?.fights) return [];
 
-	const timeOffset = wclDataStore.getReportDetails.startTime;
+	const timeOffset = reviewsStore.getReportTimeOffset;
+	const fights = reviewsStore.getReportDetails.fights;
 
-	return wclDataStore.getReportDetails?.fights?.map(f => ({
-		label: `#${f.id} ${f.name} ${f.kill ? 'KILL' : (f.bossPercentage).toFixed(1) + '%'} ${formatTime((f.endTime - f.startTime) / 1000)} (${new Date(timeOffset + f.startTime).toLocaleTimeString()})`,
-		value: f.id,
-	})) || [];
-});
+	const idToCount = new Map<number, number>();
+	const encounterToCount = new Map<number, number>();
+	for (let i = fights.length - 1; i >= 0; i--) {
+		const f = fights[i];
+		const encounterID = f.encounterID;
+		const currentCount = encounterToCount.get(encounterID) || 0;
+		encounterToCount.set(encounterID, currentCount + 1);
 
-// in ms
-const fightDuration = computed(() => {
-	if (!wclDataStore.getSelectedFight) return 0;
-	return (wclDataStore.getSelectedFight.endTime - wclDataStore.getSelectedFight.startTime);
+		idToCount.set(f.id, currentCount + 1);
+	}
+
+	return fights.map(f => {
+		const count = idToCount.get(f.id) || 0;
+
+		return {
+			label: `#${count} ${f.name} ${f.kill ? 'KILL' : (f.bossPercentage).toFixed(1) + '%'} ${formatTime((f.endTime - f.startTime) / 1000)} (${new Date(timeOffset + f.startTime).toLocaleTimeString()})`,
+			value: f.id,
+		}
+	}) || [];
 });
 
 const fightDurationDisplay = computed(() => {
-	const duration = fightDuration.value / 1000; // in seconds
+	const duration = reviewsStore.getFightDuration / 1000; // in seconds
 	return formatTime(duration);
 });
 
 const TWELVE_HOURS_MS = 12 * 60 * 60 * 1000;
 
 const videoList = computed<YouTubeVideo[]>(() => {
-	const reportTimeOffset = wclDataStore.getReportDetails?.startTime || 0;
-	const fightStartTime = reportTimeOffset + wclDataStore.getSelectedFight?.startTime || 0;
-	const fightEndTime = reportTimeOffset + wclDataStore.getSelectedFight?.endTime || 0;
-
-	if (!fightStartTime || !fightEndTime) return [];
+	const reportTimeOffset = reviewsStore.getReportTimeOffset;
+	log.info('Calculating video list with report time offset:', reportTimeOffset);
+	const fightStartTime = reportTimeOffset + (reviewsStore.getSelectedFight?.startTime || 0);
+	const fightEndTime = reportTimeOffset + (reviewsStore.getSelectedFight?.endTime || 0);
 
 	const videosArray: YouTubeVideo[] = Object.values(youtubeVideoInfo.value.byId || {});
 
-	return videosArray.filter((video) => {
-		// If duration is 0, treat as "still live" (endTime = startTime + 12 hours)
-		const videoEnd = video.duration === 0
-			? video.startTime + TWELVE_HOURS_MS
-			: video.startTime + video.duration;
+	// if no specific fight selected just check streams that were active when report started
+	if (reportTimeOffset) {
+		return videosArray.filter((video) => {
+			// If duration is 0, treat as "still live" (endTime = startTime + 12 hours)
+			const videoEnd = video.duration === 0
+				? video.startTime + TWELVE_HOURS_MS
+				: video.startTime + video.duration;
 
-		// log.info(`Video ${video.id} ${video.title} (${video.author}) from ${new Date(video.startTime).toLocaleString()} to ${new Date(videoEnd).toLocaleString()} checkTime: ${new Date(video.checkTime).toLocaleString()}}	`);
-		// Check if video overlaps with fight time
-		return (video.startTime < fightEndTime) && (videoEnd > fightStartTime);
-	});
+			// log.info(`Video ${video.id} ${video.title} (${video.author}) from ${new Date(video.startTime).toLocaleString()} to ${new Date(videoEnd).toLocaleString()} checkTime: ${new Date(video.checkTime).toLocaleString()}}	`);
+			// log.info(video.startTime,
+			// 	videoEnd,
+			// 	fightEndTime,
+			// 	fightStartTime,
+			// 	(video.startTime <= fightEndTime) && (videoEnd >= fightStartTime),
+			// 	video.startTime <= fightEndTime,
+			// 	videoEnd >= fightStartTime
+			// );
+			// Check if video overlaps with fight time
+			return (video.startTime <= fightEndTime) && (videoEnd >= fightStartTime);
+		});
+	}
+
+	return [];
+});
+
+watch(videoList, (newList) => {
+	if (!reviewsStore.selectedVideoInfo && newList.length > 0) {
+		reviewsStore.setSelectedVideoInfo(newList[0]);
+	}
+	log.info('Filtered video list length:', newList.length);
+	for (const video of newList) {
+		log.info(`Video ${video.id} ${video.title} (${video.author}) from ${new Date(video.startTime).toLocaleString()} to ${new Date(video.startTime + (video.duration || 0)).toLocaleString()} checkTime: ${new Date(video.checkTime).toLocaleString()}}	`);
+	}
 });
 
 const YOUTUBE_DELAY_OFFSET = -10;
@@ -277,16 +315,11 @@ const YOUTUBE_DELAY_OFFSET = -10;
 // 0 - fight end, in seconds
 function seekToFightTimestamp(fightTimestamp) {
 	if (!player.value) return;
-	if (!fightDuration.value) return;
-	if (!selectedVideoInfo.value) return;
+	const relativeFightStart = reviewsStore.getFightStartRelativeToVideo / 1000; // in seconds
 
-	const reportTimeOffset = wclDataStore.getReportDetails?.startTime || 0;
-	const fightStartTime = (reportTimeOffset + wclDataStore.getSelectedFight?.startTime || 0) / 1000; // in seconds
-	const videoStartTime = selectedVideoInfo.value.startTime / 1000; // in seconds
+	const seekTime = relativeFightStart + fightTimestamp + YOUTUBE_DELAY_OFFSET;
 
-	const seekTime = fightStartTime + fightTimestamp - videoStartTime + YOUTUBE_DELAY_OFFSET;
-
-	log.info(`Seeking to ${seekTime}s in video (fight start: ${fightStartTime}s, video start: ${videoStartTime}s)`);
+	log.info(`Seeking to ${seekTime}s in video (relativeFightStart: ${relativeFightStart}s, fightTimestamp: ${fightTimestamp}s)`);
 
 	seekTo(seekTime);
 	playVideo();
@@ -300,7 +333,7 @@ function onTimelineClick(event: MouseEvent) {
 
 	// Calculate the time based on click position
 	const percent = x / width;
-	const fightTimestamp = percent * (fightDuration.value / 1000); // in seconds
+	const fightTimestamp = percent * (reviewsStore.getFightDuration / 1000); // in seconds
 	log.info(`Timeline clicked at ${x}px (width: ${width}px), fight timestamp is ${fightTimestamp}s`);
 
 	seekToFightTimestamp(fightTimestamp);
@@ -320,7 +353,7 @@ function onTimelineMove(event: MouseEvent) {
 	const width = rect.width;
 
 	const percent = x / width;
-	const fightSeconds = percent * (fightDuration.value / 1000);
+	const fightSeconds = percent * (reviewsStore.getFightDuration / 1000);
 
 	timelineTooltip.value = {
 		visible: true,
@@ -334,32 +367,29 @@ function onTimelineLeave() {
 }
 
 const currentFightCursor = computed(() => {
-    if (!player.value || !fightDuration.value) return 0;
+    if (!player.value || !reviewsStore.getFightDuration) return 0;
 
     // Calculate fight start and video start in seconds
-    const reportTimeOffset = wclDataStore.getReportDetails?.startTime || 0;
-    const fightStartTime = (reportTimeOffset + wclDataStore.getSelectedFight?.startTime || 0) / 1000;
-    const videoStartTime = selectedVideoInfo.value?.startTime / 1000 || 0;
+    const fightStartRelativeToVideo = reviewsStore.getFightStartRelativeToVideo / 1000; // in seconds
 
     // Calculate current fight-relative time
-    const fightRelativeTime = currentVideoTime.value + videoStartTime - fightStartTime - YOUTUBE_DELAY_OFFSET;
+    const fightRelativeTime = currentVideoTime.value - fightStartRelativeToVideo - YOUTUBE_DELAY_OFFSET;
 
     // Clamp between 0 and fightDuration (in seconds)
-    const fightDurationSec = fightDuration.value / 1000;
+    const fightDurationSec = reviewsStore.getFightDuration / 1000;
     const clamped = Math.max(0, Math.min(fightRelativeTime, fightDurationSec));
 	lastFightRelativeTime = clamped;
 
-	// log.debug(`Current video time: ${currentVideoTime}s, fight relative time: ${fightRelativeTime}s, clamped: ${clamped}s`);
-
     // Return as percent (0 to 1)
+	// log.debug(`Current fight cursor: ${clamped}s / ${fightDurationSec}s = ${(clamped / fightDurationSec * 100).toFixed(2)}%`);
     return clamped / fightDurationSec;
 });
 
 const phaseTransitions = computed(() => {
-	const selectedReportDetails = wclDataStore.getReportDetails;
-	const selectedFight = wclDataStore.getSelectedFight;
+	const selectedReportDetails = reviewsStore.getReportDetails;
+	const selectedFight = reviewsStore.getSelectedFight;
 
-	if (!selectedReportDetails?.phases || !selectedFight?.phaseTransitions || !fightDuration.value) return [];
+	if (!selectedReportDetails?.phases || !selectedFight?.phaseTransitions || !reviewsStore.getFightDuration) return [];
 	const phaseIdToText = new Map<number, string>();
 	let phasesCount = 0;
 	let intermissionCount = 0;
@@ -382,14 +412,13 @@ const phaseTransitions = computed(() => {
 		}
 	});
 
-	const reportTimeOffset = wclDataStore.getReportDetails?.startTime || 0;
-	const fightStartTime = (reportTimeOffset + wclDataStore.getSelectedFight?.startTime || 0); // in ms
+	const fightStartTime = reviewsStore.getFightStartTimeOffset; // in ms
 
-	return wclDataStore.getSelectedFight.phaseTransitions
+	return reviewsStore.getSelectedFight.phaseTransitions
 		.map(phase => {
 			const phaseId = phase.id;
-			const phaseStart = reportTimeOffset + phase.startTime; // in ms
-			const percent = (phaseStart - fightStartTime) / fightDuration.value;
+			const phaseStart = phase.startTime; // in ms
+			const percent = (phaseStart - fightStartTime) / reviewsStore.getFightDuration;
 			return {
 				name: phaseIdToText.get(phaseId) || phaseId,
 				percent,
@@ -399,16 +428,15 @@ const phaseTransitions = computed(() => {
 });
 
 const playerDeaths = computed(() => {
-	const reportTimeOffset = wclDataStore.getReportDetails?.startTime || 0;
-	const fightStartTime = (reportTimeOffset + wclDataStore.getSelectedFight?.startTime || 0); // in ms
+	const fightStartTime = reviewsStore.getFightStartTimeOffset; // in ms
 
 	let deathID = 0;
-	return wclDataStore.getFightEvents
+	return reviewsStore.getFightEvents
 		.map(event => {
 			if (event.type !== 'death') return null;
 			deathID++;
-			const eventTimestamp = reportTimeOffset + event.timestamp; // in ms
-			const percent = (eventTimestamp - fightStartTime) / fightDuration.value;
+			const eventTimestamp = event.timestamp; // in ms
+			const percent = (eventTimestamp - fightStartTime) / reviewsStore.getFightDuration;
 			return {
 				name: event.target.name,
 				class: event.target.type,
@@ -431,8 +459,8 @@ const playerDeaths = computed(() => {
 // }, { immediate: true });
 
 function openWCLDeath(deathID: number) {
-	if (!wclDataStore.selectedReportCode || !wclDataStore.selectedFightID) return;
-	api.IR_OpenWCLDeath(wclDataStore.selectedReportCode, wclDataStore.selectedFightID, deathID);
+	if (!reviewsStore.selectedReportCode || !reviewsStore.selectedFightID) return;
+	api.IR_OpenWCLDeath(reviewsStore.selectedReportCode, reviewsStore.selectedFightID, deathID);
 }
 
 </script>
@@ -447,16 +475,16 @@ function openWCLDeath(deathID: number) {
 				<div class="flex flex-1 flex-col max-w-[calc(100vw-350px)]">
 					<Dropdown :options="reportOptions" class="min-w-[34rem]"
 						:placeholder="$t('reviews.select_report')"
-						v-model="wclDataStore.selectedReportCode"
-						:onOpen="wclDataStore.requestReports"
+						v-model="reviewsStore.selectedReportCode"
+						:onOpen="reviewsStore.requestReports"
 					></Dropdown>
 					<Dropdown :options="fightOptions" class="min-w-[34rem]"
 						:placeholder="$t('reviews.select_fight')"
-						v-model="wclDataStore.selectedFightID"
-						:onOpen="wclDataStore.requestReportData"
+						v-model="reviewsStore.selectedFightID"
+						:onOpen="reviewsStore.requestReportData"
 					></Dropdown>
 					<div class="bg-gray-500 aspect-video max-w-[min(100%,80vw)] h-[calc(100%-85px)] rounded-md mt-2">
-						<iframe v-show="selectedVideoInfo"
+						<iframe v-show="reviewsStore.selectedVideoInfo"
 							id="player"
 							src="https://www.youtube-nocookie.com/embed/?enablejsapi=1"
 							frameborder="0"
@@ -485,6 +513,8 @@ function openWCLDeath(deathID: number) {
 								</svg>
 							</UIButton>
 						</div>
+						<!-- {{ reviewsStore.getSelectedVideoId }} -->
+
 						{{ youtubeLinkStatus }}
 					</div>
 					<ScrollFrame class="max-h-[calc(100%-85px)] flex flex-col">
@@ -492,10 +522,10 @@ function openWCLDeath(deathID: number) {
 							<button v-for="video in videoList"
 								:key="video.id" class=" h-8 m-0.5 rounded-md"
 								:class="{
-									'border-1 border-secondary dark:bg-dark1 bg-light1': video.id === selectedVideoId,
-									'dark:bg-dark4 dark:hover:bg-dark3 bg-light4 hover:bg-light3 ': video.id !== selectedVideoId,
+									'border-1 border-secondary dark:bg-dark1 bg-light1': video.id === reviewsStore.getSelectedVideoId,
+									'dark:bg-dark4 dark:hover:bg-dark3 bg-light4 hover:bg-light3 ': video.id !== reviewsStore.getSelectedVideoId,
 								}"
-								@click="selectedVideoInfo = video"
+								@click="reviewsStore.selectedVideoInfo = video"
 							>
 								<div class="text-bold line-item-element flex flex-col items-start">{{ video.author }} - {{ new Date(video.startTime).toLocaleTimeString() }}</div>
 							</button>
@@ -515,7 +545,7 @@ function openWCLDeath(deathID: number) {
   					@mousedown.prevent
 				>
 					<!-- Time Labels -->
-					<p class="absolute left-0 bottom-[-26px] bg-black/50 rounded-md p-0.5 px-1 pointer-events-none text-sm text-white">0</p>
+					<p class="absolute left-0 bottom-[-26px] bg-black/50 rounded-md p-0.5 px-1 pointer-events-none text-sm text-white">{{ formatTime(0) }}</p>
 					<p class="absolute right-0 bottom-[-26px] bg-black/50 rounded-md p-0.5 px-1 pointer-events-none text-sm text-white">{{ fightDurationDisplay }}</p>
 					<!-- Phases -->
 					<template v-for="phase in phaseTransitions" :key="phase.name + phase.percent">
