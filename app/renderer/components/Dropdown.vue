@@ -8,6 +8,7 @@ const props = defineProps<{
 	options: Array<{
 		value: any;
 		label: string;
+		color?: string;
 	}>;
 	maxVisible?: number;
 	placeholder?: string;
@@ -83,6 +84,13 @@ function onTransitionEnd() {
     }
 }
 
+const colorMap = {
+  'red': 'text-red-500',
+  'blue': 'text-blue-400',
+  'green': 'text-green-300',
+  // ...add all you need
+};
+
 </script>
 
 <template>
@@ -133,7 +141,12 @@ function onTransitionEnd() {
 						'bg-transparent border-0 border-black': model !== option.value
 					}">
 					</div>
-					{{ option.label }}
+
+					<span
+					  :class="option.color ? colorMap[option.color] : ''"
+					>
+						{{ option.label }}
+					</span>
 				</button>
 			</div>
 		</div>

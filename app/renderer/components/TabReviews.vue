@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import log from 'electron-log/renderer';
 
-import { ref, computed, watch, onMounted, onUnmounted } from 'vue';
+import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue';
 
 import TabContent from '@/renderer/components/TabContent.vue';
 import UIButton from '@/renderer/components/Button.vue';
@@ -16,13 +16,7 @@ import { useReviewsStore } from '@/renderer/store/ReviewsStore';
 import { useI18n } from 'vue-i18n'
 const { t } = useI18n()
 
-// Add global type for YT
-declare global {
-  interface Window {
-	YT: any;
-	onYouTubeIframeAPIReady: () => void;
-  }
-}
+import YTPlayer from '@/renderer/yt-player';
 
 function getClassColor(className: string) {
 	switch (className?.toLowerCase()) {
@@ -96,28 +90,28 @@ player.getPlayerState() → Returns state (e.g., 1 = playing, 2 = paused, -1 = u
 player.setPlaybackRate(rate) → Change speed
 player.setSize(width, height) → Resize
 */
-const player = ref<YT.Player | null>(null);
+const player = ref<YTPlayer | null>(null);
+const playerIframe = ref<HTMLIFrameElement | null>(null);
 
 function playVideo() {
 	if (player.value) {
-		player.value.playVideo();
+		player.value.play();
 	}
 }
 
 function pauseVideo() {
 	if (player.value) {
-		player.value.pauseVideo();
+		player.value.pause();
 	}
 }
 
 function seekTo(seconds: number) {
   	if (player.value) {
-		player.value.seekTo(seconds, true);
+		player.value.seek(seconds);
   	}
 }
 
 let lastFightRelativeTime = 0;
-let lastPlayerState = -1;
 function onVideoIdChanged() {
 	if (player.value) {
 		const videoId = reviewsStore.getSelectedVideoId;
@@ -128,9 +122,9 @@ function onVideoIdChanged() {
 
 			log.info(`Loading video ${videoId}, seeking to ${seekTime}s (relativeFightStart: ${relativeFightStart}s, lastFightRelativeTime: ${lastFightRelativeTime}s)`);
 
-			player.value.loadVideoById(videoId, seekTime);
+			player.value.load(videoId, true, seekTime);
 		} else {
-			player.value.stopVideo();
+			player.value.stop();
 		}
 	}
 }
@@ -159,62 +153,38 @@ watch(() => reviewsStore.selectedReportCode, (newVal, oldVal) => {
 	}
 });
 
-function loadYouTubeAPI(): Promise<typeof YT> {
-	return new Promise((resolve) => {
-		if (window.YT && window.YT.Player) {
-	  		resolve(window.YT);
-		} else {
-			const tag = document.createElement("script");
-			tag.src = "https://www.youtube.com/iframe_api";
-			document.body.appendChild(tag);
-
-	  		window.onYouTubeIframeAPIReady = () => {
-				resolve(window.YT);
-	  		};
-		}
-  });
-}
 
 let cursorUpdateInterval = null as number | null;
 const currentVideoTime = ref(0);
 
+
+watch(playerIframe, (el) => {
+	log.info('iframe element:', el);
+	if (el && !player.value) {
+		player.value = new YTPlayer(el, {
+			autoplay: true,
+			host: "https://www.youtube-nocookie.com",
+			timeupdateFrequency: 200, // ms
+		});
+		player.value.on('unplayable', (videoId) => {
+			alert(`The requested video ${videoId} is unplayable (may be private or removed).`);
+			log.info("YouTube video unplayable:", videoId);
+		});
+		player.value.on('error', (error) => {
+			alert(`Error embedding video. Error code: ${error}`);
+			log.info("YouTube embed error:", error);
+		});
+		player.value.on('timeupdate', (seconds) => {
+			currentVideoTime.value = seconds;
+		});
+		if (reviewsStore.getSelectedVideoId) {
+			player.value.load(reviewsStore.getSelectedVideoId);
+		}
+	}
+});
+
 onMounted(async () => {
 	reviewsStore.requestReports();
-	cursorUpdateInterval = window.setInterval(() => {
-        if (player.value) {
-			currentVideoTime.value = player.value.getCurrentTime?.() ?? 0;
-		}
-    }, 200); // update every 200ms
-
-	if (player.value) return;
-
-  	const YT = await loadYouTubeAPI();
-
-	player.value = new YT.Player("player", {
-		videoId: reviewsStore.getSelectedVideoId,
-		events: {
-			onReady: (event) => {
-				console.log("YouTube player ready");
-				event.target.mute();
-				onVideoIdChanged();
-			},
-			onStateChange: (event) => {
-				lastPlayerState = event.data;
-				console.log("State changed:", event.data);
-			},
-			onError: (event) => {
-				alert(`Error embedding video. Error code: ${event.data}`);
-				log.info("YouTube embed error:", event);
-			}
-		},
-		playerVars: {
-			autoplay: 0,
-			controls: 1,
-			rel: 0,
-			showinfo: 0,
-			modestbranding: 1,
-		}
-	});
 });
 
 onUnmounted(() => {
@@ -256,6 +226,7 @@ const fightOptions = computed(() => {
 		return {
 			label: `#${count} ${f.name} ${f.kill ? 'KILL' : (f.bossPercentage).toFixed(1) + '%'} ${formatTime((f.endTime - f.startTime) / 1000)} (${new Date(timeOffset + f.startTime).toLocaleTimeString()})`,
 			value: f.id,
+			color: f.kill ? 'green' : undefined,
 		}
 	}) || [];
 });
@@ -484,7 +455,9 @@ function openWCLDeath(deathID: number) {
 						:onOpen="reviewsStore.requestReportData"
 					></Dropdown>
 					<div class="bg-gray-500 aspect-video max-w-[min(100%,80vw)] h-[calc(100%-85px)] rounded-md mt-2">
-						<iframe v-show="reviewsStore.selectedVideoInfo"
+						<!-- v-show="reviewsStore.selectedVideoInfo" -->
+						<iframe
+							ref="playerIframe"
 							id="player"
 							src="https://www.youtube-nocookie.com/embed/?enablejsapi=1"
 							frameborder="0"
