@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import log from 'electron-log/renderer';
 
-import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue';
+import { ref, computed, watch, onMounted, onUnmounted, useTemplateRef } from 'vue';
 
 import TabContent from '@/renderer/components/TabContent.vue';
 import UIButton from '@/renderer/components/Button.vue';
@@ -76,22 +76,8 @@ async function requestVideoInfo() {
 	}
 }
 
-
-/*
-player.playVideo() → Start playback
-player.pauseVideo() → Pause
-player.stopVideo() → Stop playback
-player.seekTo(seconds, allowSeekAhead) → Jump to timestamp
-player.getCurrentTime() → Current playback position (seconds)
-player.getDuration() → Video length (seconds)
-player.mute() / unMute() → Toggle audio
-player.setVolume(volume) → 0–100
-player.getPlayerState() → Returns state (e.g., 1 = playing, 2 = paused, -1 = unstarted)
-player.setPlaybackRate(rate) → Change speed
-player.setSize(width, height) → Resize
-*/
 const player = ref<YTPlayer | null>(null);
-const playerIframe = ref<HTMLIFrameElement | null>(null);
+const playerIframe = useTemplateRef<HTMLIFrameElement | null>('playerIframe');
 
 function playVideo() {
 	if (player.value) {
@@ -143,7 +129,6 @@ watch(() => reviewsStore.selectedFightID, (newVal) => {
 		log.info(`New fight selected, seeking to ${seekTime}s (relativeFightStart: ${relativeFightStart}s)`);
 
 		seekTo(seekTime);
-		playVideo();
 	}
 });
 
@@ -154,32 +139,56 @@ watch(() => reviewsStore.selectedReportCode, (newVal, oldVal) => {
 });
 
 
+const playerReloads = ref(0);
+
+function reloadPlayer() {
+  playerReloads.value++;
+  log.info("Reloading YouTube player, reload count:", playerReloads.value);
+}
+
 let cursorUpdateInterval = null as number | null;
 const currentVideoTime = ref(0);
 
-
 watch(playerIframe, (el) => {
-	log.info('iframe element:', el);
-	if (el && !player.value) {
+	if (player.value) {
+		player.value.destroy();
+		player.value = null;
+	}
+	if (el) {
 		player.value = new YTPlayer(el, {
 			autoplay: true,
 			host: "https://www.youtube-nocookie.com",
 			timeupdateFrequency: 200, // ms
 		});
-		player.value.on('unplayable', (videoId) => {
-			alert(`The requested video ${videoId} is unplayable (may be private or removed).`);
-			log.info("YouTube video unplayable:", videoId);
+		player.value.on('unplayable', ({ videoId, errorCode, data }) => {
+			log.info("YouTube video unplayable:", videoId, errorCode);
+			log.info(player.value._player)
+			log.info("playerInfo", player.value?._player?.playerInfo)
+			log.info('data', data)
+			if (player.value?._player?.getVideoData) {
+				log.info("videoData", player.value?._player?.getVideoData())
+			}
+			log.info('debugText', player.value?._player?.getDebugText())
+
+			// alert(`The requested video ${videoId} is unplayable. Error code: ${errorCode}`);
+			if (errorCode === 150) { // noreferrer bug, try reloading the player 153 actually fires with 150 wtf
+				setTimeout(() => {
+					reloadPlayer();
+				}, 1500);
+			}
 		});
 		player.value.on('error', (error) => {
-			alert(`Error embedding video. Error code: ${error}`);
 			log.info("YouTube embed error:", error);
+			alert(`Error embedding video. Error code: ${error}`);
 		});
 		player.value.on('timeupdate', (seconds) => {
 			currentVideoTime.value = seconds;
 		});
-		if (reviewsStore.getSelectedVideoId) {
-			player.value.load(reviewsStore.getSelectedVideoId);
-		}
+		player.value.on('cued', () => {
+			playVideo();
+		});
+		player.value.mute();
+		onVideoIdChanged();
 	}
 });
 
@@ -454,17 +463,16 @@ function openWCLDeath(deathID: number) {
 						v-model="reviewsStore.selectedFightID"
 						:onOpen="reviewsStore.requestReportData"
 					></Dropdown>
-					<div class="bg-gray-500 aspect-video max-w-[min(100%,80vw)] h-[calc(100%-85px)] rounded-md mt-2">
-						<!-- v-show="reviewsStore.selectedVideoInfo" -->
-						<iframe
-							ref="playerIframe"
-							id="player"
-							src="https://www.youtube-nocookie.com/embed/?enablejsapi=1"
-							frameborder="0"
-							allow="autoplay; encrypted-media; fullscreen"
-							class="rounded-md bg-gray-500 w-full h-full"
-							referrerpolicy="strict-origin-when-cross-origin"
-						></iframe>
+					<div class="bg-gray-200 aspect-video max-w-[min(100%,80vw)] h-[calc(100%-85px)] rounded-md mt-2">
+
+						<div :key="playerReloads" v-show="reviewsStore.selectedVideoInfo" class="w-full h-full relative">
+							<div
+								allow="autoplay; encrypted-media; fullscreen"
+								referrerpolicy="strict-origin-when-cross-origin"
+								ref="playerIframe"
+								class="rounded-md w-full h-full z-50"
+							></div>
+						</div>
 					</div>
 				</div>
 				<div class="w-full">

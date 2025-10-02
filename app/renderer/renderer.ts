@@ -7,7 +7,7 @@ import App from '@/renderer/App.vue';
 
 import "tailwindcss";
 
-const app = createApp(App)
+const app = createApp(App);
 
 import en from '@/translations/en.json';
 import ru from '@/translations/ru.json';

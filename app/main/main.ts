@@ -223,6 +223,7 @@ async function createWindow() {
 			contextIsolation: true,
 			webSecurity: true,
 			allowRunningInsecureContent: false,
+			partition: 'persist:youtube', // keeps cookies / sessions stable
 		},
 		skipTaskbar: startMinimized,
 		show: !startMinimized,

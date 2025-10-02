@@ -1,7 +1,7 @@
 {
 	"name": "rak-gaming-updater",
 	"description": "Rak Gaming Updater Application",
-	"version": "2.2.12",
+	"version": "2.2.44",
 	"author": {
 		"name": "m33shoq"
 	},
@@ -54,14 +54,14 @@
 		"eventemitter3": "^5.0.1",
 		"extract-zip": "^2.0.1",
 		"jwt-decode": "^4.0.0",
+		"load-script2": "^2.0.6",
 		"luaparse": "^0.3.1",
 		"nanoid": "^5.1.5",
 		"regedit": "^5.1.3",
 		"socket.io-client": "^4.7.5",
 		"tailwindcss": "^4.1.10",
 		"validator": "^13.12.0",
-		"vue-i18n": "^11.1.5",
-		"yt-player": "^3.6.1"
+		"vue-i18n": "^11.1.5"
 	},
 	"devDependencies": {
 		"@intlify/unplugin-vue-i18n": "^6.0.8",
