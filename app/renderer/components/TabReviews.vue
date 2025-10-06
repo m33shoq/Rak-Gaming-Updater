@@ -146,7 +146,6 @@ function reloadPlayer() {
   log.info("Reloading YouTube player, reload count:", playerReloads.value);
 }
 
-let cursorUpdateInterval = null as number | null;
 const currentVideoTime = ref(0);
 
 watch(playerIframe, (el) => {
@@ -194,10 +193,6 @@ watch(playerIframe, (el) => {
 
 onMounted(async () => {
 	reviewsStore.requestReports();
-});
-
-onUnmounted(() => {
-    if (cursorUpdateInterval) clearInterval(cursorUpdateInterval);
 });
 
 async function wclAuth() {
@@ -248,7 +243,7 @@ const fightDurationDisplay = computed(() => {
 const TWELVE_HOURS_MS = 12 * 60 * 60 * 1000;
 
 const videoList = computed<YouTubeVideo[]>(() => {
-	const reportTimeOffset = reviewsStore.getReportTimeOffset;
+	const reportTimeOffset = reviewsStore.getReportTimeOffset || Date.now();
 	log.info('Calculating video list with report time offset:', reportTimeOffset);
 	const fightStartTime = reportTimeOffset + (reviewsStore.getSelectedFight?.startTime || 0);
 	const fightEndTime = reportTimeOffset + (reviewsStore.getSelectedFight?.endTime || 0);

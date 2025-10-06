@@ -110,7 +110,7 @@ onMounted(async () => {
 			</transition>
 			<TabLogin v-if="!loginStore.isConnected" />
 			<template v-else v-for="tab in tabs">
-				<component :is="tab.component" v-show="selectedTab === tab.name" />
+				<component :is="tab.component" v-if="selectedTab === tab.name" />
 			</template>
 		</div>
 		<footer class="text-center p-1 bottom-0 flex justify-between w-full text-sm text-neutral-500 font-medium
