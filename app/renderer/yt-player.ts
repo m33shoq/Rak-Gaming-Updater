@@ -470,7 +470,7 @@ export default class YouTubePlayer extends EventEmitter {
 		if (this.destroyed) return;
 
 		const state = YOUTUBE_STATES[data.data];
-		log.info('YTPlayer:state changed', state);
+		// log.info('YTPlayer:state changed', state);
 
 		if (state) {
 			// Send a 'timeupdate' anytime the state changes. When the video halts for any

@@ -201,14 +201,29 @@ async function wclAuth() {
 }
 
 const reportOptions = computed(() => {
-	return reviewsStore.getReports.map(r => ({
+	const list = [
+		{
+			label: '--',
+			value: null,
+		}
+	];
+	list.push(...reviewsStore.getReports.map(r => ({
 		label: `${r.title} - ${new Date(r.startTime).toLocaleString()}`,
 		value: r.code,
-	}));
+	})));
+
+	return list;
 });
 
 const fightOptions = computed(() => {
-	if (!reviewsStore.getSelectedReport || !reviewsStore.getReportDetails?.fights) return [];
+	const list = [
+		{
+			label: '--',
+			value: null,
+		},
+	]
+
+	if (!reviewsStore.getSelectedReport || !reviewsStore.getReportDetails?.fights) return list;
 
 	const timeOffset = reviewsStore.getReportTimeOffset;
 	const fights = reviewsStore.getReportDetails.fights;
@@ -224,7 +239,7 @@ const fightOptions = computed(() => {
 		idToCount.set(f.id, currentCount + 1);
 	}
 
-	return fights.map(f => {
+	list.push(...fights.map(f => {
 		const count = idToCount.get(f.id) || 0;
 
 		return {
@@ -232,7 +247,9 @@ const fightOptions = computed(() => {
 			value: f.id,
 			color: f.kill ? 'green' : undefined,
 		}
-	}) || [];
+	}) || []);
+
+	return list;
 });
 
 const fightDurationDisplay = computed(() => {
