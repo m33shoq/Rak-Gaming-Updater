@@ -3,13 +3,15 @@
 	"description": "Rak Gaming Updater Application",
 	"version": "2.2.46",
 	"author": {
-		"name": "m33shoq"
+		"name": "m33shoq",
+		"email": "mishadyrov@gmail.com"
 	},
 	"main": "./dist/main.mjs",
 	"type": "module",
 	"scripts": {
 		"app:dev": "vite",
 		"app:build": "vue-tsc && vite build && electron-builder",
+		"app:build:linux": "vue-tsc && vite build && electron-builder --linux",
 		"app:preview": "vue-tsc && vite build && electron .",
 		"app:publish": "vue-tsc && vite build && electron-builder --publish always"
 	},
@@ -42,6 +44,16 @@
 		},
 		"nsis": {
 			"deleteAppDataOnUninstall": true
+		},
+		"linux": {
+			"target": [
+				{
+					"target": "deb",
+					"arch": ["x64"]
+				}
+			],
+			"category": "Game",
+			"icon": "./app/assets/taskbaricon.png"
 		}
 	},
 	"dependencies": {
