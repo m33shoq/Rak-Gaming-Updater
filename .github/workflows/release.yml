@@ -59,14 +59,19 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: windows-build
-          path: releases/${{ github.event.inputs.version }}/*.exe
+          path: |
+            releases/${{ github.event.inputs.version }}/*.exe
+            releases/${{ github.event.inputs.version }}/*.nsis.7z
 
       - name: Upload Linux artifacts
         if: matrix.os == 'ubuntu-latest'
         uses: actions/upload-artifact@v4
         with:
           name: linux-build
-          path: releases/${{ github.event.inputs.version }}/*.deb
+          path: |
+            releases/${{ github.event.inputs.version }}/*.AppImage
+            releases/${{ github.event.inputs.version }}/*.deb
+            releases/${{ github.event.inputs.version }}/*.rpm
 
   release:
     needs: build
@@ -74,6 +79,10 @@ jobs:
     steps:
       - name: Download all artifacts
         uses: actions/download-artifact@v4
+
+      - name: List downloaded files
+        run: |
+          find . -type f -name "*.exe" -o -name "*.AppImage" -o -name "*.deb" -o -name "*.rpm"
 
       - name: Create Release
         uses: softprops/action-gh-release@v1
@@ -84,5 +93,14 @@ jobs:
           files: |
             windows-build/*
             linux-build/*
+          body: |
+            ## Changes in v${{ github.event.inputs.version }}
+
+            ### Downloads
+            - **Windows**: `.exe` installer
+            - **Linux**:
+              - `.AppImage` - Portable application
+              - `.deb` - For Ubuntu/Debian systems
+              - `.rpm` - For Red Hat/Fedora/CentOS systems
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
