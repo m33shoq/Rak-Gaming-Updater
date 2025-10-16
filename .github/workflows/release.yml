@@ -16,6 +16,10 @@ on:
         - release
         - prerelease
 
+permissions:
+  contents: write
+  packages: write
+
 jobs:
   build:
     runs-on: ${{ matrix.os }}
