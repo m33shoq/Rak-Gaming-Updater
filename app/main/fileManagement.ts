@@ -17,85 +17,125 @@ import {
 	SERVER_DOWNLOAD_ENDPOINT
 } from './serverEndpoints';
 
-// return file path for downloaded zip file
-export async function DownloadFile(fileData: FileData, retries = 3) {
+
+async function _downloadFile(fileData: FileData) {
+	const { fileName, relativePath, timestamp, hash, displayName } = fileData;
+	const DOWNLOAD_URL = `${SERVER_DOWNLOAD_ENDPOINT}/${displayName}/${hash}`;
+
+	const updatePath = await getWoWPath();
+	if (!updatePath) {
+		log.error('WoW path is not set or invalid. Cannot install file:', fileData);
+		throw new Error('WoW path is not set or invalid.');
+	}
+
+	const outputPath = path.join(updatePath, fileData.relativePath, `RG-UPDATER-${nanoid()}-${displayName}-${hash}.zip`);
+	// recursively create directories if they don't exist
+	await fsp.mkdir(path.dirname(outputPath), { recursive: true });
+
+	const writer = fs.createWriteStream(outputPath);
+
 	try {
-		const { fileName, relativePath, timestamp, hash, displayName } = fileData;
-		const DOWNLOAD_URL = `${SERVER_DOWNLOAD_ENDPOINT}/${displayName}/${hash}`;
+		await new Promise(async (resolve, reject) => {
+			let size = 0;
+			let percentMod = -1;
 
-		const updatePath = await getWoWPath();
-		if (!updatePath) {
-			log.error('WoW path is not set or invalid. Cannot install file:', fileData);
-			throw new Error('WoW path is not set or invalid.');
-		}
-
-		const outputPath = path.join(updatePath, fileData.relativePath, `RG-UPDATER-${nanoid()}-${displayName}-${hash}.zip`);
-		// recursively create directories if they don't exist
-		await fsp.mkdir(path.dirname(outputPath), { recursive: true });
-
-		const writer = fs.createWriteStream(outputPath);
-
-		try {
-			await new Promise(async (resolve, reject) => {
-				let size = 0;
-				let percentMod = -1;
-
-				const req = net.request({
-					url: DOWNLOAD_URL,
-					redirect: 'manual',
-					method: 'GET',
-					headers: {
-						Authorization: `Bearer ${store.get('authToken')}`,
-					},
-				});
-
-				req.on('redirect', (status, method, redirectUrl) => {
-					log.info(`[download] caught redirect`, status, redirectUrl);
-					req.followRedirect();
-				});
-
-				req.on('response', (response) => {
-					const contentLength = response.headers['content-length'] as string | undefined;
-  					const fileLength = parseInt(contentLength ?? '0', 10);
-
-					response.on('data', (data) => {
-						writer.write(data, () => {
-							size += data.length;
-							const percent = fileLength <= 0 ? 0 : Math.floor((size / fileLength) * 100);
-							mainWindowWrapper.webContents?.send('file-chunk-received', fileData, percent);
-							if (percent % 5 === 0 && percentMod !== percent) {
-								percentMod = percent;
-								log.info(`Write ${fileData.displayName}: [${percent}] ${size}`);
-							}
-						});
-					});
-
-					response.on('end', () => {
-						log.info('Download finished:', fileData.displayName, 'Size:', size, 'bytes', 'File Length:', fileLength, 'bytes');
-
-						if (response.statusCode < 200 || response.statusCode >= 300) {
-							mainWindowWrapper.webContents?.send('file-download-error', fileData, response.statusCode);
-							return reject(new Error(`Invalid response (${response.statusCode}): ${DOWNLOAD_URL}`));
-						}
-
-						return resolve(undefined);
-					});
-					response.on('error', (err: Error) => {
-						log.error('Error during response:', err);
-						mainWindowWrapper.webContents?.send('file-download-error', fileData, err.message);
-						return reject(err);
-					});
-				});
-				req.end();
+			const req = net.request({
+				url: DOWNLOAD_URL,
+				redirect: 'manual',
+				method: 'GET',
+				headers: {
+					Authorization: `Bearer ${store.get('authToken')}`,
+				},
 			});
-		} finally {
-			writer.end();
+
+			req.on('redirect', (status, method, redirectUrl) => {
+				log.info(`[download] caught redirect`, status, redirectUrl);
+				req.followRedirect();
+			});
+
+			req.on('response', (response) => {
+				const contentLength = response.headers['content-length'] as string | undefined;
+				const fileLength = parseInt(contentLength ?? '0', 10);
+
+				response.on('data', (data) => {
+					writer.write(data, () => {
+						size += data.length;
+						const percent = fileLength <= 0 ? 0 : Math.floor((size / fileLength) * 100);
+						mainWindowWrapper.webContents?.send('file-chunk-received', fileData, percent);
+						if (percent % 5 === 0 && percentMod !== percent) {
+							percentMod = percent;
+							log.info(`Write ${fileData.displayName}: [${percent}] ${size}`);
+						}
+						if (size === fileLength) {
+							writer.end();
+						}
+					});
+				});
+
+				response.on('end', async () => {
+					log.info(`Download finished: ${fileData.displayName}`);
+
+					if (response.statusCode < 200 || response.statusCode >= 300) {
+						mainWindowWrapper.webContents?.send('file-download-error', fileData, response.statusCode);
+						return reject(new Error(`Invalid response (${response.statusCode}): ${DOWNLOAD_URL}`));
+					}
+
+					// check if writer is finished and
+					// wait for the writer to finish if it didn't
+					if (!writer.writableFinished) {
+						log.info('Waiting for writer to finish...');
+						await new Promise((resolve) => {
+							const timeout = setTimeout(() => {
+								log.warn('Writer finish timeout reached.');
+								resolve(new Error('Writer finish timeout reached.'));
+							}, 5000);
+							writer.once('finish', () => {
+								log.info('Writer finished.');
+								clearTimeout(timeout);
+								resolve(undefined);
+							});
+						});
+					}
+
+					if (size !== fileLength) {
+						log.info(`Content-length mismatch: expected ${fileLength}, got ${size}`);
+						mainWindowWrapper.webContents?.send('file-download-error', fileData, 'content-length mismatch');
+						return reject(new Error(`Invalid response (content-length mismatch): ${DOWNLOAD_URL}`));
+					}
+
+					return resolve(undefined);
+				});
+				response.on('error', (err: Error) => {
+					log.error('Error during response:', err);
+					mainWindowWrapper.webContents?.send('file-download-error', fileData, err.message);
+					return reject(err);
+				});
+			});
+			req.end();
+		});
+	} catch (error) {
+		// if failed to download, delete the incomplete file
+		writer.end();
+		if (fs.existsSync(outputPath)) {
+			await fsp.unlink(outputPath);
 		}
-		return outputPath;
+		throw error;
+	} finally {
+		log.info('Closing writer stream.');
+		writer.end();
+	}
+
+	return outputPath;
+}
+
+// return file path for downloaded zip file
+export async function DownloadWithRetries(fileData: FileData, retries = 3) {
+	try {
+		return _downloadFile(fileData);
 	} catch (error) {
 		if (retries > 0) {
 			log.warn(`Retrying download... (${retries} attempts left)`);
-			return DownloadFile(fileData, retries - 1);
+			return DownloadWithRetries(fileData, retries - 1);
 		}
 		if (error instanceof Error) {
 			log.error(`Error downloading file: ${error.message}`);
@@ -136,7 +176,6 @@ export async function InstallFile(fileData: FileData, zipPath: string) {
 		mainWindowWrapper.webContents?.send('file-downloaded', fileData);
 	} catch (error) {
 		log.error('Error extracting file:', error);
-		console.error('Error extracting file:', error);
 	}
 }
 

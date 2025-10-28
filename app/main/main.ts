@@ -15,7 +15,7 @@ import { fileURLToPath } from "node:url";
 
 import { GetFileData, CalculateHashForPath } from '@/main/fileDataUtility';
 import { zipFile, unzipFile } from '@/main/zipHandler';
-import { DownloadFile, InstallFile } from '@/main/fileManagement';
+import { DownloadWithRetries, InstallFile } from '@/main/fileManagement';
 import { getWoWPath, validateWoWPath } from '@/main/wowPathUtility';
 import mainWindowWrapper from '@/main/MainWindowWrapper';
 import store from '@/main/store';
@@ -818,7 +818,7 @@ data = {
 */
 ipcMain.on('request-file', async (event, fileData) => {
 	try {
-		const zipPath = await DownloadFile(fileData);
+		const zipPath = await DownloadWithRetries(fileData);
 		try {
 			await InstallFile(fileData, zipPath);
 		} finally {
@@ -931,7 +931,7 @@ socket.on('new-release', (data) => {
 });
 
 socket.on('connected-clients', (data) => {
-	log.debug('Connected clients:', data);
+	// log.debug('Connected clients:', data);
 	mainWindow?.webContents.send('connected-clients', data);
 });
 
