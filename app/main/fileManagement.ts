@@ -53,48 +53,65 @@ async function _downloadFile(fileData: FileData) {
 				req.followRedirect();
 			});
 
+			req.on('error', (err) => {
+				log.error('Download request error:', err);
+				reject(err);
+			});
+
 			req.on('response', (response) => {
 				const contentLength = response.headers['content-length'] as string | undefined;
 				const fileLength = parseInt(contentLength ?? '0', 10);
 
+				response.on('error', (err: Error) => {
+					log.error('Error during response:', err);
+					mainWindowWrapper.webContents?.send('file-download-error', fileData, err.message);
+					return reject(err);
+				});
+
 				response.on('data', (data) => {
-					writer.write(data, () => {
-						size += data.length;
-						const percent = fileLength <= 0 ? 0 : Math.floor((size / fileLength) * 100);
-						mainWindowWrapper.webContents?.send('file-chunk-received', fileData, percent);
-						if (percent % 5 === 0 && percentMod !== percent) {
-							percentMod = percent;
-							log.info(`Write ${fileData.displayName}: [${percent}] ${size}`);
-						}
-						if (size === fileLength) {
-							writer.end();
-						}
-					});
+					writer.write(data)
+
+					size += data.length;
+					const percent = fileLength <= 0 ? 0 : Math.floor((size / fileLength) * 100);
+					mainWindowWrapper.webContents?.send('file-chunk-received', fileData, percent);
+					if (percent % 5 === 0 && percentMod !== percent) {
+						percentMod = percent;
+						log.info(`Write ${fileData.displayName}: [${percent}] ${size}`);
+					}
 				});
 
 				response.on('end', async () => {
 					log.info(`Download finished: ${fileData.displayName}`);
 
+					writer.end();
+
+					// Wait for writer to finish
+					await new Promise((resolve, reject) => {
+						if (writer.writableEnded) {
+							log.info('Writer already ended.');
+							return resolve(undefined);
+						}
+						const timeout = setTimeout(() => {
+							log.error('Writer finish timeout reached.');
+							reject(new Error('Writer finish timeout'));
+						}, 10000); // Increase timeout to 10 seconds
+
+						writer.once('finish', () => {
+							log.info('Writer finished successfully.');
+							clearTimeout(timeout);
+							resolve(undefined);
+						});
+
+						writer.once('error', (err) => {
+							log.error('Writer error:', err);
+							clearTimeout(timeout);
+							reject(err);
+						});
+					});
+
 					if (response.statusCode < 200 || response.statusCode >= 300) {
 						mainWindowWrapper.webContents?.send('file-download-error', fileData, response.statusCode);
 						return reject(new Error(`Invalid response (${response.statusCode}): ${DOWNLOAD_URL}`));
-					}
-
-					// check if writer is finished and
-					// wait for the writer to finish if it didn't
-					if (!writer.writableFinished) {
-						log.info('Waiting for writer to finish...');
-						await new Promise((resolve) => {
-							const timeout = setTimeout(() => {
-								log.warn('Writer finish timeout reached.');
-								resolve(new Error('Writer finish timeout reached.'));
-							}, 5000);
-							writer.once('finish', () => {
-								log.info('Writer finished.');
-								clearTimeout(timeout);
-								resolve(undefined);
-							});
-						});
 					}
 
 					if (size !== fileLength) {
@@ -104,11 +121,6 @@ async function _downloadFile(fileData: FileData) {
 					}
 
 					return resolve(undefined);
-				});
-				response.on('error', (err: Error) => {
-					log.error('Error during response:', err);
-					mainWindowWrapper.webContents?.send('file-download-error', fileData, err.message);
-					return reject(err);
 				});
 			});
 			req.end();

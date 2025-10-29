@@ -26,9 +26,9 @@ async function wowDefaultPath(): Promise<string | null> {
 				// Optionally, prompt the user to manually select the WoW installation path
 				return null;
 			}
-			log.info('Registry results:', results);
+			// log.info('Registry results:', results);
 			const value = results[key].values.InstallPath.value;
-			log.info('Registry WoW Path:', value, typeof value);
+			// log.info('Registry WoW Path:', value, typeof value);
 			if (typeof value === 'string') {
 				let path = validateWoWPath(value);
 				// log.info('Validated WoW Path:', path);
