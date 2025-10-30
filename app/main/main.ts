@@ -234,7 +234,7 @@ async function createWindow() {
 	// fix no referer for youtube embeds
 	const filter = { urls: ["*://*.youtube.com/*", "*://*.youtube-nocookie.com/*", "*://*.googlevideo.com/*"] };
 	sess.webRequest.onBeforeSendHeaders(filter, (details, callback) => {
-		log.info('yt embed url:', details.url);
+		// log.info('yt embed url:', details.url);
 
 		details.requestHeaders['Referer'] = 'file:///'; // or 'https://example.com'
 
