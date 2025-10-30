@@ -1,7 +1,7 @@
 import dotenv from 'dotenv';
 dotenv.config();
 
-import { app, BrowserWindow, ipcMain, dialog, Tray, Menu, nativeImage, protocol, shell, Notification, net } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, Tray, Menu, nativeImage, protocol, shell, Notification, net, session } from 'electron';
 import { autoUpdater } from 'electron-updater';
 import log from 'electron-log/main';
 import Socket from 'socket.io-client';
@@ -229,12 +229,23 @@ async function createWindow() {
 		show: !startMinimized,
 	});
 
+	const sess = mainWindow.webContents.session;
+
+	// fix no referer for youtube embeds
+	const filter = { urls: ["*://*.youtube.com/*", "*://*.youtube-nocookie.com/*", "*://*.googlevideo.com/*"] };
+	sess.webRequest.onBeforeSendHeaders(filter, (details, callback) => {
+		log.info('yt embed url:', details.url);
+
+		details.requestHeaders['Referer'] = 'file:///'; // or 'https://example.com'
+
+		callback({ requestHeaders: details.requestHeaders });
+	});
+
 	if (windowSettings?.maximized) {
 		mainWindow?.maximize();
 	}
 
 	mainWindowWrapper.init(mainWindow);
-	//123
 
 	mainWindow?.webContents.setWindowOpenHandler(({ url }) => {
 		if (url.startsWith('https:')) {
