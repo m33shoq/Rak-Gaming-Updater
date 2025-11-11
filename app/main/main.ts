@@ -827,6 +827,8 @@ socket.on(SOCKET_EVENTS.NEW_RELEASE, (data) => {
 		}
 		autoUpdater.checkForUpdates().then((UpdateCheckResults) => {
 			log.info('Update check results:', UpdateCheckResults);
+		}).catch((error) => {
+			log.error('Error checking for updates:', error);
 		});
 	}, 45 * 1000);
 });
