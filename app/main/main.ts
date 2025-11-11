@@ -818,7 +818,7 @@ socket.on(SOCKET_EVENTS.NEW_RELEASE, (data) => {
 	}
 	updatedRecheckTimer = setInterval(() => {
 		rechekTries++;
-		if (rechekTries > 10) {
+		if (rechekTries > 30) {
 			if (updatedRecheckTimer) {
 				clearInterval(updatedRecheckTimer);
 			}
@@ -832,7 +832,7 @@ socket.on(SOCKET_EVENTS.NEW_RELEASE, (data) => {
 			log.info('Recheck try #', rechekTries);
 			log.info(error.statusCode, error.message);
 		});
-	}, 45 * 1000);
+	}, 10 * 1000);
 });
 
 socket.on(SOCKET_EVENTS.STATUS_CONNECTED_CLIENTS, (data) => {
