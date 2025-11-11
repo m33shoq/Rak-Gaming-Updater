@@ -1,7 +1,7 @@
 {
 	"name": "rak-gaming-updater",
 	"description": "Rak Gaming Updater Application",
-	"version": "2.3.0",
+	"version": "2.3.1",
 	"author": {
 		"name": "m33shoq",
 		"email": "mishadyrov@gmail.com"
@@ -25,7 +25,7 @@
 			{
 				"provider": "github",
 				"owner": "m33shoq",
-				"repo": "RakGamingUpdater",
+				"repo": "Rak-Gaming-Updater",
 				"releaseType": "release"
 			}
 		],
