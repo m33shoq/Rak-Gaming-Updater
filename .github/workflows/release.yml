@@ -1,20 +1,9 @@
 name: Build and Release
 
 on:
-  workflow_dispatch:
-    inputs:
-      version:
-        description: 'Release version (e.g., 2.2.47)'
-        required: true
-        default: '2.2.47'
-      release_type:
-        description: 'Release type'
-        required: true
-        default: 'release'
-        type: choice
-        options:
-        - release
-        - prerelease
+  push:
+    tags:
+      - 'v*'
 
 permissions:
   contents: write
@@ -36,11 +25,26 @@ jobs:
         with:
           node-version: '18'
 
+      - name: Extract version from tag
+        id: version
+        run: |
+          # Extract version from tag (remove 'v' prefix)
+          $VERSION = $env:GITHUB_REF -replace 'refs/tags/v', ''
+          echo "version=$VERSION" >> $env:GITHUB_OUTPUT
+          echo "tag=$env:GITHUB_REF_NAME" >> $env:GITHUB_OUTPUT
+          # Check if it's a prerelease (contains alpha, beta, rc, etc.)
+          if ($VERSION -match "(alpha|beta|rc|pre)") {
+            echo "prerelease=true" >> $env:GITHUB_OUTPUT
+          } else {
+            echo "prerelease=false" >> $env:GITHUB_OUTPUT
+          }
+        shell: pwsh
+
       - name: Install dependencies
         run: npm install
 
       - name: Update package version
-        run: npm version ${{ github.event.inputs.version }} --no-git-tag-version
+        run: npm version ${{ steps.version.outputs.version }} --no-git-tag-version
 
       - name: Build Windows
         if: matrix.os == 'windows-latest'
@@ -60,8 +64,8 @@ jobs:
         with:
           name: windows-build
           path: |
-            releases/${{ github.event.inputs.version }}/*.exe
-            releases/${{ github.event.inputs.version }}/*.nsis.7z
+            releases/${{ steps.version.outputs.version }}/*.exe
+            releases/${{ steps.version.outputs.version }}/*.nsis.7z
 
       - name: Upload Linux artifacts
         if: matrix.os == 'ubuntu-latest'
@@ -69,14 +73,27 @@ jobs:
         with:
           name: linux-build
           path: |
-            releases/${{ github.event.inputs.version }}/*.AppImage
-            releases/${{ github.event.inputs.version }}/*.deb
-            releases/${{ github.event.inputs.version }}/*.rpm
+            releases/${{ steps.version.outputs.version }}/*.AppImage
+            releases/${{ steps.version.outputs.version }}/*.deb
+            releases/${{ steps.version.outputs.version }}/*.rpm
 
   release:
     needs: build
     runs-on: ubuntu-latest
     steps:
+      - name: Extract version from tag
+        id: version
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/v}
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "tag=$GITHUB_REF_NAME" >> $GITHUB_OUTPUT
+          if [[ "$VERSION" =~ (alpha|beta|rc|pre) ]]; then
+            echo "prerelease=true" >> $GITHUB_OUTPUT
+          else
+            echo "prerelease=false" >> $GITHUB_OUTPUT
+          fi
+        shell: bash
+
       - name: Download all artifacts
         uses: actions/download-artifact@v4
 
@@ -87,14 +104,14 @@ jobs:
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
-          tag_name: v${{ github.event.inputs.version }}
-          name: Release v${{ github.event.inputs.version }}
-          prerelease: ${{ github.event.inputs.release_type == 'prerelease' }}
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: Release ${{ steps.version.outputs.tag }}
+          prerelease: ${{ steps.version.outputs.prerelease == 'true' }}
           files: |
             windows-build/*
             linux-build/*
           body: |
-            ## Changes in v${{ github.event.inputs.version }}
+            ## Changes in ${{ steps.version.outputs.tag }}
 
             ### Downloads
             - **Windows**: `.exe` installer

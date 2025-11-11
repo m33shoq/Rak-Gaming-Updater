@@ -25,7 +25,7 @@
 			{
 				"provider": "github",
 				"owner": "m33shoq",
-				"repo": "RakGamingUpdater-Releases",
+				"repo": "RakGamingUpdater",
 				"releaseType": "release"
 			}
 		],
