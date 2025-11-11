@@ -99,14 +99,21 @@ async function updateWatchers() {
 			log.warn('SavedVariables directory does not exist:', svPath);
 			continue;
 		}
-		const watcher = fs.watch(svPath, (eventType, filename) => {
-			if (eventType !== 'change' || !filename) return; // filename is sometimes null
 
-			const addonName = path.basename(filename, '.lua');
-			if (registeredCallbacks[ addonName ]) {
-				const filePath = path.join(svPath, filename);
+		log.info('Setting up SV watchers in:', svPath);
+		for (const addonName in registeredCallbacks) {
+			const luaFilePath = path.join(svPath, `${addonName}.lua`);
 
-				const luaContent = fs.readFileSync(filePath, "utf-8");
+			// we expect file to exist, if it dont this thing will work on next app launch
+			if (!fs.existsSync(luaFilePath)) {
+				continue;
+			}
+
+			const watcher = fs.watch(luaFilePath, (eventType, filename) => {
+				log.info(`SV Watcher event: ${eventType} on ${filename}`);
+				if (eventType !== 'change' || !filename) return; // filename is sometimes null
+
+				const luaContent = fs.readFileSync(luaFilePath, "utf-8");
 				try {
 					const ast = luaparse.parse(luaContent, {
 						comments: false,
@@ -131,13 +138,14 @@ async function updateWatchers() {
 					log.error('Error parsing Lua file:', err);
 					return;
 				}
-			}
-		});
-		activeWatchers.push(watcher);
-		log.info(`Watching SavedVariables for account: ${path.basename(accountDir)}`);
+				// }
+			});
+			activeWatchers.push(watcher);
+			log.info(`Watching SavedVariables for account: ${path.basename(accountDir)}, addon: ${addonName}`);
+		}
 	}
+	log.info('SV Watchers updated. Total watchers:', activeWatchers.length);
 }
-updateWatchers();
 
 store.onDidChange('updatePath', (newValue) => {
 	log.info('updatePath changed, reloading watchers:', newValue);
@@ -152,4 +160,6 @@ export function RegisterSVCallback(
 	registeredCallbacks[addonName] = registeredCallbacks[addonName] || {};
 	registeredCallbacks[addonName][variableName] = registeredCallbacks[addonName][variableName] || [];
 	registeredCallbacks[addonName][variableName].push(callback);
+
+	updateWatchers();
 }
