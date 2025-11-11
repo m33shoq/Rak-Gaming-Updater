@@ -107,6 +107,8 @@ jobs:
           tag_name: ${{ steps.version.outputs.tag }}
           name: Release ${{ steps.version.outputs.tag }}
           prerelease: ${{ steps.version.outputs.prerelease == 'true' }}
+          generate_release_notes: true
+          append_body: true
           files: |
             windows-build/*
             linux-build/*
