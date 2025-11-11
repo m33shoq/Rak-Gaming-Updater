@@ -460,7 +460,7 @@ autoUpdater.on('update-available', (info) => {
 		const dialogOpts = {
 			buttons: ['Update', 'Later'],
 			title: 'Rak Gaming Updater',
-			message: process.platform === 'win32' ? info.releaseNotes : info.releaseName,
+			message: info.releaseName || 'Update Available',
 			detail: `A new version ${info.version} is available. Do you want to update now?`,
 			noLink: true,
 			modal: true,
