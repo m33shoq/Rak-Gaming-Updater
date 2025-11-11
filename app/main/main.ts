@@ -829,6 +829,8 @@ socket.on(SOCKET_EVENTS.NEW_RELEASE, (data) => {
 			log.info('Update check results:', UpdateCheckResults);
 		}).catch((error) => {
 			log.error('Error checking for updates:', error);
+			log.info('Recheck try #', rechekTries);
+			log.info(error.statusCode, error.message);
 		});
 	}, 45 * 1000);
 });
