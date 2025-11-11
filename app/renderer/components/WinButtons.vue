@@ -1,22 +1,23 @@
 <script setup lang="ts">
 
+import { IPC_EVENTS } from '@/events';
 import { ref } from 'vue';
 
 const isMaximized = ref(false);
 
 function onCloseClick() {
-	api.IR_closeApp();
+	ipc.send(IPC_EVENTS.WINDOW_CLOSE);
 }
 
 function onMinimizeClick() {
-	api.IR_minimizeApp();
+	ipc.send(IPC_EVENTS.WINDOW_MINIMIZE);
 }
 
 function onMaximizeClick() {
-	api.IR_maximizeAppToggle();
+	ipc.send(IPC_EVENTS.WINDOW_MAXIMIZE_TOGGLE);
 }
 
-api.IR_onMaximizeAppToggle((event, maximized: boolean) => {
+ipc.on(IPC_EVENTS.WINDOW_MAXIMIZE_TOGGLE_CALLBACK, (event, maximized: boolean) => {
 	isMaximized.value = maximized;
 });
 

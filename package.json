@@ -1,7 +1,7 @@
 {
 	"name": "rak-gaming-updater",
 	"description": "Rak Gaming Updater Application",
-	"version": "2.2.50",
+	"version": "2.3.0",
 	"author": {
 		"name": "m33shoq",
 		"email": "mishadyrov@gmail.com"
@@ -49,15 +49,21 @@
 			"target": [
 				{
 					"target": "AppImage",
-					"arch": ["x64"]
+					"arch": [
+						"x64"
+					]
 				},
 				{
 					"target": "deb",
-					"arch": ["x64"]
+					"arch": [
+						"x64"
+					]
 				},
 				{
 					"target": "rpm",
-					"arch": ["x64"]
+					"arch": [
+						"x64"
+					]
 				}
 			],
 			"category": "Game",
@@ -65,6 +71,7 @@
 		}
 	},
 	"dependencies": {
+		"@vueuse/electron": "^14.0.0",
 		"abort-controller": "^3.0.0",
 		"archiver": "^7.0.1",
 		"crc": "^4.3.2",

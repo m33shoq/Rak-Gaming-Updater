@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import log from 'electron-log/renderer';
+import { IPC_EVENTS } from '@/events';
 
 import { ref, computed, watch, onMounted } from 'vue';
 
@@ -11,6 +12,8 @@ import PathSelector from '@/renderer/components/PathSelector.vue';
 
 import { getElectronStoreRef } from '@/renderer/store/ElectronRefStore';
 import { useBackupStatusStore } from '@/renderer/store/BackupStatusStore';
+
+import { useIpcRendererOn } from '@vueuse/electron'
 
 import { BACKUP_INTERVAL_ONE_WEK } from '@/constants'
 
@@ -44,7 +47,7 @@ const backupCurrentFolderSizeDisplay = computed(() => {
 function updateBackupsTexts() {
 	log.info('Updating backups texts...');
 	backupChecksStatus.value = t('backups.foldersize.inprogress');
-	api.getSizeOfBackupsFolder().then((backupsSize) => {
+	ipc.invoke(IPC_EVENTS.BACKUPS_GET_BACKUPS_SIZE).then((backupsSize) => {
 		if (backupsSize.aborted) return // retry in progress
 		if (backupsSize.size) { // finished checks
 			backupCurrentFolderSize.value = backupsSize.size;
@@ -60,7 +63,7 @@ function updateBackupsTexts() {
 	});
 }
 
-api.IR_onBackupCreated((event, data) => {
+useIpcRendererOn(ipc, IPC_EVENTS.BACKUPS_CREATED_CALLBACK, (event, data) => {
 	updateBackupsTexts();
 });
 
@@ -69,10 +72,10 @@ watch(backupsPath, (newPath) => {
 });
 
 async function selectBackupsPath() {
-	const path = await api.IR_selectBackupsPath();
+	const path = await ipc.invoke(IPC_EVENTS.BACKUPS_SELECT_BACKUP_FOLDER);
 	if (path.success) {
 		backupsPath.value = path.path;
-		api.IR_InitiateBackup(false);
+		ipc.invoke(IPC_EVENTS.BACKUPS_INITIATE, false);
 	} else {
 		backupsPath.value = '';
 	}
@@ -80,10 +83,10 @@ async function selectBackupsPath() {
 }
 
 async function openBackupsPath() {
-	api.IR_openBackupsFolder();
+	ipc.send(IPC_EVENTS.BACKUPS_OPEN_BACKUPS_FOLDER);
 }
 async function backupNow() {
-	api.IR_InitiateBackup(true);
+	ipc.send(IPC_EVENTS.BACKUPS_INITIATE, true);
 }
 
 const backupFolderSizeOptions = [

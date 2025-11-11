@@ -1,6 +1,8 @@
 import { defineStore } from 'pinia';
 import { ref, computed, watch, shallowRef } from 'vue';
 import log from 'electron-log/renderer';
+import { IPC_EVENTS } from '@/events';
+
 
 import { getElectronStoreRef } from '@/renderer/store/ElectronRefStore';
 
@@ -72,7 +74,7 @@ export const useReviewsStore = defineStore('Reviews', () => {
 
 	async function requestReports() {
 		// log.info('Requesting WCL reports');
-		const reports = await api.IR_requestWCLReports();
+		const reports = await ipc.invoke(IPC_EVENTS.WCL_REQUEST_REPORTS_LIST);
 		// log.info('Received WCL reports');
 		setReports(reports);
 	}
@@ -82,7 +84,7 @@ export const useReviewsStore = defineStore('Reviews', () => {
 		if (!selected) return;
 		const reportCode = selected.code;
 
-		const reportData = await api.IR_requestWCLReportData(reportCode);
+		const reportData = await ipc.invoke(IPC_EVENTS.WCL_REQUEST_REPORT_DATA, { reportCode });
 		// sort fights by start time
 		reportData.fights?.sort((a: fightDetails, b: fightDetails) => b.startTime - a.startTime);
 
@@ -96,7 +98,7 @@ export const useReviewsStore = defineStore('Reviews', () => {
 
 		const reportCode = selected.code;
 
-		const fightEvents = await api.IR_requestWCLFightEvents(reportCode, fightID);
+		const fightEvents = await ipc.invoke(IPC_EVENTS.WCL_REQUEST_FIGHT_EVENTS, { reportCode, fightID });
 
 		savedFightEvents.value[fightID] = fightEvents;
 	}

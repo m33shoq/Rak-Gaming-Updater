@@ -1,7 +1,7 @@
 import { BrowserWindow } from 'electron';
 import type { WebContents } from 'electron/main';
 
-class MainWindowWrapper {
+class MainWindowWrapper  {
   private window: BrowserWindow | null = null;
 
   get webContents(): WebContents | undefined {
@@ -10,6 +10,9 @@ class MainWindowWrapper {
 
   init(window: BrowserWindow): void {
     this.window = window;
+  }
+  getWindow(): BrowserWindow | null {
+	return this.window;
   }
 }
 

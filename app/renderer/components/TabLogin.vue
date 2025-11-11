@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import log from 'electron-log/renderer'
+import { IPC_EVENTS } from '@/events';
 
 import { ref, onMounted, onBeforeUnmount, watch } from 'vue';
 
@@ -23,10 +24,10 @@ async function handleLogin() {
 	loginStore.setDisconnectReason('');
 
 	const credentials = { username: username.value, password: password.value };
-	const res = await api.IR_sendLogin(credentials);
+	const res = await ipc.invoke(IPC_EVENTS.LOGIN_SEND_CREDENTIALS, credentials);
 	if (res.success) {
 		log.info('Login successful');
-		api.socket_connect();
+		ipc.send(IPC_EVENTS.SOCKET_INITIATE_CONNECT);
 	} else {
 		log.error('Login failed:', res.error);
 		loginStore.setConnectionError(res.error);
@@ -55,9 +56,14 @@ watch(() => loginStore.connectionErrorAt, (newVal) => {
 	}
 });
 
-onMounted(() => {
+onMounted(async () => {
 	if (loginStore.connectionErrorAt) {
 		connectionErrorInterval = setInterval(updateConnectionErrorDisplay, 1000);
+	}
+
+	const authInfo = await ipc.invoke(IPC_EVENTS.LOGIN_CHECK);
+	if (authInfo) {
+		ipc.send(IPC_EVENTS.SOCKET_INITIATE_CONNECT);
 	}
 });
 

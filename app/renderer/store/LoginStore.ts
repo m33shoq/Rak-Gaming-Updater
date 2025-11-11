@@ -1,6 +1,7 @@
+import log from 'electron-log/renderer'
 import { defineStore } from 'pinia';
 import { ref, computed } from 'vue';
-import log from 'electron-log/renderer'
+import { IPC_EVENTS } from '@/events';
 
 export const useLoginStore = defineStore('Login', () =>{
 	const state = ref({
@@ -45,21 +46,25 @@ export const useLoginStore = defineStore('Login', () =>{
 		}
 	}
 
-	api.socket_on_connect(async () => {
+	ipc.on(IPC_EVENTS.SOCKET_CONNECTED_CALLBACK, async () => {
+	// api.socket_on_connect(async (event) => {
+		log.info('Socket connected');
 		setConnected(true);
-		const authInfo = await api.check_for_login();
+		const authInfo = await ipc.invoke(IPC_EVENTS.LOGIN_CHECK);
 		setAuthInfo(authInfo);
 
 		setConnectionError('');
 		setDisconnectReason('');
 	});
 
-	api.socket_on_disconnect((event, reason) => {
+	ipc.on(IPC_EVENTS.SOCKET_DISCONNECTED_CALLBACK, (event, reason) => {
+		log.info('Socket disconnected:', reason);
 		setConnected(false);
 		setDisconnectReason(reason.description);
 	});
 
-	api.socket_on_connect_error((event, description) => {
+	ipc.on(IPC_EVENTS.SOCKET_CONNECT_ERROR_CALLBACK, (event, description) => {
+		log.info('Socket connection error:', description);
 		setConnectionError(description);
 	});
 

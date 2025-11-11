@@ -1,5 +1,7 @@
 import { defineStore } from 'pinia';
 import { ref, computed } from 'vue';
+import { IPC_EVENTS } from '@/events';
+
 
 type clientInfo = {
 	id: string;
@@ -39,7 +41,7 @@ export const useConnectedClientsStore = defineStore('connectedClients', () => {
 		connectedClients.value = clients;
 	}
 
-	api.IR_onConnectedClients((event, clients) => {
+	ipc.on(IPC_EVENTS.STATUS_CONNECTED_CLIENTS_CALLBACK, (event, clients) => {
 		setClients(clients);
 	});
 

@@ -1,26 +1,27 @@
-import dotenv from 'dotenv';
-dotenv.config();
+import 'dotenv/config';
 
 import { app, BrowserWindow, ipcMain, dialog, Tray, Menu, nativeImage, protocol, shell, Notification, net } from 'electron';
 import { autoUpdater } from 'electron-updater';
 import log from 'electron-log/main';
 import Socket from 'socket.io-client';
-import AbortController from 'abort-controller';
 import { jwtDecode } from 'jwt-decode';
 import fs from 'fs';
 import fsp from 'fs/promises';
 import path from 'path';
 import validator from 'validator';
 import { fileURLToPath } from "node:url";
-
 import { GetFileData, CalculateHashForPath } from '@/main/fileDataUtility';
 import { zipFile, unzipFile } from '@/main/zipHandler';
 import { DownloadWithRetries, InstallFile } from '@/main/fileManagement';
 import { getWoWPath, validateWoWPath } from '@/main/wowPathUtility';
 import mainWindowWrapper from '@/main/MainWindowWrapper';
 import store from '@/main/store';
+import { RegisterSVCallback } from '@/main/svWatcher';
+import BackupService from '@/main/backupService';
 
-// store.set('youtubeVideoInfo', { byId: {} }); // reset
+
+// @ts-ignore
+store.delete('youtubeVideoInfo'); // reset
 // store.set('authToken', null); // reset
 
 import {
@@ -44,8 +45,10 @@ import {
 	BACKUP_STATUS_COMPLETED,
 	BACKUP_STATUS_FAILED,
 	BACKUP_STATUS_DELETED,
-	BACKUP_INTERVAL_ONE_WEK
+	BACKUP_INTERVAL_ONE_WEK,
 } from '@/constants'
+
+import { IPC_EVENTS, SOCKET_EVENTS } from '@/events';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -55,12 +58,12 @@ log.initialize({ preload: true });
 
 process.on("uncaughtException", (error) => {
   log.error("uncaughtException", error);
-  mainWindow?.webContents.send('uncaughtException', error);
+  mainWindow?.webContents.send(IPC_EVENTS.APP_UNCAUGHT_EXCEPTION_CALLBACK, error);
 });
 
 process.on("unhandledRejection", (error) => {
   log.error("unhandledRejection", error);
-  mainWindow?.webContents.send('unhandledRejection', error);
+  mainWindow?.webContents.send(IPC_EVENTS.APP_UNHANDLED_REJECTION_CALLBACK, error);
 });
 
 let isQuiting = false;
@@ -68,6 +71,7 @@ let isQuiting = false;
 const TEMP_DIR = path.join(app.getPath('temp'), app.getName()); // Temporary directory for unzipped/zipped files
 
 const socket = Socket(SERVER_URL, { autoConnect: false });
+const backupService = new BackupService(socket);
 
 const isDev = process.env.npm_lifecycle_event === 'app:dev' ? true : false;
 if (isDev) {
@@ -135,7 +139,7 @@ if (notificationIcon.startsWith('data:')) {
 }
 
 const preload = path.join(__dirname, 'preload.mjs');
-const html = path.join(__dirname,  'index.html');
+const html = path.join(__dirname, 'index.html');
 
 protocol.registerSchemesAsPrivileged([{ scheme: 'app', privileges: { secure: true, standard: true } }]);
 
@@ -166,12 +170,12 @@ async function startProcess() {
 	autoUpdater.checkForUpdates().then((UpdateCheckResults) => {
 		log.info('Update check results:', UpdateCheckResults);
 	});
-	InitiateBackup(false);
+	backupService.InitiateBackup(false);
 }
 
 let forceClose = false;
 function shouldAppClose(): boolean {
-	if (backupRunning() && !forceClose) {
+	if (backupService.IsBackupInProgress() && !forceClose) {
 		const dialogOpts = {
 			buttons: ['Okay', 'Force Close'],
 			title: 'Rak Gaming Updater',
@@ -337,7 +341,7 @@ async function createWindow() {
 
 	// @ts-ignore
 	mainWindow?.on('unmaximize', (event: Electron.Event) => {
-		mainWindow?.webContents.send('maximize-app-changed', false);
+		mainWindow?.webContents.send(IPC_EVENTS.WINDOW_MAXIMIZE_TOGGLE_CALLBACK, false);
 
 		const windowSettings = store.get('windowSettings');
 		windowSettings.maximized = false;
@@ -346,7 +350,7 @@ async function createWindow() {
 
 	// @ts-ignore
 	mainWindow?.on('maximize', (event: Electron.Event) => {
-		mainWindow?.webContents.send('maximize-app-changed', true);
+		mainWindow?.webContents.send(IPC_EVENTS.WINDOW_MAXIMIZE_TOGGLE_CALLBACK, true);
 		const windowSettings = store.get('windowSettings');
 		windowSettings.maximized = true;
 		store.set('windowSettings', windowSettings);
@@ -502,7 +506,7 @@ autoUpdater.on('update-downloaded', () => {
 });
 
 function CheckPendingAppUpdate() {
-	if (updatePending && !backupRunning()) {
+	if (updatePending && !backupService.IsBackupInProgress()) {
 		log.info('Update downloaded; will install in 5 seconds');
 		setTimeout(() => {
 			// Shenanigans to make sure the app closes properly
@@ -522,7 +526,7 @@ function sanitizeInput(input: string): string {
 	return res;
 }
 
-ipcMain.handle('get-wow-path', async () => {
+ipcMain.handle(IPC_EVENTS.UPDATER_GET_WOW_PATH, async () => {
 	return await getWoWPath();
 });
 
@@ -557,7 +561,7 @@ async function onFilePathSelected(folderPath: string) {
 	}
 }
 
-ipcMain.handle('check-for-login', async () => {
+ipcMain.handle(IPC_EVENTS.LOGIN_CHECK, async () => {
 	const token = store.get('authToken');
 	log.info('Checking for login:', token);
 	if (token) {
@@ -581,14 +585,14 @@ ipcMain.on('store-sync-request', (event, key) => {
 	});
 });
 
-ipcMain.handle('get-app-version', () => {
+ipcMain.handle(IPC_EVENTS.APP_GET_VERSION, () => {
 	return {
 		version: app.getVersion(),
 		releaseType: app.isPackaged ? 'release' : 'development',
 	};
 });
 
-ipcMain.handle('get-language', async () => {
+ipcMain.handle(IPC_EVENTS.APP_GET_LANGUAGE, async () => {
 	const storedLanguage = store.get('locale');
 	if (storedLanguage) {
 		log.info('Stored language found:', storedLanguage);
@@ -610,15 +614,15 @@ ipcMain.handle('get-language', async () => {
 	return language;
 });
 
-ipcMain.on('minimize-app', (event) => {
+ipcMain.on(IPC_EVENTS.WINDOW_MINIMIZE, (event) => {
 	mainWindow?.minimize();
 });
 
-ipcMain.on('close-app', (event) => {
+ipcMain.on(IPC_EVENTS.WINDOW_CLOSE, (event) => {
 	mainWindow?.close();
 });
 
-ipcMain.on('maximize-app-toggle', (event) => {
+ipcMain.on(IPC_EVENTS.WINDOW_MAXIMIZE_TOGGLE, (event) => {
 	if (!mainWindow) return;
 
 	if (mainWindow.isMaximized()) {
@@ -628,7 +632,7 @@ ipcMain.on('maximize-app-toggle', (event) => {
 	}
 });
 
-ipcMain.handle('select-update-path', async () => {
+ipcMain.handle(IPC_EVENTS.UPDATER_SELECT_WOW_PATH, async () => {
 	const result = await dialog.showOpenDialog(mainWindow as BrowserWindow, {
 		properties: ['openDirectory'],
 	});
@@ -637,7 +641,7 @@ ipcMain.handle('select-update-path', async () => {
 		return validateWoWPath(result.filePaths[0]);
 	}
 });
-ipcMain.handle('select-relative-path', async () => {
+ipcMain.handle(IPC_EVENTS.PUSHER_SELECT_RELATIVE_PATH, async () => {
 	const result = await dialog.showOpenDialog(mainWindow as BrowserWindow, {
 		properties: ['openDirectory'],
 	});
@@ -652,110 +656,7 @@ ipcMain.handle('select-relative-path', async () => {
 	}
 });
 
-ipcMain.handle('select-backups-path', async () => {
-	const result = await dialog.showOpenDialog(mainWindow as BrowserWindow, {
-		properties: ['openDirectory'],
-	});
-	const selectedPath = result.filePaths[0];
-	// check if selected path is not somewhere within the WoW folder
-	if (selectedPath) {
-		const wowPath = await getWoWPath();
-		if (wowPath && isPathWithin(wowPath, selectedPath)) {
-			log.info('Selected path is within WoW folder, skipping');
-			return { success: false, message: 'Selected path is within WoW folder!!!' };
-		}
-
-		log.info('Backups path:', selectedPath);
-		return { success: true, path: selectedPath };
-	}
-	return { success: false, message: 'No path selected' };
-});
-
-/**
- * Check if a given path is within another path
- * @param {string} basePath - The base path to check against
- * @param {string} targetPath - The target path to check
- * @returns {boolean} - True if targetPath is within basePath, false otherwise
- */
-function isPathWithin(basePath: string, targetPath: string): boolean {
-	const resolvedBasePath = path.resolve(basePath);
-	const resolvedTargetPath = path.resolve(targetPath);
-	return resolvedTargetPath.startsWith(resolvedBasePath);
-}
-
-let currentAbortController: AbortController | null = null;
-async function getFolderSize(folderPath: string, signal: AbortSignal): Promise<string> {
-	let totalSize = 0;
-
-	async function calculateSize(directory: string): Promise<void> {
-		const files = await fsp.readdir(directory, { withFileTypes: true });
-
-		for (const file of files) {
-			if (signal.aborted) {
-				throw new Error('Operation aborted');
-			}
-
-			const filePath = path.join(directory, file.name);
-			try {
-				const stats = await fsp.stat(filePath);
-
-				if (stats.isDirectory()) {
-					await calculateSize(filePath); // Recursively calculate size for subdirectories
-				} else if (file.name.startsWith('WTF-')) {
-					totalSize += stats.size; // Accumulate file size for files starting with WTF-
-				}
-			} catch (error: any) {
-				if (error.code === 'EPERM' || error.code === 'EACCES') {
-					console.warn(`Skipping inaccessible file: ${filePath}`);
-				} else {
-					throw error; // Re-throw other errors
-				}
-			}
-		}
-	}
-
-	await calculateSize(folderPath);
-	const totalSizeInMB = totalSize / (1024 * 1024); // Convert bytes to megabytes
-	log.info(`Total size for ${folderPath}:`, totalSizeInMB.toFixed(2), 'MB');
-	return totalSizeInMB.toFixed(2); // Return size in MB with 2 decimal places
-}
-
-ipcMain.handle('get-size-of-backups-folder', async () => {
-	if (currentAbortController) {
-		currentAbortController.abort(); // Cancel the previous run
-	}
-
-	currentAbortController = new AbortController();
-	const { signal } = currentAbortController;
-
-	const folderPath = store.get('backupsPath');
-	if (!folderPath) {
-		log.info('get-size-of-backups-folder: No path set');
-		return { error: BACKUPS_ERROR_NO_PATH_SET };
-	}
-
-	try {
-		const size = await getFolderSize(folderPath, signal as AbortSignal);
-		return { size };
-	} catch (error: any) {
-		if (error.message === 'Operation aborted') {
-			return { aborted: true };
-		}
-		throw error;
-	} finally {
-		currentAbortController = null; // Reset the controller after the operation
-	}
-});
-
-ipcMain.on('open-backups-folder', async (event) => {
-	const folderPath = store.get('backupsPath');
-	log.info('Opening backups folder:', folderPath);
-	if (folderPath) {
-		shell.openPath(folderPath);
-	}
-});
-
-ipcMain.on('open-logs-folder', async () => {
+ipcMain.on(IPC_EVENTS.APP_OPEN_LOGS_FOLDER, async () => {
 	log.info('Opening logs folder');
 	const logsPath = app.getPath('logs')
 	if (logsPath) {
@@ -764,7 +665,7 @@ ipcMain.on('open-logs-folder', async () => {
 
 });
 
-ipcMain.handle('login', async (event, { username, password }) => {
+ipcMain.handle(IPC_EVENTS.LOGIN_SEND_CREDENTIALS, async (event, { username, password }) => {
 	try {
 		const sanitizedUsername = sanitizeInput(username); // Implement sanitizeInput to sanitize user inputs
 		const sanitizedPassword = sanitizeInput(password);
@@ -790,16 +691,16 @@ ipcMain.handle('login', async (event, { username, password }) => {
 		}
 	} catch (err: any) {
 		log.info('Login error:', err);
-		mainWindow?.webContents.send('connect-error', err);
+		mainWindow?.webContents.send(IPC_EVENTS.SOCKET_CONNECT_ERROR_CALLBACK, err);
 		return { success: false, error: `error logging in: ${err.code}` };
 	}
 });
 
-ipcMain.handle('should-download-file', (event, serverFile) => {
+ipcMain.handle(IPC_EVENTS.UPDATER_SHOULD_DOWNLOAD_FILE, (event, serverFile) => {
 	return shouldDownloadFile(serverFile);
 });
 
-ipcMain.handle('request-files-data', async (event) => {
+ipcMain.handle(IPC_EVENTS.UPDATER_FETCH_FILES_LIST, async (event) => {
 	return await net
 		.fetch(SERVER_EXISTING_FILES_ENDPOINT, {
 			method: 'GET',
@@ -811,7 +712,7 @@ ipcMain.handle('request-files-data', async (event) => {
 		.catch((error) => console.error('Error fetching files data:', error));
 });
 
-ipcMain.on('connect', async () => {
+ipcMain.on(IPC_EVENTS.SOCKET_INITIATE_CONNECT, async () => {
 	log.info('Connecting to server');
 	const token = store.get('authToken');
 	socket.auth = { token, APP_VERSION: app.getVersion() };
@@ -827,7 +728,7 @@ data = {
 	displayName: 'Example File',
 }
 */
-ipcMain.on('request-file', async (event, fileData) => {
+ipcMain.on(IPC_EVENTS.UPDATER_DOWNLOAD_FILE, async (event, fileData) => {
 	try {
 		const zipPath = await DownloadWithRetries(fileData);
 		try {
@@ -841,10 +742,11 @@ ipcMain.on('request-file', async (event, fileData) => {
 	}
 });
 
-socket.on('connect', () => {
+socket.on(SOCKET_EVENTS.SOCKET_CONNECTED, () => {
 	log.info('Connected to server');
-	mainWindow?.webContents.send('connect');
-	InitiateBackup(false);
+	mainWindow?.webContents.send(IPC_EVENTS.SOCKET_CONNECTED_CALLBACK);
+
+	backupService.InitiateBackup(false);
 
 	const updaterInfo = store.get('updaterInfo');
 	// clean old entries
@@ -858,28 +760,16 @@ socket.on('connect', () => {
 			}
 		}
 		store.set('updaterInfo', updaterInfo);
-		socket.emit('sv-updater-info', updaterInfo)
+		socket.emit(SOCKET_EVENTS.SV_INFO_UPDATE, updaterInfo)
 	}
 
 	const WCL_REFRESH_TOKEN = store.get('WCL_REFRESH_TOKEN');
 	if (WCL_REFRESH_TOKEN) {
-		socket.emit('wcl-refresh-token', { WCL_REFRESH_TOKEN }, (response: { success: boolean; error?: string }) => {
+		socket.emit(SOCKET_EVENTS.WCL_REQUEST_TOKEN_REFRESH, { WCL_REFRESH_TOKEN }, (response: { success: boolean; error?: string }) => {
 			if (response.success) {
 				log.info('WCL refresh token sent successfully');
 			} else {
 				log.info('Error sending WCL refresh token:', response.error);
-			}
-		});
-	}
-
-	const youtubeVideoInfo = store.get('youtubeVideoInfo');
-	if (youtubeVideoInfo) {
-		socket.emit('youtube-video-info-on-connect', { youtubeVideoInfo }, response => {
-			if (response.youtubeVideoInfo) {
-				updateYoutubeVideoInfo(response.youtubeVideoInfo);
-				log.info('Youtube video info updated from server on connect');
-			} else {
-				log.info('Unexpected response for youtube-video-info-on-connect:', response);
 			}
 		});
 	}
@@ -891,35 +781,35 @@ socket.on('connect_error', async (error: Error) => {
 		error = new Error('Server is unavailable.');
 	}
 
-	mainWindow?.webContents.send('connect-error', error);
+	mainWindow?.webContents.send(IPC_EVENTS.SOCKET_CONNECT_ERROR_CALLBACK, error);
 	log.error('Connection error:', error.message);
 });
 
-socket.on('disconnect', (reason, details) => {
+socket.on(SOCKET_EVENTS.SOCKET_DISCONNECTED, (reason, details) => {
 	log.info('Disconnected from server', reason, details);
-	mainWindow?.webContents.send('disconnect', details || reason);
+	mainWindow?.webContents.send(IPC_EVENTS.SOCKET_DISCONNECTED_CALLBACK, details || reason);
 });
 
-socket.on('new-file', (fileData) => {
+socket.on(SOCKET_EVENTS.UPDATER_NEW_FILE, (fileData) => {
 	log.info('New file:', fileData);
-	mainWindow?.webContents.send('new-file', fileData);
+	mainWindow?.webContents.send(IPC_EVENTS.UPDATER_NEW_FILE_CALLBACK, fileData);
 });
 
-socket.on('file-not-found', (fileData) => {
-	mainWindow?.webContents.send('file-not-found', fileData);
+socket.on(SOCKET_EVENTS.UPDATER_FILE_NOT_FOUND, (fileData) => {
+	mainWindow?.webContents.send(IPC_EVENTS.UPDATER_FILE_NOT_FOUND_CALLBACK, fileData);
 });
 
-socket.on('file-deleted', (fileData) => {
+socket.on(SOCKET_EVENTS.UPDATER_FILE_DELETED, (fileData) => {
 	log.info('File deleted:', fileData);
-	mainWindow?.webContents.send('file-deleted', fileData);
+	mainWindow?.webContents.send(IPC_EVENTS.UPDATER_FILE_DELETED_CALLBACK, fileData);
 });
 
-ipcMain.on('delete-file', (event, fileData) => {
+ipcMain.on(IPC_EVENTS.PUSHER_FILE_DELETE, (event, fileData) => {
 	log.info('Deleting file:', fileData);
-	socket.emit('delete-file', fileData);
+	socket.emit(SOCKET_EVENTS.UPDATER_DELETE_FILE, fileData);
 });
 
-socket.on('new-release', (data) => {
+socket.on(SOCKET_EVENTS.NEW_RELEASE, (data) => {
 	log.info('New release:', data);
 	rechekTries = 0;
 	if (updatedRecheckTimer) {
@@ -941,16 +831,16 @@ socket.on('new-release', (data) => {
 	}, 45 * 1000);
 });
 
-socket.on('connected-clients', (data) => {
+socket.on(SOCKET_EVENTS.STATUS_CONNECTED_CLIENTS, (data) => {
 	// log.debug('Connected clients:', data);
-	mainWindow?.webContents.send('connected-clients', data);
+	mainWindow?.webContents.send(IPC_EVENTS.STATUS_CONNECTED_CLIENTS_CALLBACK, data);
 });
 
-socket.on('error', (error) => {
-	console.error('Socket error:', error);
+socket.on(SOCKET_EVENTS.ERROR, (error) => {
+	log.error('Socket error:', error);
 });
 
-ipcMain.on('open-file-dialog-folder', async () => {
+ipcMain.on(IPC_EVENTS.PUSHER_OPEN_FOLDER_DIALOG, async () => {
 	log.info('Opening file dialog: open-file-dialog');
 	const { canceled, filePaths } = await dialog.showOpenDialog({
 		properties: ['openDirectory'],
@@ -960,7 +850,7 @@ ipcMain.on('open-file-dialog-folder', async () => {
 	}
 });
 
-ipcMain.on('open-file-dialog-file', async () => {
+ipcMain.on(IPC_EVENTS.PUSHER_OPEN_FILE_DIALOG, async () => {
 	log.info('Opening file dialog: open-file-dialog');
 	const { canceled, filePaths } = await dialog.showOpenDialog({
 		properties: ['openFile'],
@@ -970,11 +860,12 @@ ipcMain.on('open-file-dialog-file', async () => {
 	}
 });
 
-socket.on('not-enough-permissions', (data) => {
-	log.info('Not enough permissions:', data);
+socket.on(SOCKET_EVENTS.NOT_ENOUGH_PERMISSIONS, (data) => {
+	log.error('Not enough permissions:', data);
+	mainWindow?.webContents.send(IPC_EVENTS.SOCKET_NOT_ENOUGH_PERMISSIONS_CALLBACK, data);
 });
 
-socket.on('server-shutdown', (data) => {
+socket.on(SOCKET_EVENTS.SERVER_SHUTDOWN, (data) => {
 	log.info('Server shutdown:', data);
 });
 
@@ -1112,165 +1003,6 @@ data = {
 
 */
 
-async function DeleteOverSizeBackupFiles() {
-	const backupsPath = store.get('backupsPath');
-	if (!backupsPath) {
-		log.error('Backups path not set');
-		throw new Error('Backups path not set');
-	}
-	// delete old backups untill there is only 1 backup left or the folder size is less than maxSise setting
-	const maxSiseMB = store.get('maxBackupsFolderSize'); // in MB
-	if (!maxSiseMB) {
-		log.info('Max backup size not set');
-		return;
-	}
-	const maxSise = maxSiseMB * 1024 * 1024; // convert to bytes
-	const backups = await fsp.readdir(backupsPath);
-	if (backups.length <= 1) {
-		log.info('Only one backup found, skipping delete');
-		return;
-	}
-	let totalSize = 0;
-	let files = [];
-	for (let file of backups) {
-		if (file.startsWith('WTF-')) {
-			const filePath = path.join(backupsPath, file);
-			const stats = fs.statSync(filePath);
-			totalSize += stats.size;
-			files.push({ file, size: stats.size, mtime: stats.mtime.getTime() }); // todo test
-		}
-	}
-	log.info('Total size of backups:', totalSize);
-	if (totalSize < maxSise) {
-		log.info('Total size is less than max size, skipping delete');
-		return;
-	}
-	files.sort((a, b) => a.mtime - b.mtime);
-	let deletedSize = 0;
-	for (let file of files) {
-		const filePath = path.join(backupsPath, file.file);
-		await fsp.rm(filePath, { recursive: true });
-		deletedSize += file.size;
-		log.info('Deleted:', filePath);
-		UpdateBackupStatus(BACKUP_STATUS_DELETED, filePath);
-		if (totalSize - deletedSize < maxSise) {
-			break;
-		}
-	}
-	log.info('Deleted size:', deletedSize);
-	mainWindow?.webContents.send('backup-created');
-}
-
-async function BackupWTFFolder() {
-	const wowPath = await getWoWPath();
-	if (!wowPath) {
-		log.error('WoW path not set');
-		throw new Error('WoW path not set');
-	}
-	const wtfPath = path.join(wowPath, '_retail_', 'WTF');
-	const backupsPath = store.get('backupsPath');
-	if (!backupsPath) {
-		log.error('Backups path not set');
-		throw new Error('Backups path not set');
-	}
-
-	if (!fs.existsSync(wtfPath)) {
-		log.error('WTF folder not found:', wtfPath);
-		throw new Error('WTF folder not found: ' + wtfPath);
-	}
-
-	if (!fs.existsSync(backupsPath)) {
-		log.error('Backups folder not found:', backupsPath);
-		throw new Error('Backups folder not found: ' + backupsPath);
-	}
-	log.info('Backing up WTF folder:', wtfPath);
-	//.split('T')[0];
-	const timestamp = new Date().toISOString().replace(/:/g, '-').split('.')[0];
-	const backupName = `WTF-${timestamp}.zip`;
-	const backupFilePath = path.join(backupsPath, backupName);
-
-	await zipFile(wtfPath, backupFilePath);
-}
-
-let isBackupRunning = false;
-
-function backupRunning() {
-	return isBackupRunning;
-}
-
-function UpdateBackupStatus(status: string, desc?: string) {
-	mainWindow?.webContents.send('backup-status', { status, desc });
-}
-
-let backupProgressTimer: NodeJS.Timeout | null = null;
-function ScheduleBackupStatus(status: string) {
-	if (backupProgressTimer) {
-		clearInterval(backupProgressTimer);
-	}
-	let c = 1;
-	backupProgressTimer = setInterval(() => {
-		UpdateBackupStatus(status, '.'.repeat(c));
-		c++;
-		if (c > 3) c = 1;
-	}, 500);
-}
-
-async function InitiateBackup(force: boolean) {
-	if (!socket.connected) {
-		log.info('Socket is not connected, skipping backup');
-		return;
-	}
-
-	if (isBackupRunning) {
-		log.info('Backup is already running, skipping');
-		return;
-	}
-
-	const backupsEnabled = store.get('backupsEnabled');
-	if (!backupsEnabled && !force) {
-		log.info('Backups are disabled, skipping');
-		UpdateBackupStatus(BACKUP_STATUS_DISABLED);
-		return;
-	}
-	log.info('Initiating backup');
-
-	const lastBackup = store.get('lastBackupTime');
-	// 1 week
-	const now = Date.now();
-	if (force || !lastBackup || now - lastBackup > BACKUP_INTERVAL_ONE_WEK) {
-		isBackupRunning = true;
-		try {
-			ScheduleBackupStatus(BACKUP_STATUS_DELETING_OLD);
-			await DeleteOverSizeBackupFiles();
-			ScheduleBackupStatus(BACKUP_STATUS_CREATING);
-			await BackupWTFFolder();
-			store.set('lastBackupTime', now);
-			ScheduleBackupStatus(BACKUP_STATUS_DELETING_OLD);
-			await DeleteOverSizeBackupFiles();
-			UpdateBackupStatus(BACKUP_STATUS_COMPLETED);
-		} catch (error: any) {
-			log.error('Error during backup:', error);
-			UpdateBackupStatus(BACKUP_STATUS_FAILED, error?.message || 'Unknown error');
-		} finally {
-			isBackupRunning = false;
-			CheckPendingAppUpdate();
-			if (backupProgressTimer) {
-				clearInterval(backupProgressTimer);
-			}
-		}
-	}
-}
-
-ipcMain.on('initiate-backup', (event, data) => {
-	InitiateBackup(data);
-});
-
-// every 10 min
-setInterval(async () => {
-	InitiateBackup(false);
-}, 1000 * 60 * 10);
-
-import { RegisterSVCallback } from '@/main/svWatcher';
 
 RegisterSVCallback('ExRT_Reminder', 'RGDB', (svPath, RGDB) => {
 	log.info('SV callback for ExRT_Reminder');
@@ -1319,7 +1051,7 @@ RegisterSVCallback('ExRT_Reminder', 'RGDB', (svPath, RGDB) => {
 async function requestWCLAuthLink() {
 	return new Promise<string>((resolve, reject) => {
 		console.log('Requesting WCL auth link');
-		socket.emit('wcl-auth-link', null, (response: { authLink: string; error?: string }) => {
+		socket.emit(SOCKET_EVENTS.WCL_REQUEST_AUTH_LINK, null, (response: { authLink: string; error?: string }) => {
 			if (response.error) {
 				reject(new Error(response.error));
 			} else {
@@ -1333,7 +1065,7 @@ async function requestWCLAuthLink() {
 	});
 }
 
-ipcMain.handle('wcl-request-auth-link', async () => {
+ipcMain.handle(IPC_EVENTS.WCL_REQUEST_AUTH_LINK, async () => {
 	try {
 		const link = await requestWCLAuthLink();
 		// follow link in default browser
@@ -1344,15 +1076,15 @@ ipcMain.handle('wcl-request-auth-link', async () => {
 	}
 });
 
-socket.on('wcl-refresh-token-update', (data) => {
+socket.on(SOCKET_EVENTS.WCL_REFRESH_TOKEN_UPDATE, (data) => {
 	// log.info('Received WCL refresh token:', data);
 	store.set('WCL_REFRESH_TOKEN', data);
 });
 
-ipcMain.handle('wcl-request-reports', async () => {
+ipcMain.handle(IPC_EVENTS.WCL_REQUEST_REPORTS_LIST, async () => {
 	return new Promise<any[]>((resolve) => {
 		log.info('Requesting WCL reports list');
-		socket.emit('wcl-reports-list', null, (response: { reports: any[]; error?: string }) => {
+		socket.emit(SOCKET_EVENTS.WCL_REQUEST_REPORTS_LIST, null, (response: { reports: any[]; error?: string }) => {
 			if (response.reports) {
 				log.info('Received reports list, count:', response.reports.length);
 				resolve(response.reports);
@@ -1367,11 +1099,11 @@ ipcMain.handle('wcl-request-reports', async () => {
 	});
 });
 
-ipcMain.handle('wcl-request-report-data', async (event, { reportCode }) => {
+ipcMain.handle(IPC_EVENTS.WCL_REQUEST_REPORT_DATA, async (event, { reportCode }) => {
 	// Handle the request for WCL fight details
 	return new Promise<any[]>((resolve) => {
 		log.info('Requesting WCL fight details for report', reportCode);
-		socket.emit('wcl-report-data', { reportCode }, (response: { reportData: any; error?: string }) => {
+		socket.emit(SOCKET_EVENTS.WCL_REQUEST_REPORT_DATA, { reportCode }, (response: { reportData: any; error?: string }) => {
 			if (response.reportData) {
 				log.info('Received fight details for report', reportCode);
 				resolve(response.reportData);
@@ -1386,10 +1118,10 @@ ipcMain.handle('wcl-request-report-data', async (event, { reportCode }) => {
 	});
 });
 
-ipcMain.handle('wcl-request-fight-events', async (event, { reportCode, fightID }) => {
+ipcMain.handle(IPC_EVENTS.WCL_REQUEST_FIGHT_EVENTS, async (event, { reportCode, fightID }) => {
 	return new Promise<any>((resolve) => {
 		log.info('Requesting WCL fight events for report', reportCode, 'fightID', fightID);
-		socket.emit('wcl-fight-events', { reportCode, fightID }, (response: { fightEvents: any; error?: string }) => {
+		socket.emit(SOCKET_EVENTS.WCL_REQUEST_FIGHT_EVENTS, { reportCode, fightID }, (response: { fightEvents: any; error?: string }) => {
 			if (response.fightEvents) {
 				log.info('Received fight events for report', reportCode, 'fightID', fightID);
 				resolve(response.fightEvents);
@@ -1404,52 +1136,41 @@ ipcMain.handle('wcl-request-fight-events', async (event, { reportCode, fightID }
 	});
 });
 
-socket.on('youtube-video-info-added', (data) => {
-	addYoutubeVideoInfo(data.videoInfo);
+ipcMain.on(IPC_EVENTS.WCL_OPEN_DEATH, async (event, { reportCode, fightID, deathID }) => {
+	// open in default browser
+	// https://www.warcraftlogs.com/reports/xmHw1b8M4aqVtzyv?fight=32&type=deaths&death=1
+	const url = `https://www.warcraftlogs.com/reports/${reportCode}?fight=${fightID}&type=deaths&death=${deathID}`;
+	log.info('Opening WCL death link:', url);
+	void shell.openExternal(url);
 });
 
-socket.on('youtube-video-info-updated', (data) => {
-	updateYoutubeVideoInfo(data.youtubeVideoInfo);
+ipcMain.on(IPC_EVENTS.YOUTUBE_OPEN_LINK, async (event, videoId) => {
+	const url = `https://www.youtube.com/watch?v=${videoId}`;
+	log.info('Opening YouTube link:', url);
+	void shell.openExternal(url);
 });
 
-function updateYoutubeVideoInfo(youtubeVideoInfoReceived) {
-	if (typeof youtubeVideoInfoReceived?.byId !== 'object') return;
+socket.on(SOCKET_EVENTS.YOUTUBE_VIDEO_INFO_UPDATED, () => {
+	mainWindow?.webContents.send(IPC_EVENTS.YOUTUBE_VIDEO_INFO_UPDATED);
+});
 
-	const youtubeVideoInfo = store.get('youtubeVideoInfo')
-	let anyNew = false;
+ipcMain.handle(IPC_EVENTS.YOUTUBE_VIDEO_INFO_GET, async (event) => {
+	return await new Promise((resolve) => {
+		socket.emit(SOCKET_EVENTS.YOUTUBE_VIDEO_INFO_GET, null, (response: { youtubeVideoInfo: any; }) => {
+			if (response.youtubeVideoInfo) {
+				resolve(response.youtubeVideoInfo);
+			} else {
+				resolve(null);
+			}
+		});
+	});
+});
 
-	for (const videoId in youtubeVideoInfoReceived.byId) {
-		if (youtubeVideoInfoReceived.byId.hasOwnProperty(videoId) &&
-		(
-			!youtubeVideoInfo.byId[videoId] ||
-			youtubeVideoInfo.byId[videoId].checkTime < youtubeVideoInfoReceived.byId[videoId].checkTime)
-		) {
-			youtubeVideoInfo.byId[videoId] = youtubeVideoInfoReceived.byId[videoId];
-			anyNew = true;
-		}
-	}
-
-	if (anyNew) {
-		store.set('youtubeVideoInfo', youtubeVideoInfo);
-	}
-};
-
-function addYoutubeVideoInfo(videoInfo) {
-	if (!videoInfo?.id) return;
-
-	const youtubeVideoInfo = store.get('youtubeVideoInfo')
-	if (!youtubeVideoInfo.byId[videoInfo.id] || youtubeVideoInfo.byId[videoInfo.id].checkTime < videoInfo.checkTime) {
-		youtubeVideoInfo.byId[videoInfo.id] = videoInfo;
-		store.set('youtubeVideoInfo', youtubeVideoInfo);
-	}
-}
-
-ipcMain.handle('request-youtube-video-info', async (event, URL) => {
+ipcMain.handle(IPC_EVENTS.YOUTUBE_VIDEO_INFO_ADD, async (event, URL) => {
 	return new Promise((resolve) => {
 		console.log('Requesting YouTube video info for URL:', URL);
-		socket.emit('youtube-video-info-add', { URL }, (response: { videoInfo: any; error?: string }) => {
-			if (response.videoInfo) {
-				addYoutubeVideoInfo(response.videoInfo);
+		socket.emit(SOCKET_EVENTS.YOUTUBE_VIDEO_INFO_ADD, { URL }, (response: { success: any; error?: string }) => {
+			if (response.success) {
 				log.info('Youtube video info added for URL:', URL);
 			}
 			resolve(response);
@@ -1457,10 +1178,38 @@ ipcMain.handle('request-youtube-video-info', async (event, URL) => {
 	});
 });
 
-ipcMain.handle('open-wcl-death', async (event, { reportCode, fightID, deathID }) => {
-	// open in default browser
-	// https://www.warcraftlogs.com/reports/xmHw1b8M4aqVtzyv?fight=32&type=deaths&death=1
-	const url = `https://www.warcraftlogs.com/reports/${reportCode}?fight=${fightID}&type=deaths&death=${deathID}`;
-	log.info('Opening WCL death link:', url);
-	void shell.openExternal(url);
+
+ipcMain.on(IPC_EVENTS.YOUTUBE_VIDEO_REFRESH, async (event, videoId) => {
+	refreshYoutubeVideoInfo(videoId);
 });
+
+ipcMain.on(IPC_EVENTS.YOUTUBE_VIDEO_DELETE, async (event, videoId) => {
+	deleteYoutubeVideoInfo(videoId);
+});
+
+function refreshYoutubeVideoInfo(videoId: string) { // todo
+	log.info('Refreshing Youtube video info for videoId:', videoId);
+	socket.emit(SOCKET_EVENTS.YOUTUBE_VIDEO_REFRESH, { videoId }, (response: { videoInfo: any; error?: string }) => {
+		log.info('Youtube video info refresh response for videoId:', videoId, response);
+		if (response.videoInfo) {
+			log.info('Youtube video info refreshed for videoId:', videoId);
+		} else {
+			log.error('Error refreshing Youtube video info for videoId:', videoId, response.error);
+		}
+	});
+
+}
+
+function deleteYoutubeVideoInfo(videoId: string) { // todo
+	socket.emit(SOCKET_EVENTS.YOUTUBE_VIDEO_DELETE, { videoId }, (response: { success: any; error?: string }) => {
+		if (response.success) {
+			log.info('Youtube video info deleted for videoId:', videoId);
+		} else {
+			log.error('Error deleting Youtube video info for videoId:', videoId, response.error);
+		}
+	});
+}
+
+
+
+

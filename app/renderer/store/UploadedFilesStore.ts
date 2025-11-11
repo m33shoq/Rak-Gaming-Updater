@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia';
 import log from 'electron-log/renderer';
 import { ref, computed } from 'vue';
+import { IPC_EVENTS } from '@/events';
 
 import {
 	DOWNLOAD_REASON_DOWNLOADING,
@@ -126,12 +127,12 @@ export const useUploadedFilesStore = defineStore('UploadedFiles', () => {
 		foundFile.downloadReason = DOWNLOAD_REASON_CHECKING;
 
 		const unreactiveFile = { ...file };
-		const [shouldDownload, downloadReason] = await api.shouldDownloadFile(unreactiveFile);
+		const [shouldDownload, downloadReason] = await ipc.invoke(IPC_EVENTS.UPDATER_SHOULD_DOWNLOAD_FILE, unreactiveFile);
 
 		foundFile.shouldDownload = shouldDownload;
 		foundFile.downloadReason = downloadReason;
 
-		if (shouldDownload && (await api.store.get('autoUpdate'))) {
+		if (shouldDownload && (await store.get('autoUpdate'))) {
 			downloadFile(file).catch((err) => {
 				log.error('Error downloading file:', file.displayName, err);
 			});
@@ -156,7 +157,7 @@ export const useUploadedFilesStore = defineStore('UploadedFiles', () => {
 	};
 	const fetchFiles = async () => {
 		log.info('Fetching files data from API...');
-		const filesData = await api.fetchFilesData();
+		const filesData = await ipc.invoke(IPC_EVENTS.UPDATER_FETCH_FILES_LIST);
 		log.info('Files data fetched:', filesData);
 		if (filesData.files) {
 			await setFiles(filesData.files);
@@ -166,18 +167,19 @@ export const useUploadedFilesStore = defineStore('UploadedFiles', () => {
 	};
 	const downloadFile = async (file: FileData) => {
 		log.info('Downloading file:', file);
-		api.requestFile({ ...file });
+		const unreactiveFile = { ...file };
+		ipc.invoke(IPC_EVENTS.UPDATER_DOWNLOAD_FILE, unreactiveFile);
 	};
 
-	api.socket_on_connect(async () => {
+	ipc.on(IPC_EVENTS.SOCKET_CONNECTED_CALLBACK, async () => {
 		fetchFiles();
 	});
 
-	api.IR_onFileChunkReceived((event, fileData: FileData, percent: number) => {
+	ipc.on(IPC_EVENTS.UPDATER_FILE_CHUNK_RECEIVED_CALLBACK, (event, fileData: FileData, percent: number) => {
 		updateLastPacketInfo(fileData, percent, Date.now());
 	});
 
-	api.onFileDownloadError((event, fileData: FileData, errorCode: number) => {
+	ipc.on(IPC_EVENTS.UPDATER_FILE_ERROR_CALLBACK, (event, fileData: FileData, errorCode: number) => {
 		const foundFile = files.value.find(f => isFilesSame(f, fileData));
 		if (foundFile) {
 			foundFile.downloadError = `${errorCode}`;
@@ -186,22 +188,22 @@ export const useUploadedFilesStore = defineStore('UploadedFiles', () => {
 		}
 	});
 
-	api.IR_onFileDownloaded((event, fileData: FileData) => {
+	ipc.on(IPC_EVENTS.UPDATER_FILE_DOWNLOADED_CALLBACK, (event, fileData: FileData) => {
 		log.info('File downloaded:', fileData.displayName);
 		checkDownloadStatus(fileData);
 		setIsFullyDownloaded(fileData, true);
 	});
 
-	api.socket_on_file_not_found((event, fileData: FileData) => {
+	ipc.on(IPC_EVENTS.UPDATER_FILE_NOT_FOUND_CALLBACK, (event, fileData: FileData) => {
 		log.info('File not found:', fileData);
 	});
 
-	api.socket_on_new_file(async (event, fileData: FileData) => {
+	ipc.on(IPC_EVENTS.UPDATER_NEW_FILE_CALLBACK, async (event, fileData: FileData) => {
 		log.info('New file received:', fileData);
 		addFile(fileData);
 	});
 
-	api.socket_on_file_deleted((event, fileData: FileData) => {
+	ipc.on(IPC_EVENTS.UPDATER_FILE_DELETED_CALLBACK, (event, fileData: FileData) => {
 		log.info('File deleted:', fileData);
 		deleteFile(fileData);
 	});

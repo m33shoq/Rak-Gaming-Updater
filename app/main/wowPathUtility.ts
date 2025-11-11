@@ -1,5 +1,6 @@
 import path from 'path';
 import fs from 'fs';
+import fsp from 'fs/promises';
 import { app } from 'electron';
 import log from 'electron-log/main';
 import { setExternalVBSLocation, promisified } from 'regedit';
@@ -86,4 +87,52 @@ export async function getWoWPath(): Promise<string | null> {
 		path = await wowDefaultPath();
 	}
 	return path;
+}
+
+/**
+ * Check if a given path is within another path
+ * @param {string} basePath - The base path to check against
+ * @param {string} targetPath - The target path to check
+ * @returns {boolean} - True if targetPath is within basePath, false otherwise
+ */
+export function isPathWithin(basePath: string, targetPath: string): boolean {
+	const resolvedBasePath = path.resolve(basePath);
+	const resolvedTargetPath = path.resolve(targetPath);
+	return resolvedTargetPath.startsWith(resolvedBasePath);
+}
+
+export async function getFolderSize(folderPath: string, signal: AbortSignal): Promise<string> {
+	let totalSize = 0;
+
+	async function calculateSize(directory: string): Promise<void> {
+		const files = await fsp.readdir(directory, { withFileTypes: true });
+
+		for (const file of files) {
+			if (signal && signal.aborted) {
+				throw new Error('Operation aborted');
+			}
+
+			const filePath = path.join(directory, file.name);
+			try {
+				const stats = await fsp.stat(filePath);
+
+				if (stats.isDirectory()) {
+					await calculateSize(filePath); // Recursively calculate size for subdirectories
+				} else if (file.name.startsWith('WTF-')) {
+					totalSize += stats.size; // Accumulate file size for files starting with WTF-
+				}
+			} catch (error: any) {
+				if (error.code === 'EPERM' || error.code === 'EACCES') {
+					console.warn(`Skipping inaccessible file: ${filePath}`);
+				} else {
+					throw error; // Re-throw other errors
+				}
+			}
+		}
+	}
+
+	await calculateSize(folderPath);
+	const totalSizeInMB = totalSize / (1024 * 1024); // Convert bytes to megabytes
+	log.info(`Total size for ${folderPath}:`, totalSizeInMB.toFixed(2), 'MB');
+	return totalSizeInMB.toFixed(2); // Return size in MB with 2 decimal places
 }

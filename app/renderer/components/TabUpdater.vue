@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import log from 'electron-log/renderer';
 
-import { ref } from 'vue';
+import { ref, watch } from 'vue';
 
 import TabContent from '@/renderer/components/TabContent.vue';
 import UIButton from '@/renderer/components/Button.vue';
@@ -12,27 +12,15 @@ import PathSelector from '@/renderer/components/PathSelector.vue';
 import { useUploadedFilesStore } from '@/renderer/store/UploadedFilesStore';
 import { getElectronStoreRef } from '@/renderer/store/ElectronRefStore';
 
+import { useWoWPath } from '@/renderer/composables/useWoWPath';
+
 const uploadedFilesStore = useUploadedFilesStore();
 
-const selectedPath = ref('');
-api.IR_GetWoWPath().then((path) => {
-	log.info('Initial WoW path:', path);
-	selectedPath.value = path || '';
-});
+const { wowPath, selectPath } = useWoWPath();
 
-async function selectUpdatePath() {
-	const res = await api.IR_selectUpdatePath();
-	if (res) {
-		log.info('Selected WoW path:', res);
-		await api.store.set('updatePath', res);
-	} else {
-		log.info('No WoW path selected, resetting to null');
-		await api.store.set('updatePath', null);
-	}
-	selectedPath.value = await api.IR_GetWoWPath();
-
+watch(wowPath, (newPath) => {
 	uploadedFilesStore.checkDownLoadStatusForAll();
-}
+});
 
 const autoUpdate = getElectronStoreRef('autoUpdate', false)
 
@@ -57,8 +45,8 @@ async function RefreshFiles() {
 				<PathSelector
 					:title="$t('updater.wowpath')"
 					:placeholder="$t('updater.wowpath.notset')"
-					:click="selectUpdatePath"
-					:label="selectedPath"
+					:click="selectPath"
+					:label="wowPath"
 				/>
 			</div>
 			<div class="flex justify-between items-center gap-2">

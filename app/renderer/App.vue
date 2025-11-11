@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import log from 'electron-log/renderer'
-import { ref, watchEffect, onMounted } from 'vue';
+import { IPC_EVENTS } from '@/events';
+import { ref } from 'vue';
 
 import icon from '@/assets/icon.png';
 
@@ -21,6 +22,9 @@ import { useConnectedClientsStore } from '@/renderer/store/ConnectedClientsStore
 import { useBackupStatusStore } from '@/renderer/store/BackupStatusStore';
 import { getElectronStoreRef } from '@/renderer/store/ElectronRefStore';
 
+import { useIpcRendererOn } from '@vueuse/electron';
+import { useAppVersion } from '@/renderer/composables/useAppVersion';
+
 // initialize all stores
 const loginStore = useLoginStore();
 const uploadedFilesStore = useUploadedFilesStore();
@@ -28,13 +32,7 @@ const connectedClientsStore = useConnectedClientsStore();
 const backupStatusStore = useBackupStatusStore();
 const darkMode = getElectronStoreRef('darkMode', true);
 
-const appVersion = ref('x.x.x');
-const appReleseType = ref('unknown');
-api.IR_GetAppVersion().then((versionInfo) => {
-	log.info('App version:', versionInfo);
-	appVersion.value = versionInfo.version;
-	appReleseType.value = versionInfo.releaseType;
-});
+const { appVersionInfo } = useAppVersion();
 
 const selectedTab = ref('main');
 
@@ -65,21 +63,17 @@ function showError(msg: string) {
 	}, 3000); // Show for 3 seconds
 }
 
-api.IPC_onUncaughtException((event, error) => {
+useIpcRendererOn(ipc, IPC_EVENTS.APP_UNCAUGHT_EXCEPTION_CALLBACK, (event, error) => {
 	showError(`Uncaught Exception: ${error.message}`);
 });
 
-api.IPC_onUnhandledRejection((event, error) => {
+useIpcRendererOn(ipc, IPC_EVENTS.APP_UNHANDLED_REJECTION_CALLBACK, (event, error) => {
 	showError(`Unhandled Rejection: ${error.message}`);
 });
 
-
-onMounted(async () => {
-	const authInfo = await api.check_for_login();
-	if (authInfo) {
-		api.socket_connect();
-	}
-})
+useIpcRendererOn(ipc, IPC_EVENTS.SOCKET_NOT_ENOUGH_PERMISSIONS_CALLBACK, (event, error) => {
+	showError(`Error: Not enough permissions to perform this action.`);
+});
 
 </script>
 
@@ -117,7 +111,7 @@ onMounted(async () => {
 		dark:bg-dark1
 		bg-light1">
 			<p>{{ loginStore.isConnected ? `Logged as: ${loginStore.getUsername} ${loginStore.getRole || ''}` : '' }}</p>
-			<p>Rak Gaming Updater {{ appVersion }}-{{ appReleseType }} by m33shoq</p>
+			<p>Rak Gaming Updater {{ appVersionInfo.version }}-{{ appVersionInfo.releaseType }} by m33shoq</p>
 		</footer>
 	</div>
 </template>

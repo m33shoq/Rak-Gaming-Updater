@@ -13,15 +13,15 @@ export function getElectronStoreRef<T>(key: string, defaultValue: T): ElectronSt
 
 	const refValue = shallowRef<T>(defaultValue);
 	storedRefs[key] = refValue;
-	api.store.get(key).then((value: T) => {
+	store.get(key).then((value: T) => {
 		refValue.value = value;
 		watch(refValue, (newValue) => {
 			// log.debug(`Updating store value for key "${key}":`, newValue, typeof newValue);
-			api.store.set(key, newValue).catch((error: any) => {
+			store.set(key, newValue).catch((error: any) => {
 				log.error(`Failed to set store value for key "${key}":`, error);
 			});
 		});
-		api.store.onSync(key, (syncValue: T) => {
+		store.onSync(key, (syncValue: T) => {
 			if (refValue.value !== syncValue) {
 				// log.debug(`Store value for key "${key}" synced:`, syncValue);
 				refValue.value = syncValue;

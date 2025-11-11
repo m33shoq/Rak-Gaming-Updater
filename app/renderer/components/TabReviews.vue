@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import log from 'electron-log/renderer';
+import { IPC_EVENTS } from '@/events';
 
-import { ref, computed, watch, onMounted, onUnmounted, useTemplateRef } from 'vue';
+import { ref, computed, watch, onMounted, useTemplateRef } from 'vue';
 
 import TabContent from '@/renderer/components/TabContent.vue';
 import UIButton from '@/renderer/components/Button.vue';
@@ -12,6 +13,9 @@ import ScrollFrame from '@/renderer/components/ScrollFrame.vue';
 
 import { getElectronStoreRef } from '@/renderer/store/ElectronRefStore';
 import { useReviewsStore } from '@/renderer/store/ReviewsStore';
+import { useLoginStore } from '@/renderer/store/LoginStore';
+
+import { useYoutubeVideoInfo } from '@/renderer/composables/useYoutubeVideoInfo';
 
 import { useI18n } from 'vue-i18n'
 const { t } = useI18n()
@@ -45,6 +49,7 @@ function formatTime(t) {
 }
 
 const reviewsStore = useReviewsStore();
+const loginStore = useLoginStore();
 
 const refreshToken = getElectronStoreRef<string | null>('WCL_REFRESH_TOKEN', null);
 
@@ -61,15 +66,15 @@ watch(youtubeLinkStatus, (newVal) => {
 	}
 });
 
-const youtubeVideoInfo = getElectronStoreRef<any>('youtubeVideoInfo', { byId: {} });
+const { youtubeVideoInfo } = useYoutubeVideoInfo();
 
 async function requestVideoInfo() {
 	const url = youtubeLink.value
 	youtubeLink.value = ''
 
 	youtubeLinkStatus.value = 'Requesting...'
-	const response = await api.IR_requestYouTubeVideoInfo(url)
-	if (response.videoInfo) {
+	const response = await ipc.invoke(IPC_EVENTS.YOUTUBE_VIDEO_INFO_ADD, url);
+	if (response.success) {
 		youtubeLinkStatus.value = 'Video added successfully!'
 	} else {
 		youtubeLinkStatus.value = response.error || 'Failed to add video.'
@@ -196,7 +201,7 @@ onMounted(async () => {
 });
 
 async function wclAuth() {
-	const res = await api.IR_WCL_GetAuthLink()
+	const res = await ipc.invoke(IPC_EVENTS.WCL_REQUEST_AUTH_LINK);
 	console.log('WCL Auth Link:', res)
 }
 
@@ -452,7 +457,23 @@ const playerDeaths = computed(() => {
 
 function openWCLDeath(deathID: number) {
 	if (!reviewsStore.selectedReportCode || !reviewsStore.selectedFightID) return;
-	api.IR_OpenWCLDeath(reviewsStore.selectedReportCode, reviewsStore.selectedFightID, deathID);
+	ipc.send(IPC_EVENTS.WCL_OPEN_DEATH, {
+		reportCode: reviewsStore.selectedReportCode,
+		fightID: reviewsStore.selectedFightID,
+		deathID: deathID,
+	});
+}
+
+function openYoutubeLink(videoId: string) {
+	ipc.send(IPC_EVENTS.YOUTUBE_OPEN_LINK, videoId);
+}
+
+function refreshYoutubeVideo(videoId: string) {
+	ipc.send(IPC_EVENTS.YOUTUBE_VIDEO_REFRESH, videoId);
+}
+
+function deleteYoutubeVideo(videoId: string) {
+	ipc.send(IPC_EVENTS.YOUTUBE_VIDEO_DELETE, videoId);
 }
 
 </script>
@@ -463,7 +484,7 @@ function openWCLDeath(deathID: number) {
 			<UIButton @click="wclAuth" label="Authorize WCL client" class="m-5 h-10 min-w-1/3"></UIButton>
 		</div>
 		<div v-else class="w-full h-full flex flex-col">
-			<div class="flex flex-row gap-0 h-9/10 flex-14 overflow-hidden">
+			<div class="flex flex-row gap-0 h-9/10 flex-14">
 				<div class="flex flex-1 flex-col max-w-[calc(100vw-350px)]">
 					<Dropdown :options="reportOptions" class="min-w-[34rem]"
 						:placeholder="$t('reviews.select_report')"
@@ -487,8 +508,8 @@ function openWCLDeath(deathID: number) {
 						</div>
 					</div>
 				</div>
-				<div class="w-full">
-					<div class="h-[70px]">
+				<div class="max-w-full w-full">
+					<div class="h-[70px] ">
 						<div class="flex items-center mt-1">
 							<Input class="flex-10 h-8"
 								:placeholder="$t('reviews.add_youtube_stream')"
@@ -510,19 +531,57 @@ function openWCLDeath(deathID: number) {
 
 						{{ youtubeLinkStatus }}
 					</div>
-					<ScrollFrame class="max-h-[calc(100%-85px)] flex flex-col">
-						<template #default>
-							<button v-for="video in videoList"
-								:key="video.id" class=" h-8 m-0.5 rounded-md"
+
+					<ScrollFrame class="max-h-[calc(100%-85px)]">
+						<div v-for="video in videoList" :key="video.id" class="flex min-h-fit items-center">
+							<button
+								class="min-h-8 m-0.5 rounded-md flex-1"
 								:class="{
 									'border-1 border-secondary dark:bg-dark1 bg-light1': video.id === reviewsStore.getSelectedVideoId,
 									'dark:bg-dark4 dark:hover:bg-dark3 bg-light4 hover:bg-light3 ': video.id !== reviewsStore.getSelectedVideoId,
 								}"
 								@click="reviewsStore.selectedVideoInfo = video"
 							>
-								<div class="text-bold line-item-element flex flex-col items-start">{{ video.author }} - {{ new Date(video.startTime).toLocaleTimeString() }}</div>
+								<div class="text-bold max-w-fit min-h-fit break-keep text-left px-2">{{ video.author }} - {{ new Date(video.startTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })  }}<span v-if="video.duration===0" class="text-red-500"> (LIVE)</span></div>
 							</button>
-						</template>
+							<!-- follow link -->
+							<button
+								class="flex-none hover:text-yellow-200"
+								@click="openYoutubeLink(video.id)"
+							>
+								<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="size-6 inline-block">
+									<path d="M21.721 12.752a9.711 9.711 0 0 0-.945-5.003 12.754 12.754 0 0 1-4.339 2.708 18.991 18.991 0 0 1-.214 4.772 17.165 17.165 0 0 0 5.498-2.477ZM14.634 15.55a17.324 17.324 0 0 0 .332-4.647c-.952.227-1.945.347-2.966.347-1.021 0-2.014-.12-2.966-.347a17.515 17.515 0 0 0 .332 4.647 17.385 17.385 0 0 0 5.268 0ZM9.772 17.119a18.963 18.963 0 0 0 4.456 0A17.182 17.182 0 0 1 12 21.724a17.18 17.18 0 0 1-2.228-4.605ZM7.777 15.23a18.87 18.87 0 0 1-.214-4.774 12.753 12.753 0 0 1-4.34-2.708 9.711 9.711 0 0 0-.944 5.004 17.165 17.165 0 0 0 5.498 2.477ZM21.356 14.752a9.765 9.765 0 0 1-7.478 6.817 18.64 18.64 0 0 0 1.988-4.718 18.627 18.627 0 0 0 5.49-2.098ZM2.644 14.752c1.682.971 3.53 1.688 5.49 2.099a18.64 18.64 0 0 0 1.988 4.718 9.765 9.765 0 0 1-7.478-6.816ZM13.878 2.43a9.755 9.755 0 0 1 6.116 3.986 11.267 11.267 0 0 1-3.746 2.504 18.63 18.63 0 0 0-2.37-6.49ZM12 2.276a17.152 17.152 0 0 1 2.805 7.121c-.897.23-1.837.353-2.805.353-.968 0-1.908-.122-2.805-.353A17.151 17.151 0 0 1 12 2.276ZM10.122 2.43a18.629 18.629 0 0 0-2.37 6.49 11.266 11.266 0 0 1-3.746-2.504 9.754 9.754 0 0 1 6.116-3.985Z" />
+								</svg>
+							</button>
+							<!-- refresh admin only -->
+							<button
+								v-if="loginStore.isAdmin && video.duration === 0"
+								class="flex-none hover:text-yellow-200"
+								@click="refreshYoutubeVideo(video.id)"
+							>
+								<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="size-6 inline-block">
+									<path
+										fill-rule="evenodd"
+										d="M4.755 10.059a7.5 7.5 0 0 1 12.548-3.364l1.903 1.903h-3.183a.75.75 0 1 0 0 1.5h4.992a.75.75 0 0 0 .75-.75V4.356a.75.75 0 0 0-1.5 0v3.18l-1.9-1.9A9 9 0 0 0 3.306 9.67a.75.75 0 1 0 1.45.388Zm15.408 3.352a.75.75 0 0 0-.919.53 7.5 7.5 0 0 1-12.548 3.364l-1.902-1.903h3.183a.75.75 0 0 0 0-1.5H2.984a.75.75 0 0 0-.75.75v4.992a.75.75 0 0 0 1.5 0v-3.18l1.9 1.9a9 9 0 0 0 15.059-4.035.75.75 0 0 0-.53-.918Z"
+										clip-rule="evenodd"
+										stroke="currentColor"
+										stroke-width="1"
+									/>
+								</svg>
+							</button>
+							<!-- delete admin only -->
+							<button
+								v-if="loginStore.isAdmin"
+								class="flex-none hover:text-red-600"
+								@click="deleteYoutubeVideo(video.id)"
+							>
+								<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="size-6 inline-block">
+									<path fill-rule="evenodd" d="M16.5 4.478v.227a48.816 48.816 0 0 1 3.878.512.75.75 0 1 1-.256 1.478l-.209-.035-1.005 13.07a3 3 0 0 1-2.991 2.77H8.084a3 3 0 0 1-2.991-2.77L4.087 6.66l-.209.035a.75.75 0 0 1-.256-1.478A48.567 48.567 0 0 1 7.5 4.705v-.227c0-1.564 1.213-2.9 2.816-2.951a52.662 52.662 0 0 1 3.369 0c1.603.051 2.815 1.387 2.815 2.951Zm-6.136-1.452a51.196 51.196 0 0 1 3.273 0C14.39 3.05 15 3.684 15 4.478v.113a49.488 49.488 0 0 0-6 0v-.113c0-.794.609-1.428 1.364-1.452Zm-.355 5.945a.75.75 0 1 0-1.5.058l.347 9a.75.75 0 1 0 1.499-.058l-.346-9Zm5.48.058a.75.75 0 1 0-1.498-.058l-.347 9a.75.75 0 0 0 1.5.058l.345-9Z" clip-rule="evenodd" />
+								</svg>
+
+							</button>
+
+						</div>
 					</ScrollFrame>
 				</div>
 			</div>

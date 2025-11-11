@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import log from 'electron-log/renderer';
+import { IPC_EVENTS } from '@/events';
 
 import TabContent from '@/renderer/components/TabContent.vue';
 import ScrollFrame from '@/renderer/components/ScrollFrame.vue';
@@ -14,25 +15,27 @@ const uploadedFilesStore = useUploadedFilesStore();
 const relativePath = getElectronStoreRef('relativePath', '');
 
 async function selectRelativePath() {
-	const path = await api.IR_selectRelativePath();
+
+	const path = await ipc.invoke(IPC_EVENTS.PUSHER_SELECT_RELATIVE_PATH);
 	if (path) {
-		api.store.set('relativePath', path);
+		store.set('relativePath', path);
 	} else {
-		api.store.set('relativePath', null);
+		store.set('relativePath', null);
 	}
 }
 
 function onAddFile() {
-	api.IR_openFileDialogFile()
+	ipc.send(IPC_EVENTS.PUSHER_OPEN_FILE_DIALOG);
 }
 
 function onAddFolder() {
-	api.IR_openFileDialogFolder()
+	ipc.send(IPC_EVENTS.PUSHER_OPEN_FOLDER_DIALOG);
 }
 
 function deleteFile(fileData: FileData) {
 	log.info('Deleting file:', fileData);
-	api.socket_emit_delete_file({ ...fileData });
+
+	ipc.send(IPC_EVENTS.PUSHER_FILE_DELETE, { ...fileData });
 }
 
 </script>

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import log from 'electron-log/renderer';
+import { IPC_EVENTS } from '@/events';
 
 import { watch } from 'vue';
 
@@ -15,7 +16,7 @@ const { locale } = useI18n()
 
 watch(locale, (newLocale) => {
 	log.info('Locale changed to:', newLocale);
-	api.store.set('locale', newLocale);
+	store.set('locale', newLocale);
 });
 
 const localeOptions = [
@@ -31,7 +32,7 @@ const quitOnClose = getElectronStoreRef('quitOnClose', false);
 const darkMode = getElectronStoreRef('darkMode', true);
 
 function openLogsFolder() {
-	api.IR_OpenLogsFolder();
+	ipc.send(IPC_EVENTS.APP_OPEN_LOGS_FOLDER);
 }
 
 </script>
