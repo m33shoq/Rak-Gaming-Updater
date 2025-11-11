@@ -818,7 +818,7 @@ socket.on(SOCKET_EVENTS.NEW_RELEASE, (data) => {
 	}
 	updatedRecheckTimer = setInterval(() => {
 		rechekTries++;
-		if (rechekTries > 6) {
+		if (rechekTries > 10) {
 			if (updatedRecheckTimer) {
 				clearInterval(updatedRecheckTimer);
 			}
