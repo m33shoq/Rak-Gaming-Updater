@@ -113,7 +113,6 @@ jobs:
             windows-build/*
             linux-build/*
           body: |
-            ## Changes in ${{ steps.version.outputs.tag }}
 
             ### Downloads
             - **Windows**: `.exe` installer
