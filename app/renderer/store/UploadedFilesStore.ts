@@ -168,7 +168,7 @@ export const useUploadedFilesStore = defineStore('UploadedFiles', () => {
 	const downloadFile = async (file: FileData) => {
 		log.info('Downloading file:', file);
 		const unreactiveFile = { ...file };
-		ipc.invoke(IPC_EVENTS.UPDATER_DOWNLOAD_FILE, unreactiveFile);
+		ipc.send(IPC_EVENTS.UPDATER_DOWNLOAD_FILE, unreactiveFile);
 	};
 
 	ipc.on(IPC_EVENTS.SOCKET_CONNECTED_CALLBACK, async () => {
