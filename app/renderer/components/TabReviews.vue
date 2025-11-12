@@ -535,7 +535,8 @@ function deleteYoutubeVideo(videoId: string) {
 					<ScrollFrame class="max-h-[calc(100%-85px)]">
 						<div v-for="video in videoList" :key="video.id" class="flex min-h-fit items-center">
 							<button
-								class="min-h-8 m-0.5 rounded-md flex-1"
+								class="min-h-8 m-0.5 rounded-md flex-1 cursor-pointer disabled:cursor-auto"
+								:disabled="video.id === reviewsStore.getSelectedVideoId"
 								:class="{
 									'border-1 border-secondary dark:bg-dark1 bg-light1': video.id === reviewsStore.getSelectedVideoId,
 									'dark:bg-dark4 dark:hover:bg-dark3 bg-light4 hover:bg-light3 ': video.id !== reviewsStore.getSelectedVideoId,
@@ -546,7 +547,7 @@ function deleteYoutubeVideo(videoId: string) {
 							</button>
 							<!-- follow link -->
 							<button
-								class="flex-none hover:text-yellow-200"
+								class="flex-none hover:text-yellow-200 cursor-pointer"
 								@click="openYoutubeLink(video.id)"
 							>
 								<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="size-6 inline-block">
@@ -556,7 +557,7 @@ function deleteYoutubeVideo(videoId: string) {
 							<!-- refresh admin only -->
 							<button
 								v-if="loginStore.isAdmin && video.duration === 0"
-								class="flex-none hover:text-yellow-200"
+								class="flex-none hover:text-yellow-200 cursor-pointer"
 								@click="refreshYoutubeVideo(video.id)"
 							>
 								<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="size-6 inline-block">
@@ -572,7 +573,7 @@ function deleteYoutubeVideo(videoId: string) {
 							<!-- delete admin only -->
 							<button
 								v-if="loginStore.isAdmin"
-								class="flex-none hover:text-red-600"
+								class="flex-none hover:text-red-600 cursor-pointer"
 								@click="deleteYoutubeVideo(video.id)"
 							>
 								<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="size-6 inline-block">
