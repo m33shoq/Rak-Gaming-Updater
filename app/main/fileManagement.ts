@@ -55,7 +55,20 @@ async function _downloadFile(fileData: FileData) {
 
 			req.on('error', (err) => {
 				log.error('Download request error:', err);
-				reject(err);
+				return reject(err);
+			});
+
+			req.on('abort', () => {
+				log.error('Download request aborted for:', updatePath);
+				return reject(new Error('Download request aborted'));
+			});
+
+			req.on('close', () => {
+				log.info('Download request closed for:', updatePath);
+			});
+
+			req.on('finish', () => {
+				log.info('Download request finished for:', updatePath);
 			});
 
 			req.on('response', (response) => {
