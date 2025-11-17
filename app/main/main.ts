@@ -261,7 +261,7 @@ async function createWindow() {
 	mainWindow?.once('ready-to-show', () => {
 		log.info(`Ready to show. Start args: ${process.argv.join(' ')}`);
 
-		log.debug('AUTH TOKEN:', store.get('authToken'));
+		log.debug('AUTH TOKEN:', store.get('authToken') ? 'SET' : 'NOT SET');
 		// mainWindow?.webContents.openDevTools({ mode: "detach" });
 	});
 
@@ -837,6 +837,37 @@ socket.on(SOCKET_EVENTS.STATUS_CONNECTED_CLIENTS, (data) => {
 	// log.debug('Connected clients:', data);
 	mainWindow?.webContents.send(IPC_EVENTS.STATUS_CONNECTED_CLIENTS_CALLBACK, data);
 });
+
+ipcMain.on(IPC_EVENTS.STATUS_REQUEST_LOGS, (event, clientId) => {
+	log.info('Requesting logs for client:', clientId);
+	socket.emit(SOCKET_EVENTS.STATUS_REQUEST_LOGS, { clientId }, async (response: { logData?: {content: string}; error?: string }) => {
+		if (response.logData) {
+			// save log data to file and open it
+			const logFilePath = path.join(TEMP_DIR, `client_${clientId}_logs.txt`);
+			await fsp.mkdir(path.dirname(logFilePath), { recursive: true });
+			await fsp.writeFile(logFilePath, response.logData.content, 'utf-8');
+			log.info('Logs saved to file:', logFilePath);
+			shell.openPath(logFilePath);
+		} else {
+			log.info('Error sending logs request for client:', clientId, response.error);
+		}
+	});
+});
+
+socket.on(SOCKET_EVENTS.GET_LOG, ({requester}) => {
+	const logPath = log.transports.file.getFile().path;
+	log.info('Received request to send log file:', logPath, 'to requester:', requester);
+	fsp.readFile(logPath, 'utf-8')
+		.then((data) => {
+			socket.emit(SOCKET_EVENTS.SEND_LOG, { content: data });
+			log.info('Log file sent:', logPath);
+		})
+		.catch((error) => {
+			log.error('Error reading log file:', error);
+		});
+});
+
+
 
 socket.on(SOCKET_EVENTS.ERROR, (error) => {
 	log.error('Socket error:', error);

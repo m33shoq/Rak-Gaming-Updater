@@ -44,6 +44,7 @@ export const IPC_EVENTS = {
 
 
 	STATUS_CONNECTED_CLIENTS_CALLBACK: 'connected-clients',
+	STATUS_REQUEST_LOGS: 'request-client-log',
 
 	WINDOW_CLOSE: 'window-close',
 	WINDOW_MINIMIZE: 'window-minimize',
@@ -78,6 +79,9 @@ export const SOCKET_EVENTS = {
 	SERVER_SHUTDOWN: 'server-shutdown',
 
 	STATUS_CONNECTED_CLIENTS: 'connected-clients',
+	STATUS_REQUEST_LOGS: 'request-client-log',
+	GET_LOG: 'get-client-log',
+	SEND_LOG: 'send-client-log',
 
 	SOCKET_CONNECTED: 'connect',
 	SOCKET_DISCONNECTED: 'disconnect',
