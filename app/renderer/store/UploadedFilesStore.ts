@@ -151,6 +151,9 @@ export const useUploadedFilesStore = defineStore('UploadedFiles', () => {
 		const foundFile = files.value.find(f => isFilesSame(f, file));
 		if (foundFile) {
 			foundFile.isFullyDownloaded = isFullyDownloaded;
+			if (isFullyDownloaded) {
+				foundFile.percentDownloaded = 100;
+			}
 		} else {
 			log.warn('File not found in store:', file);
 		}

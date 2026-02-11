@@ -8,7 +8,7 @@ import mainWindowWrapper from './MainWindowWrapper';
 import { getWoWPath, validateWoWPath } from './wowPathUtility';
 import { zipFile, unzipFile } from './zipHandler';
 import { nanoid } from 'nanoid';
-import { SOCKET_EVENTS } from '../events';
+import { SOCKET_EVENTS, IPC_EVENTS } from '../events';
 
 import {
 	SERVER_URL,
@@ -45,7 +45,7 @@ export async function InstallFile(fileData: FileData, zipPath: string) {
 		console.log('Extracting file:', zipPath, 'to', targetPath);
 		await unzipFile(zipPath, targetPath);
 		log.info('File extracted successfully:', targetPath);
-		mainWindowWrapper.webContents?.send('file-downloaded', fileData);
+		mainWindowWrapper.webContents?.send(IPC_EVENTS.UPDATER_FILE_DOWNLOADED_CALLBACK, fileData);
 	} catch (error) {
 		log.error('Error extracting file:', error);
 	}
@@ -57,9 +57,9 @@ export class FileManagementService {
 	}
 
 	// return file path for downloaded zip file
-	private async downloadFile(fileData: FileData) {
+	private async downloadFile_HTTPS(fileData: FileData, specificUrl?: string) {
 		const { fileName, relativePath, timestamp, hash, displayName } = fileData;
-		const DOWNLOAD_URL = `${SERVER_DOWNLOAD_ENDPOINT}/${displayName}/${hash}`;
+		const DOWNLOAD_URL = specificUrl ?? `${SERVER_DOWNLOAD_ENDPOINT}/${displayName}/${hash}`;
 
 		const updatePath = await getWoWPath();
 		if (!updatePath) {
@@ -166,10 +166,10 @@ export class FileManagementService {
 							return reject(new Error(`Invalid response (${response.statusCode}): ${DOWNLOAD_URL}`));
 						}
 
-						if (size !== fileLength) {
+						if (fileLength && size !== fileLength) {
 							log.info(`Content-length mismatch: expected ${fileLength}, got ${size}`);
 							mainWindowWrapper.webContents?.send('file-download-error', fileData, 'content-length mismatch');
-							return reject(new Error(`Invalid response (content-length mismatch): ${DOWNLOAD_URL}`));
+							return reject(new Error(`Invalid response (content-length mismatch): ${DOWNLOAD_URL}, expected ${fileLength}, got ${size}`));
 						}
 
 						return resolve(undefined);
@@ -191,7 +191,7 @@ export class FileManagementService {
 
 		return outputPath;
 	}
-	private async downloadFileAlternative(fileData: FileData) {
+	private async downloadFile_Socket(fileData: FileData) {
 		const { hash, displayName } = fileData;
 		const updatePath = await getWoWPath();
 		if (!updatePath) {
@@ -367,9 +367,32 @@ export class FileManagementService {
 
 		return outputPath;
 	}
+	private async downloadFile_GC(fileData: FileData) {
+		return new Promise<string>((resolve, reject) => {
+			this.socket.emit('request-download-url', fileData, async (response: { signedURL?: string; error?: string }) => {
+				if (response.signedURL) {
+					try {
+						log.info('Received signed URL for download:', response.signedURL);
+						const outputPath = await this.downloadFile_HTTPS(fileData, response.signedURL);
+						log.info('File downloaded successfully via GC URL:', outputPath);
+						resolve(outputPath);
+					} catch (error) {
+						log.error('Error downloading file via GC URL:', error);
+						mainWindowWrapper.webContents?.send('file-download-error', fileData, error instanceof Error ? error.message : String(error));
+						reject(error instanceof Error ? error : new Error(String(error)));
+					}
+				} else {
+					const errorMsg = response.error || 'Failed to get signed URL';
+					log.error(errorMsg);
+					mainWindowWrapper.webContents?.send('file-download-error', fileData, errorMsg);
+					reject(new Error(errorMsg));
+				}
+			});
+		});
+	}
 	async DownloadWithRetries(fileData: FileData, retries = 3) {
 		try {
-			return this.downloadFileAlternative(fileData);
+			return this.downloadFile_GC(fileData);
 		} catch (error) {
 			if (retries > 0) {
 				log.warn(`Retrying download... (${retries} attempts left)`);
