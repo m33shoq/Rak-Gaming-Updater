@@ -106,4 +106,9 @@ export const SOCKET_EVENTS = {
 	WCL_REQUEST_REPORT_DATA: 'wcl-report-data',
 	WCL_REQUEST_FIGHT_EVENTS: 'wcl-fight-events',
 
+	UPDATER_DOWNLOAD_REQUEST: 'updater-download-request',
+	UPDATER_DOWNLOAD_CHUNK: 'updater-download-chunk',
+	UPDATER_DOWNLOAD_COMPLETE: 'updater-download-complete',
+	UPDATER_DOWNLOAD_ERROR: 'updater-download-error',
+
 };

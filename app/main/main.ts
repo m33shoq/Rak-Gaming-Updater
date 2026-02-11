@@ -3,7 +3,7 @@ import 'dotenv/config';
 import { app, BrowserWindow, ipcMain, dialog, Tray, Menu, nativeImage, protocol, shell, Notification, net } from 'electron';
 import { autoUpdater } from 'electron-updater';
 import log from 'electron-log/main';
-import Socket from 'socket.io-client';
+import { io as Socket } from 'socket.io-client';
 import { jwtDecode } from 'jwt-decode';
 import fs from 'fs';
 import fsp from 'fs/promises';
@@ -12,7 +12,7 @@ import validator from 'validator';
 import { fileURLToPath } from "node:url";
 import { GetFileData, CalculateHashForPath } from '@/main/fileDataUtility';
 import { zipFile, unzipFile } from '@/main/zipHandler';
-import { DownloadWithRetries, InstallFile } from '@/main/fileManagement';
+import { FileManagementService, InstallFile } from '@/main/fileManagement';
 import { getWoWPath, validateWoWPath } from '@/main/wowPathUtility';
 import mainWindowWrapper from '@/main/MainWindowWrapper';
 import store from '@/main/store';
@@ -77,6 +77,8 @@ const isDev = process.env.npm_lifecycle_event === 'app:dev' ? true : false;
 if (isDev) {
 	// store.delete('authToken'); // Clear auth token on startup for testing
 }
+
+const fileManagementService = new FileManagementService(socket);
 
 const startupLoginItemSettings = app.getLoginItemSettings();
 log.info('Login item settings at startup:', startupLoginItemSettings);
@@ -730,7 +732,7 @@ data = {
 */
 ipcMain.on(IPC_EVENTS.UPDATER_DOWNLOAD_FILE, async (event, fileData) => {
 	try {
-		const zipPath = await DownloadWithRetries(fileData);
+		const zipPath = await fileManagementService.DownloadWithRetries(fileData);
 		try {
 			await InstallFile(fileData, zipPath);
 		} finally {
