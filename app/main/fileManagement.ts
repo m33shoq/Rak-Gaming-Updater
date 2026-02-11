@@ -77,6 +77,28 @@ export class FileManagementService {
 			await new Promise(async (resolve, reject) => {
 				let size = 0;
 				let percentMod = -1;
+				let inactivityTimer: NodeJS.Timeout | null = null;
+				let completed = false;
+
+				const resetInactivityTimer = () => {
+					if (inactivityTimer) {
+						clearTimeout(inactivityTimer);
+					}
+					inactivityTimer = setTimeout(() => {
+						if (completed) return;
+						completed = true;
+						log.error('Download HTTPS timeout - no data received in 30 seconds');
+						req.abort();
+						reject(new Error('Download timeout'));
+					}, 30000);
+				};
+
+				const cleanup = () => {
+					if (inactivityTimer) {
+						clearTimeout(inactivityTimer);
+						inactivityTimer = null;
+					}
+				};
 
 				const req = net.request({
 					url: DOWNLOAD_URL,
@@ -86,23 +108,32 @@ export class FileManagementService {
 						Authorization: `Bearer ${store.get('authToken')}`,
 					},
 				});
+				log.info('Initiating HTTPS download request for:', DOWNLOAD_URL);
 
 				req.on('redirect', (status, method, redirectUrl) => {
 					log.info(`[download] caught redirect`, status, redirectUrl);
+					resetInactivityTimer();
 					req.followRedirect();
 				});
 
 				req.on('error', (err) => {
+					if (completed) return;
+					completed = true;
+					cleanup();
 					log.error('Download request error:', err);
 					return reject(err);
 				});
 
 				req.on('abort', () => {
+					if (completed) return;
+					completed = true;
+					cleanup();
 					log.error('Download request aborted for:', updatePath);
 					return reject(new Error('Download request aborted'));
 				});
 
 				req.on('close', () => {
+					cleanup();
 					log.info('Download request closed for:', updatePath);
 				});
 
@@ -111,16 +142,21 @@ export class FileManagementService {
 				});
 
 				req.on('response', (response) => {
+					resetInactivityTimer();
 					const contentLength = response.headers['content-length'] as string | undefined;
 					const fileLength = parseInt(contentLength ?? '0', 10);
 
 					response.on('error', (err: Error) => {
+						if (completed) return;
+						completed = true;
+						cleanup();
 						log.error('Error during response:', err);
 						mainWindowWrapper.webContents?.send(IPC_EVENTS.UPDATER_FILE_ERROR_CALLBACK, fileData, err.message);
 						return reject(err);
 					});
 
 					response.on('data', (data) => {
+						resetInactivityTimer();
 						writer.write(data)
 
 						size += data.length;
@@ -133,6 +169,8 @@ export class FileManagementService {
 					});
 
 					response.on('end', async () => {
+						if (completed) return;
+						cleanup();
 						log.info(`Download finished: ${fileData.displayName}`);
 
 						writer.end();
@@ -162,19 +200,24 @@ export class FileManagementService {
 						});
 
 						if (response.statusCode < 200 || response.statusCode >= 300) {
+							completed = true;
 							mainWindowWrapper.webContents?.send(IPC_EVENTS.UPDATER_FILE_ERROR_CALLBACK, fileData, response.statusCode);
 							return reject(new Error(`Invalid response (${response.statusCode}): ${DOWNLOAD_URL}`));
 						}
 
 						if (fileLength && size !== fileLength) {
+							completed = true;
 							log.info(`Content-length mismatch: expected ${fileLength}, got ${size}`);
 							mainWindowWrapper.webContents?.send(IPC_EVENTS.UPDATER_FILE_ERROR_CALLBACK, fileData, 'content-length mismatch');
 							return reject(new Error(`Invalid response (content-length mismatch): ${DOWNLOAD_URL}, expected ${fileLength}, got ${size}`));
 						}
 
+						completed = true;
 						return resolve(undefined);
 					});
 				});
+
+				resetInactivityTimer();
 				req.end();
 			});
 		} catch (error) {
@@ -393,7 +436,13 @@ export class FileManagementService {
 	}
 	async DownloadWithRetries(fileData: FileData, retries = 3) {
 		try {
-			return this.downloadFile_GC(fileData);
+			if (retries == 3) {
+				return this.downloadFile_HTTPS(fileData);
+			} else if (retries == 2) {
+				return this.downloadFile_GC(fileData);
+			} else {
+				return this.downloadFile_Socket(fileData);
+			}
 		} catch (error) {
 			if (retries > 0) {
 				log.warn(`Retrying download... (${retries} attempts left)`);
