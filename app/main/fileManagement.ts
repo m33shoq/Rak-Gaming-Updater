@@ -413,7 +413,16 @@ export class FileManagementService {
 	private async downloadFile_GC(fileData: FileData) {
 		return new Promise<string>((resolve, reject) => {
 			log.info('Requesting signed URL for file download:', fileData.displayName);
+
+			const timeout = setTimeout(() => {
+				const error = new Error('GC download timeout - no response received in 30 seconds');
+				log.error(error.message);
+				mainWindowWrapper.webContents?.send(IPC_EVENTS.UPDATER_FILE_ERROR_CALLBACK, fileData, error.message);
+				reject(error);
+			}, 30000);
+
 			this.socket.emit('request-download-url', fileData, async (response: { signedURL?: string; error?: string }) => {
+				clearTimeout(timeout);
 				if (response.signedURL) {
 					try {
 						log.info('Received signed URL for download:', response.signedURL);
