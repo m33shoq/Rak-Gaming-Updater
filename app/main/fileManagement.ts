@@ -116,7 +116,7 @@ export class FileManagementService {
 
 					response.on('error', (err: Error) => {
 						log.error('Error during response:', err);
-						mainWindowWrapper.webContents?.send('file-download-error', fileData, err.message);
+						mainWindowWrapper.webContents?.send(IPC_EVENTS.UPDATER_FILE_ERROR_CALLBACK, fileData, err.message);
 						return reject(err);
 					});
 
@@ -125,7 +125,7 @@ export class FileManagementService {
 
 						size += data.length;
 						const percent = fileLength <= 0 ? 0 : Math.floor((size / fileLength) * 100);
-						mainWindowWrapper.webContents?.send('file-chunk-received', fileData, percent);
+						mainWindowWrapper.webContents?.send(IPC_EVENTS.UPDATER_FILE_CHUNK_RECEIVED_CALLBACK, fileData, percent);
 						if (percent % 5 === 0 && percentMod !== percent) {
 							percentMod = percent;
 							log.info(`Write ${fileData.displayName}: [${percent}] ${size}`);
@@ -162,13 +162,13 @@ export class FileManagementService {
 						});
 
 						if (response.statusCode < 200 || response.statusCode >= 300) {
-							mainWindowWrapper.webContents?.send('file-download-error', fileData, response.statusCode);
+							mainWindowWrapper.webContents?.send(IPC_EVENTS.UPDATER_FILE_ERROR_CALLBACK, fileData, response.statusCode);
 							return reject(new Error(`Invalid response (${response.statusCode}): ${DOWNLOAD_URL}`));
 						}
 
 						if (fileLength && size !== fileLength) {
 							log.info(`Content-length mismatch: expected ${fileLength}, got ${size}`);
-							mainWindowWrapper.webContents?.send('file-download-error', fileData, 'content-length mismatch');
+							mainWindowWrapper.webContents?.send(IPC_EVENTS.UPDATER_FILE_ERROR_CALLBACK, fileData, 'content-length mismatch');
 							return reject(new Error(`Invalid response (content-length mismatch): ${DOWNLOAD_URL}, expected ${fileLength}, got ${size}`));
 						}
 
@@ -306,7 +306,7 @@ export class FileManagementService {
 					writer.write(buffer);
 					size += buffer.length;
 					const percent = totalSize && totalSize > 0 ? Math.floor((size / totalSize) * 100) : 0;
-					mainWindowWrapper.webContents?.send('file-chunk-received', fileData, percent);
+					mainWindowWrapper.webContents?.send(IPC_EVENTS.UPDATER_FILE_CHUNK_RECEIVED_CALLBACK, fileData, percent);
 					if (percent % 5 === 0 && percentMod !== percent) {
 						percentMod = percent;
 						log.info(`Write ${fileData.displayName}: [${percent}] ${size}`);
@@ -328,7 +328,7 @@ export class FileManagementService {
 						writer.end();
 						await waitForWriterFinish();
 						if (totalSize !== null && size !== totalSize) {
-							mainWindowWrapper.webContents?.send('file-download-error', fileData, 'content-length mismatch');
+							mainWindowWrapper.webContents?.send(IPC_EVENTS.UPDATER_FILE_ERROR_CALLBACK, fileData, 'content-length mismatch');
 							return cleanup(new Error(`Invalid response (content-length mismatch): ${displayName}`));
 						}
 						await cleanup();
@@ -340,7 +340,7 @@ export class FileManagementService {
 				const onError = (payload: { requestId: string; error?: string }) => {
 					if (!payload || payload.requestId !== requestId || completed) return;
 					const error = new Error(payload.error || 'Socket download error');
-					mainWindowWrapper.webContents?.send('file-download-error', fileData, error.message);
+					mainWindowWrapper.webContents?.send(IPC_EVENTS.UPDATER_FILE_ERROR_CALLBACK, fileData, error.message);
 					void cleanup(error);
 				};
 
@@ -369,6 +369,7 @@ export class FileManagementService {
 	}
 	private async downloadFile_GC(fileData: FileData) {
 		return new Promise<string>((resolve, reject) => {
+			log.info('Requesting signed URL for file download:', fileData.displayName);
 			this.socket.emit('request-download-url', fileData, async (response: { signedURL?: string; error?: string }) => {
 				if (response.signedURL) {
 					try {
@@ -378,13 +379,13 @@ export class FileManagementService {
 						resolve(outputPath);
 					} catch (error) {
 						log.error('Error downloading file via GC URL:', error);
-						mainWindowWrapper.webContents?.send('file-download-error', fileData, error instanceof Error ? error.message : String(error));
+						mainWindowWrapper.webContents?.send(IPC_EVENTS.UPDATER_FILE_ERROR_CALLBACK, fileData, error instanceof Error ? error.message : String(error));
 						reject(error instanceof Error ? error : new Error(String(error)));
 					}
 				} else {
 					const errorMsg = response.error || 'Failed to get signed URL';
 					log.error(errorMsg);
-					mainWindowWrapper.webContents?.send('file-download-error', fileData, errorMsg);
+					mainWindowWrapper.webContents?.send(IPC_EVENTS.UPDATER_FILE_ERROR_CALLBACK, fileData, errorMsg);
 					reject(new Error(errorMsg));
 				}
 			});
