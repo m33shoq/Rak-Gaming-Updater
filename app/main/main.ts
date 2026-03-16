@@ -750,6 +750,9 @@ ipcMain.on(IPC_EVENTS.UPDATER_DOWNLOAD_FILE, async (event, fileData) => {
 });
 
 socket.on(SOCKET_EVENTS.SOCKET_CONNECTED, () => {
+	autoUpdater.checkForUpdates().then((UpdateCheckResults) => {
+		log.info('Update check results:', UpdateCheckResults);
+	});
 	log.info('Connected to server');
 	mainWindow?.webContents.send(IPC_EVENTS.SOCKET_CONNECTED_CALLBACK);
 
