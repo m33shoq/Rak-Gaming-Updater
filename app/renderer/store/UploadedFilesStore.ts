@@ -162,7 +162,7 @@ export const useUploadedFilesStore = defineStore('UploadedFiles', () => {
 		log.info('Fetching files data from API...');
 		const filesData = await ipc.invoke(IPC_EVENTS.UPDATER_FETCH_FILES_LIST);
 		log.info('Files data fetched:', filesData);
-		if (filesData.files) {
+		if (filesData && filesData.files) {
 			await setFiles(filesData.files);
 		} else {
 			await setFiles([]);

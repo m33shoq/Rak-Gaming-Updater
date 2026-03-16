@@ -717,7 +717,12 @@ ipcMain.handle(IPC_EVENTS.UPDATER_FETCH_FILES_LIST, async (event) => {
 ipcMain.on(IPC_EVENTS.SOCKET_INITIATE_CONNECT, async () => {
 	log.info('Connecting to server');
 	const token = store.get('authToken');
-	socket.auth = { token, APP_VERSION: app.getVersion() };
+	const updaterInfo = store.get('updaterInfo') || { byChar: {} };
+	socket.auth = {
+		token,
+		APP_VERSION: app.getVersion(),
+		NICKNAME: updaterInfo.MY_NICKNAME || null,
+	};
 	socket.connect();
 });
 
