@@ -275,9 +275,9 @@ const videoList = computed<YouTubeVideo[]>(() => {
 	// if no specific fight selected just check streams that were active when report started
 	if (reportTimeOffset) {
 		return videosArray.filter((video) => {
-			// If duration is 0, treat as "still live" (endTime = startTime + 12 hours)
+			// If duration is 0, treat as "still live" (endTime = now + 12 hours)
 			const videoEnd = video.duration === 0
-				? video.startTime + TWELVE_HOURS_MS
+				? Date.now() + TWELVE_HOURS_MS
 				: video.startTime + video.duration;
 
 			// log.info(`Video ${video.id} ${video.title} (${video.author}) from ${new Date(video.startTime).toLocaleString()} to ${new Date(videoEnd).toLocaleString()} checkTime: ${new Date(video.checkTime).toLocaleString()}}	`);
@@ -290,8 +290,8 @@ const videoList = computed<YouTubeVideo[]>(() => {
 			// 	videoEnd >= fightStartTime
 			// );
 			// Check if video overlaps with fight time
-			return (video.startTime <= fightEndTime) && (videoEnd >= fightStartTime);
-		});
+			return !reviewsStore.selectedReportCode || ((video.startTime <= fightEndTime) && (videoEnd >= fightStartTime));
+		}).sort((a, b) => (b.startTime || 0) - (a.startTime || 0));
 	}
 
 	return [];
@@ -307,7 +307,7 @@ watch(videoList, (newList) => {
 	}
 });
 
-const YOUTUBE_DELAY_OFFSET = -10;
+const YOUTUBE_DELAY_OFFSET = 5;
 
 // 0 - fight end, in seconds
 function seekToFightTimestamp(fightTimestamp) {
@@ -543,7 +543,7 @@ function deleteYoutubeVideo(videoId: string) {
 								}"
 								@click="reviewsStore.selectedVideoInfo = video"
 							>
-								<div class="text-bold max-w-fit min-h-fit break-keep text-left px-2">{{ video.author }} - {{ new Date(video.startTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })  }}<span v-if="video.duration===0" class="text-red-500"> (LIVE)</span></div>
+								<div class="text-bold max-w-fit min-h-fit break-keep text-left px-2">{{ video.author }} - {{ new Date(video.startTime).toLocaleString()  }}<span v-if="video.duration===0" class="text-red-500"> (LIVE)</span></div>
 							</button>
 							<!-- follow link -->
 							<button
@@ -601,7 +601,7 @@ function deleteYoutubeVideo(videoId: string) {
 					<p class="absolute left-0 bottom-[-26px] bg-black/50 rounded-md p-0.5 px-1 pointer-events-none text-sm text-white">{{ formatTime(0) }}</p>
 					<p class="absolute right-0 bottom-[-26px] bg-black/50 rounded-md p-0.5 px-1 pointer-events-none text-sm text-white">{{ fightDurationDisplay }}</p>
 					<!-- Phases -->
-					<template v-for="phase in phaseTransitions" :key="phase.name + phase.percent">
+					<template v-for="phase in phaseTransitions" :key="phase.name.toString() + phase.percent">
 						<div
 							class="absolute top-0 bottom-0 w-[2px] bg-blue-400 z-5 pointer-events-none"
 							:style="{ left: `calc(${(phase.percent * 100).toFixed(2)}%)` }"

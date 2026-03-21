@@ -76,6 +76,7 @@ const backupService = new BackupService(socket);
 const isDev = process.env.npm_lifecycle_event === 'app:dev' ? true : false;
 if (isDev) {
 	// store.delete('authToken'); // Clear auth token on startup for testing
+	// store.delete('WCL_REFRESH_TOKEN'); // Clear auth token on startup for testing
 }
 
 const fileManagementService = new FileManagementService(socket);
