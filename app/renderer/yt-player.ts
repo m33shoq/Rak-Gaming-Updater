@@ -106,6 +106,7 @@ export default class YouTubePlayer extends EventEmitter {
 
 		this._loadIframeAPI((err, api) => {
 			if (err) return this._destroy(new Error('YouTube Iframe API failed to load'));
+			log.info('YouTube Iframe API loaded');
 			this._api = api;
 
 			// If there is no player instance, create one.
@@ -307,7 +308,7 @@ export default class YouTubePlayer extends EventEmitter {
 		if (this.destroyed) return;
 
 		const opts = this._opts;
-
+		log.info('Creating YouTube Player instance...', opts);
 		this._player = new this._api.Player(this._id, {
 			width: opts.width,
 			height: opts.height,
@@ -386,7 +387,7 @@ export default class YouTubePlayer extends EventEmitter {
 				// and is only supported for IFrame embeds. If you are using the IFrame
 				// API, which means you are setting the enablejsapi parameter value to 1,
 				// you should always specify your domain as the origin parameter value.
-				origin: window.location.origin,
+				// origin: window.location.origin,
 
 				// This parameter controls whether videos play inline or fullscreen in an
 				// HTML5 player on iOS. Valid values are:
