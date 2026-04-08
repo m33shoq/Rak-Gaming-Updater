@@ -437,13 +437,16 @@ app.on('web-contents-created', (webContentsCreatedEvent, webContents) => {
 
 		if (webContents !== mainWindow?.webContents || type !== 'keyDown') return;
 
-		const normalizedKey = typeof key === 'string' ? key.toLowerCase() : '';
 		const isPlayerHotkey = code === 'Space'
 			|| code === 'ArrowLeft'
 			|| code === 'ArrowRight'
-			|| normalizedKey === 'k'
-			|| normalizedKey === 'm'
-			|| normalizedKey === 'f';
+			|| code === 'KeyK'
+			|| code === 'KeyJ'
+			|| code === 'KeyL'
+			|| code === 'KeyM'
+			|| code === 'KeyF'
+			|| code === 'Comma'
+			|| code === 'Period';
 
 		if (isPlayerHotkey) {
 			mainWindow?.webContents.send(IPC_EVENTS.YOUTUBE_PLAYER_HOTKEY_CALLBACK, {

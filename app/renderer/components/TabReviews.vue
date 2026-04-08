@@ -90,6 +90,8 @@ const DEFAULT_SEEK_SECONDS = 5;
 const SHIFT_SEEK_SECONDS = 3;
 const ALT_SEEK_SECONDS = 1;
 const CTRL_SEEK_SECONDS = 60;
+const TEN_SECOND_SEEK_SECONDS = 10;
+const FRAME_SEEK_SECONDS = 1 / 30;
 
 type PlayerHotkeyPayload = {
 	key: string;
@@ -175,6 +177,19 @@ function getArrowSeekDelta(input: Pick<PlayerHotkeyPayload, 'ctrlKey' | 'metaKey
 	return DEFAULT_SEEK_SECONDS;
 }
 
+function seekByDelta(delta: number, source: string) {
+	if (!player.value) return false;
+
+	const currentTime = player.value.getCurrentTime();
+	const duration = player.value.getDuration();
+	const maxTime = duration > 0 ? duration : Number.POSITIVE_INFINITY;
+	const nextTime = Math.max(0, Math.min(currentTime + delta, maxTime));
+
+	log.info(`${source}: ${currentTime}s -> ${nextTime}s (delta: ${delta}s)`);
+	seekTo(nextTime);
+	return true;
+}
+
 function getPlayerIframeElement() {
 	const iframe = player.value?._player?.getIframe?.();
 	return iframe instanceof HTMLIFrameElement ? iframe : null;
@@ -212,24 +227,37 @@ function handlePlayerHotkey(input: PlayerHotkeyPayload | KeyboardEvent) {
 	if (input.key === 'ArrowLeft' || input.key === 'ArrowRight') {
 		const delta = getArrowSeekDelta(input);
 		const direction = input.key === 'ArrowRight' ? 1 : -1;
-		const currentTime = player.value.getCurrentTime();
-		const duration = player.value.getDuration();
-		const maxTime = duration > 0 ? duration : Number.POSITIVE_INFINITY;
-		const nextTime = Math.max(0, Math.min(currentTime + direction * delta, maxTime));
-
-		log.info(`Custom seek via ${input.key}: ${currentTime}s -> ${nextTime}s (delta: ${direction * delta}s)`);
 
 		if ('preventDefault' in input) {
 			input.preventDefault();
 			input.stopPropagation();
 		}
-		seekTo(nextTime);
-		return true;
+		return seekByDelta(direction * delta, `Custom seek via ${input.key}`);
 	}
 
 	if (input.ctrlKey || input.metaKey || input.altKey || input.shiftKey) return false;
 
-	if (input.code === 'Space' || input.key.toLowerCase() === 'k') {
+	if (input.code === 'KeyJ' || input.code === 'KeyL') {
+		if ('preventDefault' in input) {
+			input.preventDefault();
+			input.stopPropagation();
+		}
+
+		const direction = input.code === 'KeyL' ? 1 : -1;
+		return seekByDelta(direction * TEN_SECOND_SEEK_SECONDS, `Fixed seek via ${input.code}`);
+	}
+
+	if (input.code === 'Comma' || input.code === 'Period') {
+		if ('preventDefault' in input) {
+			input.preventDefault();
+			input.stopPropagation();
+		}
+
+		const direction = input.code === 'Period' ? 1 : -1;
+		return seekByDelta(direction * FRAME_SEEK_SECONDS, `Frame seek via ${input.code}`);
+	}
+
+	if (input.code === 'Space' || input.code === 'KeyK') {
 		if ('preventDefault' in input) {
 			input.preventDefault();
 			input.stopPropagation();
@@ -238,7 +266,7 @@ function handlePlayerHotkey(input: PlayerHotkeyPayload | KeyboardEvent) {
 		return true;
 	}
 
-	if (input.key.toLowerCase() === 'm') {
+	if (input.code === 'KeyM') {
 		if ('preventDefault' in input) {
 			input.preventDefault();
 			input.stopPropagation();
@@ -247,7 +275,7 @@ function handlePlayerHotkey(input: PlayerHotkeyPayload | KeyboardEvent) {
 		return true;
 	}
 
-	if (input.key.toLowerCase() === 'f') {
+	if (input.code === 'KeyF') {
 		if ('preventDefault' in input) {
 			input.preventDefault();
 			input.stopPropagation();
