@@ -50,6 +50,8 @@ export const IPC_EVENTS = {
 	WINDOW_MINIMIZE: 'window-minimize',
 	WINDOW_MAXIMIZE_TOGGLE: 'window-maximize-toggle',
 	WINDOW_MAXIMIZE_TOGGLE_CALLBACK: 'maximize-app-changed',
+	YOUTUBE_PLAYER_HOTKEY_CALLBACK: 'youtube-player-hotkey',
+	YOUTUBE_PLAYER_DOUBLE_CLICK_CALLBACK: 'youtube-player-double-click',
 
 
 

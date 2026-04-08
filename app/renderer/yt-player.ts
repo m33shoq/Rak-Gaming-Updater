@@ -74,7 +74,7 @@ export default class YouTubePlayer extends EventEmitter {
 				fullscreen: true,
 				annotations: true,
 				modestBranding: false,
-				related: true,
+				related: false,
 				timeupdateFrequency: 1000,
 				playsInline: true,
 				start: 0,
@@ -439,6 +439,7 @@ export default class YouTubePlayer extends EventEmitter {
 			);
 			iframe.setAttribute("allowfullscreen", "true");
 			iframe.setAttribute("referrerpolicy", "strict-origin-when-cross-origin");
+			iframe.setAttribute("tabindex", "-1");
 
 			this._ready = true;
 

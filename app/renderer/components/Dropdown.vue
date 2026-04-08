@@ -95,7 +95,7 @@ const colorMap = {
 
 <template>
 	<!-- class dropdown is required here for global mouse click tracking -->
-	<div class="dropdown flex flex-col mt-2 min-w-60 max-w-fit relative">
+	<div class="dropdown flex flex-col mt-2 min-w-60 max-w-fit relative" :class="toggled ? 'z-[120]' : 'z-0'">
 		<label v-if="label">{{ label }}:</label>
 		<button
 			:class="[
@@ -118,7 +118,7 @@ const colorMap = {
 
 		</button>
 		<div>
-			<div class="absolute top-full left-0 grid grid-cols-1 overflow-hidden rounded-b-md min-w-full z-10
+			<div class="absolute top-full left-0 grid grid-cols-1 overflow-hidden rounded-b-md min-w-full z-[130]
 				dark:bg-dark4
 				bg-light4  transition-all"
 				:class="[
