@@ -428,17 +428,48 @@ app.on('open-url', (event, url) => {
 // Ctrl+Shift+I to open devTools, Ctrl+Shift+R to reload
 app.on('web-contents-created', (webContentsCreatedEvent, webContents) => {
 	webContents.on('before-input-event', (beforeInputEvent, input) => {
-		const { code, alt, control, shift, meta } = input;
+		const { code, key, alt, control, shift, meta, type } = input;
 
 		// Shortcut: toggle devTools
 		if (shift && control && !alt && !meta && code === 'KeyI') {
 			mainWindow?.webContents.openDevTools({ mode: 'detach' });
 		}
 
+		if (webContents !== mainWindow?.webContents || type !== 'keyDown') return;
+
+		const normalizedKey = typeof key === 'string' ? key.toLowerCase() : '';
+		const isPlayerHotkey = code === 'Space'
+			|| code === 'ArrowLeft'
+			|| code === 'ArrowRight'
+			|| normalizedKey === 'k'
+			|| normalizedKey === 'm'
+			|| normalizedKey === 'f';
+
+		if (isPlayerHotkey) {
+			mainWindow?.webContents.send(IPC_EVENTS.YOUTUBE_PLAYER_HOTKEY_CALLBACK, {
+				key,
+				code,
+				altKey: alt,
+				ctrlKey: control,
+				metaKey: meta,
+				shiftKey: shift,
+			});
+		}
+
 		// Shortcut: window reload
 		// if (shift && control && !alt && !meta && code === "KeyR") {
 		//   mainWindow.reload();
 		// }
+	});
+
+	webContents.on('before-mouse-event', (beforeMouseEvent, mouse) => {
+		if (webContents !== mainWindow?.webContents) return;
+		if (mouse.type !== 'mouseDown') return;
+		if (mouse.button !== 'left') return;
+
+		mainWindow?.webContents.send(IPC_EVENTS.YOUTUBE_PLAYER_DOUBLE_CLICK_CALLBACK, {
+			clickCount: mouse.clickCount ?? 0,
+		});
 	});
 });
 

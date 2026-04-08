@@ -2,11 +2,11 @@
 import log from 'electron-log/renderer';
 import { IPC_EVENTS } from '@/events';
 
-import { ref, computed, watch, onMounted, useTemplateRef } from 'vue';
+import { ref, computed, watch, onMounted, onBeforeUnmount, useTemplateRef } from 'vue';
+import { useIpcRendererOn } from '@vueuse/electron';
 
 import TabContent from '@/renderer/components/TabContent.vue';
 import UIButton from '@/renderer/components/Button.vue';
-import Checkbox from '@/renderer/components/Checkbox.vue';
 import Dropdown from '@/renderer/components/Dropdown.vue';
 import Input from '@/renderer/components/Input.vue';
 import ScrollFrame from '@/renderer/components/ScrollFrame.vue';
@@ -16,9 +16,6 @@ import { useReviewsStore } from '@/renderer/store/ReviewsStore';
 import { useLoginStore } from '@/renderer/store/LoginStore';
 
 import { useYoutubeVideoInfo } from '@/renderer/composables/useYoutubeVideoInfo';
-
-import { useI18n } from 'vue-i18n'
-const { t } = useI18n()
 
 import YTPlayer from '@/renderer/yt-player';
 
@@ -43,8 +40,12 @@ function getClassColor(className: string) {
 
 // format seconds to mm:ss
 function formatTime(t) {
-	const minutes = Math.floor(t / 60);
+	const hours = Math.floor(t / 3600);
+	const minutes = Math.floor((t % 3600) / 60);
 	const seconds = Math.floor(t % 60);
+	if (hours > 0) {
+		return `${hours}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+	}
 	return `${minutes}:${seconds.toString().padStart(2, '0')}`;
 }
 
@@ -83,6 +84,30 @@ async function requestVideoInfo() {
 
 const player = ref<YTPlayer | null>(null);
 const playerIframe = useTemplateRef<HTMLIFrameElement | null>('playerIframe');
+const videoContainer = useTemplateRef<HTMLElement | null>('videoContainer');
+
+const DEFAULT_SEEK_SECONDS = 5;
+const SHIFT_SEEK_SECONDS = 3;
+const ALT_SEEK_SECONDS = 1;
+const CTRL_SEEK_SECONDS = 60;
+
+type PlayerHotkeyPayload = {
+	key: string;
+	code: string;
+	altKey: boolean;
+	ctrlKey: boolean;
+	metaKey: boolean;
+	shiftKey: boolean;
+};
+
+type PlayerMouseDownPayload = {
+	clickCount: number;
+};
+
+const PLAYER_DOUBLE_CLICK_THRESHOLD_MS = 300;
+const PLAYER_FULLSCREEN_TOGGLE_COOLDOWN_MS = 400;
+let lastPlayerMouseDownAt = 0;
+let lastFullscreenToggleAt = 0;
 
 function playVideo() {
 	if (player.value) {
@@ -101,6 +126,153 @@ function seekTo(seconds: number) {
 		player.value.seek(seconds);
   	}
 }
+
+function togglePlayPause() {
+	if (!player.value) return;
+
+	if (player.value.getState() === 'playing') {
+		pauseVideo();
+		return;
+	}
+
+	playVideo();
+}
+
+function toggleMute() {
+	if (!player.value) return;
+
+	if (player.value.isMuted()) {
+		player.value.unMute();
+		return;
+	}
+
+	player.value.mute();
+}
+
+async function toggleFullscreen() {
+	const fullscreenTarget = videoContainer.value;
+	if (!fullscreenTarget) return;
+
+	if (document.fullscreenElement === fullscreenTarget) {
+		await document.exitFullscreen();
+		return;
+	}
+
+	await fullscreenTarget.requestFullscreen();
+}
+
+function isEditableTarget(target: EventTarget | null) {
+	if (!(target instanceof HTMLElement)) return false;
+	if (target.isContentEditable) return true;
+
+	return Boolean(target.closest('input, textarea, select, [contenteditable="true"]'));
+}
+
+function getArrowSeekDelta(input: Pick<PlayerHotkeyPayload, 'ctrlKey' | 'metaKey' | 'shiftKey' | 'altKey'>) {
+	if (input.ctrlKey || input.metaKey) return CTRL_SEEK_SECONDS;
+	if (input.shiftKey) return SHIFT_SEEK_SECONDS;
+	if (input.altKey) return ALT_SEEK_SECONDS;
+	return DEFAULT_SEEK_SECONDS;
+}
+
+function getPlayerIframeElement() {
+	const iframe = player.value?._player?.getIframe?.();
+	return iframe instanceof HTMLIFrameElement ? iframe : null;
+}
+
+function isPlayerHotkeyContext() {
+	return document.activeElement === getPlayerIframeElement();
+}
+
+function onPlayerDoubleClick() {
+	const now = Date.now();
+	if (now - lastFullscreenToggleAt < PLAYER_FULLSCREEN_TOGGLE_COOLDOWN_MS) return;
+	lastFullscreenToggleAt = now;
+	lastPlayerMouseDownAt = 0;
+	void toggleFullscreen();
+}
+
+function onPlayerMouseDown(input: PlayerMouseDownPayload) {
+	if (!isPlayerHotkeyContext()) return;
+
+	const now = Date.now();
+	const isRapidSecondClick = lastPlayerMouseDownAt > 0
+		&& now - lastPlayerMouseDownAt <= PLAYER_DOUBLE_CLICK_THRESHOLD_MS;
+
+	lastPlayerMouseDownAt = now;
+
+	if (input.clickCount >= 2 || isRapidSecondClick) {
+		onPlayerDoubleClick();
+	}
+}
+
+function handlePlayerHotkey(input: PlayerHotkeyPayload | KeyboardEvent) {
+	if (!player.value || !reviewsStore.getSelectedVideoId) return false;
+
+	if (input.key === 'ArrowLeft' || input.key === 'ArrowRight') {
+		const delta = getArrowSeekDelta(input);
+		const direction = input.key === 'ArrowRight' ? 1 : -1;
+		const currentTime = player.value.getCurrentTime();
+		const duration = player.value.getDuration();
+		const maxTime = duration > 0 ? duration : Number.POSITIVE_INFINITY;
+		const nextTime = Math.max(0, Math.min(currentTime + direction * delta, maxTime));
+
+		log.info(`Custom seek via ${input.key}: ${currentTime}s -> ${nextTime}s (delta: ${direction * delta}s)`);
+
+		if ('preventDefault' in input) {
+			input.preventDefault();
+			input.stopPropagation();
+		}
+		seekTo(nextTime);
+		return true;
+	}
+
+	if (input.ctrlKey || input.metaKey || input.altKey || input.shiftKey) return false;
+
+	if (input.code === 'Space' || input.key.toLowerCase() === 'k') {
+		if ('preventDefault' in input) {
+			input.preventDefault();
+			input.stopPropagation();
+		}
+		togglePlayPause();
+		return true;
+	}
+
+	if (input.key.toLowerCase() === 'm') {
+		if ('preventDefault' in input) {
+			input.preventDefault();
+			input.stopPropagation();
+		}
+		toggleMute();
+		return true;
+	}
+
+	if (input.key.toLowerCase() === 'f') {
+		if ('preventDefault' in input) {
+			input.preventDefault();
+			input.stopPropagation();
+		}
+		void toggleFullscreen();
+		return true;
+	}
+
+	return false;
+}
+
+function onPlayerKeyDown(event: KeyboardEvent) {
+	if (event.defaultPrevented) return;
+	if (isEditableTarget(event.target)) return;
+	handlePlayerHotkey(event);
+}
+
+useIpcRendererOn(ipc, IPC_EVENTS.YOUTUBE_PLAYER_HOTKEY_CALLBACK, (event, input: PlayerHotkeyPayload) => {
+	if (!isPlayerHotkeyContext()) return;
+	handlePlayerHotkey(input);
+});
+
+useIpcRendererOn(ipc, IPC_EVENTS.YOUTUBE_PLAYER_DOUBLE_CLICK_CALLBACK, (event, input: PlayerMouseDownPayload) => {
+	onPlayerMouseDown(input);
+});
 
 let lastFightRelativeTime = 0;
 function onVideoIdChanged() {
@@ -162,6 +334,7 @@ watch(playerIframe, (el) => {
 		player.value = new YTPlayer(el, {
 			autoplay: true,
 			host: "https://www.youtube-nocookie.com",
+			keyboard: false,
 			timeupdateFrequency: 200, // ms
 		});
 		player.value.on('unplayable', ({ videoId, errorCode, data }) => {
@@ -196,8 +369,13 @@ watch(playerIframe, (el) => {
 	}
 });
 
-onMounted(async () => {
+onMounted(() => {
+	window.addEventListener('keydown', onPlayerKeyDown);
 	reviewsStore.requestReports();
+});
+
+onBeforeUnmount(() => {
+	window.removeEventListener('keydown', onPlayerKeyDown);
 });
 
 async function wclAuth() {
@@ -301,10 +479,10 @@ watch(videoList, (newList) => {
 	if (!reviewsStore.selectedVideoInfo && newList.length > 0) {
 		reviewsStore.setSelectedVideoInfo(newList[0]);
 	}
-	log.info('Filtered video list length:', newList.length);
-	for (const video of newList) {
-		log.info(`Video ${video.id} ${video.title} (${video.author}) from ${new Date(video.startTime).toLocaleString()} to ${new Date(video.startTime + (video.duration || 0)).toLocaleString()} checkTime: ${new Date(video.checkTime).toLocaleString()}}	`);
-	}
+	// log.info('Filtered video list length:', newList.length);
+	// for (const video of newList) {
+	// 	log.info(`Video ${video.id} ${video.title} (${video.author}) from ${new Date(video.startTime).toLocaleString()} to ${new Date(video.startTime + (video.duration || 0)).toLocaleString()} checkTime: ${new Date(video.checkTime).toLocaleString()}}	`);
+	// }
 });
 
 const YOUTUBE_DELAY_OFFSET = 5;
@@ -483,7 +661,10 @@ function deleteYoutubeVideo(videoId: string) {
 		<div v-if="!refreshToken" class="flex flex-col items-center">
 			<UIButton @click="wclAuth" label="Authorize WCL client" class="m-5 h-10 min-w-1/3"></UIButton>
 		</div>
-		<div v-else class="w-full h-full flex flex-col">
+		<div
+			v-else
+			class="w-full h-full flex flex-col"
+		>
 			<div class="flex flex-row gap-0 h-9/10 flex-14">
 				<div class="flex flex-1 flex-col max-w-[calc(100vw-350px)]">
 					<Dropdown :options="reportOptions" class="min-w-[34rem]"
@@ -496,8 +677,11 @@ function deleteYoutubeVideo(videoId: string) {
 						v-model="reviewsStore.selectedFightID"
 						:onOpen="reviewsStore.requestReportData"
 					></Dropdown>
-					<div class="bg-gray-200 aspect-video max-w-[min(100%,80vw)] h-[calc(100%-85px)] rounded-md mt-2">
-
+					<div
+						ref="videoContainer"
+						class="bg-gray-200 aspect-video max-w-[min(100%,80vw)] h-[calc(100%-85px)] rounded-md mt-2"
+						@dblclick="onPlayerDoubleClick"
+					>
 						<div :key="playerReloads" v-show="reviewsStore.selectedVideoInfo" class="w-full h-full relative">
 							<div
 								allow="autoplay; encrypted-media; fullscreen"
@@ -586,7 +770,7 @@ function deleteYoutubeVideo(videoId: string) {
 					</ScrollFrame>
 				</div>
 			</div>
-			<div class="flex-1 min-h-18 flex justify-center w-full">
+			<div class="flex-1 min-h-18 flex w-full flex-col items-center">
 				<!-- Timeline -->
 				<button class="w-96/100 h-6 m-0.5 mt-6 rounded-md
 					dark:bg-dark4 dark:hover:bg-dark3
@@ -659,10 +843,5 @@ function deleteYoutubeVideo(videoId: string) {
 				</button>
 			</div>
 		</div>
-
 	</TabContent>
 </template>
-
-<style scoped>
-
-</style>

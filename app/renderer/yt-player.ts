@@ -439,6 +439,7 @@ export default class YouTubePlayer extends EventEmitter {
 			);
 			iframe.setAttribute("allowfullscreen", "true");
 			iframe.setAttribute("referrerpolicy", "strict-origin-when-cross-origin");
+			// iframe.setAttribute("tabindex", "-1");
 
 			this._ready = true;
 
@@ -470,7 +471,7 @@ export default class YouTubePlayer extends EventEmitter {
 		if (this.destroyed) return;
 
 		const state = YOUTUBE_STATES[data.data];
-		// log.info('YTPlayer:state changed', state);
+		log.debug('YTPlayer:state changed', state);
 
 		if (state) {
 			// Send a 'timeupdate' anytime the state changes. When the video halts for any
