@@ -340,6 +340,10 @@ watch(() => reviewsStore.getSelectedVideoId, (newId) => {
 	onVideoIdChanged();
 });
 
+watch(() => reviewsStore.pendingDirectVideoSeekSeconds, (newId) => {
+	onVideoIdChanged();
+});
+
 watch(() => reviewsStore.selectedFightID, (newVal) => {
 	lastFightRelativeTime = 0;
 	if (reviewsStore.selectedVideoInfo) {
