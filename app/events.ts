@@ -3,6 +3,7 @@ export const IPC_EVENTS = {
 	APP_GET_LANGUAGE: 'get-language',
 	APP_I18N_READY_CALLBACK: 'i18n',
 	APP_GET_VERSION: 'get-app-version',
+	APP_DEEP_LINK_CALLBACK: 'app-deep-link',
 	APP_UNCAUGHT_EXCEPTION_CALLBACK: 'uncaught-exception',
 	APP_UNHANDLED_REJECTION_CALLBACK: 'unhandled-rejection',
 	APP_OPEN_LOGS_FOLDER: 'open-logs-folder',

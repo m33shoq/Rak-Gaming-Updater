@@ -1,6 +1,5 @@
 {
 	"compilerOptions": {
-		"baseUrl": ".",
 		"outDir": "dist/",
 		"esModuleInterop": true,
 		"skipLibCheck": true,
@@ -23,7 +22,7 @@
 		"forceConsistentCasingInFileNames": true,
     	"verbatimModuleSyntax": true,
 		"paths": {
-			"@/*": ["app/*"]
+			"@/*": ["./app/*"]
 		}
 	},
 	"include": [

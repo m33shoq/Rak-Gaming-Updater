@@ -1,23 +1,26 @@
-import { ref, onMounted } from 'vue';
-import { useIpcRendererOn } from '@vueuse/electron'
+import { ref } from 'vue';
 import { IPC_EVENTS } from '@/events';
 
+const youtubeVideoInfo = ref<any>({ byId: {} });
+let isYoutubeVideoInfoInitialized = false;
+
+const refreshYoutubeVideoInfo = async () => {
+	const videoInfo = await ipc.invoke(IPC_EVENTS.YOUTUBE_VIDEO_INFO_GET);
+	youtubeVideoInfo.value = videoInfo;
+	return videoInfo;
+};
+
 export function useYoutubeVideoInfo() {
-	const youtubeVideoInfo = ref<any>({byId: {}});
-
-	useIpcRendererOn(ipc, IPC_EVENTS.YOUTUBE_VIDEO_INFO_UPDATED, async (event) => {
-		const videoInfo = await ipc.invoke(IPC_EVENTS.YOUTUBE_VIDEO_INFO_GET);
-
-		youtubeVideoInfo.value = videoInfo;
-	});
-
-	onMounted(async () => {
-		const videoInfo = await ipc.invoke(IPC_EVENTS.YOUTUBE_VIDEO_INFO_GET);
-
-		youtubeVideoInfo.value = videoInfo;
-	});
+	if (!isYoutubeVideoInfoInitialized) {
+		isYoutubeVideoInfoInitialized = true;
+		ipc.on(IPC_EVENTS.YOUTUBE_VIDEO_INFO_UPDATED, async () => {
+			await refreshYoutubeVideoInfo();
+		});
+		void refreshYoutubeVideoInfo();
+	}
 
 	return {
 		youtubeVideoInfo,
+		refreshYoutubeVideoInfo,
 	};
 }

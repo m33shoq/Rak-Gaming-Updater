@@ -17,6 +17,7 @@ import WinButtons from '@/renderer/components/WinButtons.vue';
 import ErrorNotification from '@/renderer/components/ErrorNotification.vue';
 
 import { useLoginStore } from '@/renderer/store/LoginStore';
+import { useReviewsStore } from '@/renderer/store/ReviewsStore';
 import { useUploadedFilesStore } from '@/renderer/store/UploadedFilesStore';
 import { useConnectedClientsStore } from '@/renderer/store/ConnectedClientsStore';
 import { useBackupStatusStore } from '@/renderer/store/BackupStatusStore';
@@ -27,6 +28,7 @@ import { useAppVersion } from '@/renderer/composables/useAppVersion';
 
 // initialize all stores
 const loginStore = useLoginStore();
+const reviewsStore = useReviewsStore();
 const uploadedFilesStore = useUploadedFilesStore();
 const connectedClientsStore = useConnectedClientsStore();
 const backupStatusStore = useBackupStatusStore();
@@ -63,6 +65,34 @@ function showError(msg: string) {
 	}, 3000); // Show for 3 seconds
 }
 
+type AppDeepLinkPayload = {
+	tab: 'reviews';
+	action: 'open-video';
+	videoId: string;
+	timestampSeconds: number;
+	rawUrl: string;
+};
+
+async function handleDeepLink(payload: AppDeepLinkPayload) {
+	if (payload.tab !== 'reviews' || payload.action !== 'open-video') {
+		showError('Unsupported deep link.');
+		return;
+	}
+
+	if (!loginStore.isConnected) {
+		showError('Log in to open review links.');
+		return;
+	}
+
+	selectTab('reviews');
+	const result = await reviewsStore.openVideoFromDeepLink(payload.videoId, payload.timestampSeconds);
+	if (!result.success) {
+		log.info('Failed to open review link from deep link', { payload, error: result.error });
+		showError(result.error || 'Failed to open review link.');
+	}
+	log.info('Handled deep link', payload);
+}
+
 useIpcRendererOn(ipc, IPC_EVENTS.APP_UNCAUGHT_EXCEPTION_CALLBACK, (event, error) => {
 	showError(`Uncaught Exception: ${error.message}`);
 });
@@ -73,6 +103,10 @@ useIpcRendererOn(ipc, IPC_EVENTS.APP_UNHANDLED_REJECTION_CALLBACK, (event, error
 
 useIpcRendererOn(ipc, IPC_EVENTS.SOCKET_NOT_ENOUGH_PERMISSIONS_CALLBACK, (event, error) => {
 	showError(`Error: Not enough permissions to perform this action.`);
+});
+
+useIpcRendererOn(ipc, IPC_EVENTS.APP_DEEP_LINK_CALLBACK, (event, payload: AppDeepLinkPayload) => {
+	void handleDeepLink(payload);
 });
 
 </script>

@@ -17,6 +17,14 @@
 	},
 	"build": {
 		"appId": "com.rak-gaming-updater",
+		"protocols": [
+			{
+				"name": "Rak Gaming Updater Links",
+				"schemes": [
+					"rak-gaming-updater"
+				]
+			}
+		],
 		"productName": "Rak Gaming Updater",
 		"directories": {
 			"output": "./releases/${version}"

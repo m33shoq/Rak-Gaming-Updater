@@ -1,16 +1,25 @@
 import { defineStore } from 'pinia';
-import { ref, computed, watch, shallowRef } from 'vue';
+import { ref, computed, watch, shallowRef, nextTick } from 'vue';
 import log from 'electron-log/renderer';
 import { IPC_EVENTS } from '@/events';
 
+import { useYoutubeVideoInfo } from '@/renderer/composables/useYoutubeVideoInfo';
 
-import { getElectronStoreRef } from '@/renderer/store/ElectronRefStore';
+const TWELVE_HOURS_MS = 12 * 60 * 60 * 1000;
 
 export const useReviewsStore = defineStore('Reviews', () => {
-	const youtubeVideoInfo = getElectronStoreRef<{ byId: Record<string, YouTubeVideo> }>('youtubeVideoInfo', { byId: {} });
+	const { youtubeVideoInfo, refreshYoutubeVideoInfo } = useYoutubeVideoInfo();
 	const selectedVideoInfo = ref<YouTubeVideo | null>(null);
+
 	function setSelectedVideoInfo(video: YouTubeVideo | null) {
 		selectedVideoInfo.value = video;
+	}
+
+	const pendingDirectVideoSeekSeconds = ref<number | null>(null);
+	function consumePendingDirectVideoSeekSeconds() {
+		const value = pendingDirectVideoSeekSeconds.value;
+		pendingDirectVideoSeekSeconds.value = null;
+		return value;
 	}
 
 	const reports = shallowRef<Array<reportSummary>>([]);
@@ -103,11 +112,76 @@ export const useReviewsStore = defineStore('Reviews', () => {
 		savedFightEvents.value[fightID] = fightEvents;
 	}
 
+	const videoList = computed<YouTubeVideo[]>(() => {
+		const reportTimeOffset = getReportTimeOffset.value || Date.now();
+		log.info('Calculating video list with report time offset:', reportTimeOffset);
+		const fightStartTime = reportTimeOffset + (getSelectedFight.value?.startTime || 0);
+		const fightEndTime = reportTimeOffset + (getSelectedFight.value?.endTime || 0);
+
+		const videosArray: YouTubeVideo[] = Object.values(youtubeVideoInfo.value.byId || {});
+
+		// if no specific fight selected just check streams that were active when report started
+		return videosArray.filter((video) => {
+			// If duration is 0, treat as "still live" (endTime = now + 12 hours)
+			const videoEnd = video.duration === 0
+				? Date.now() + TWELVE_HOURS_MS
+				: video.startTime + video.duration;
+
+			// log.info(`Video ${video.id} ${video.title} (${video.author}) from ${new Date(video.startTime).toLocaleString()} to ${new Date(videoEnd).toLocaleString()} checkTime: ${new Date(video.checkTime).toLocaleString()}}	`);
+			// log.info(video.startTim	e,
+			// 	videoEnd,
+			// 	fightEndTime,
+			// 	fightStartTime,
+			// 	(video.startTime <= fightEndTime) && (videoEnd >= fightStartTime),
+			// 	video.startTime <= fightEndTime,
+			// 	videoEnd >= fightStartTime
+			// );
+			// Check if video overlaps with fight time
+			return !selectedReportCode.value || ((video.startTime <= fightEndTime) && (videoEnd >= fightStartTime));
+		}).sort((a, b) => (b.startTime || 0) - (a.startTime || 0));
+	});
+
+	async function openVideoFromDeepLink(videoId: string, timestampSeconds: number) {
+		const normalizedVideoId = videoId.trim();
+		if (!normalizedVideoId) {
+			return { success: false, error: 'Deep link is missing a video ID.' };
+		}
+
+		await refreshYoutubeVideoInfo(); // ensure we have the latest video info before trying to find the video
+
+		const targetVideo = youtubeVideoInfo.value?.byId?.[normalizedVideoId] ?? null;
+		if (!targetVideo) {
+			return { success: false, error: `Video ${normalizedVideoId} was not found.` };
+		}
+
+		// if video was active during currently selected report/fight just select it and set the timestamp
+		// otherwise clear selected report/fight to avoid confusion and then select the video and set the timestamp
+
+		if (selectedReportCode.value && !videoList.value.some(v => v.id === normalizedVideoId)) {
+			log.info('Deep linked video is not relevant to currently selected report/fight, clearing selection');
+			setSelectedVideoInfo(null);
+			selectedFightID.value = null;
+			savedFightEvents.value = {};
+
+			if (selectedReportCode.value !== null) {
+				selectedReportCode.value = null;
+				reportDetails.value = null;
+				await nextTick();
+			}
+		}
+
+		pendingDirectVideoSeekSeconds.value = timestampSeconds;
+		setSelectedVideoInfo(targetVideo);
+		log.info('Opened video from deep link', { videoId: normalizedVideoId, timestampSeconds });
+
+		return { success: true };
+	}
+
 	watch(selectedReportCode, (newVal, oldVal) => {
 		if (newVal !== oldVal) {
 			selectedFightID.value = null; // reset selected fight
 			savedFightEvents.value = {}; // clear cached fight events
-			selectedVideoInfo.value = null; // clear selected video
+			setSelectedVideoInfo(null); // clear selected video
 			log.info('Selected report changed:', newVal);
 			requestReportData();
 		}
@@ -122,17 +196,20 @@ export const useReviewsStore = defineStore('Reviews', () => {
 	return {
 		youtubeVideoInfo,
 		selectedVideoInfo,
+		pendingDirectVideoSeekSeconds,
 		reports,
 		selectedReportCode,
 		reportDetails,
 		selectedFightID,
 		savedFightEvents,
+		videoList,
 
 		getReports,
 		setReports,
 
 		getSelectedVideoId,
 		setSelectedVideoInfo,
+		consumePendingDirectVideoSeekSeconds,
 		getSelectedReport,
 		getReportDetails,
 		setReportDetails,
@@ -147,6 +224,7 @@ export const useReviewsStore = defineStore('Reviews', () => {
 		requestReports,
 		requestReportData,
 		requestFightEvents,
+		openVideoFromDeepLink,
 	};
 });
 

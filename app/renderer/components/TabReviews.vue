@@ -56,6 +56,7 @@ const refreshToken = getElectronStoreRef<string | null>('WCL_REFRESH_TOKEN', nul
 
 const youtubeLink = ref('')
 const youtubeLinkStatus = ref('')
+let playerLoaded = false;
 
 let youtubeLinkStatusResetTimeout = null as number | null;
 watch(youtubeLinkStatus, (newVal) => {
@@ -307,6 +308,21 @@ function onVideoIdChanged() {
 	if (player.value) {
 		const videoId = reviewsStore.getSelectedVideoId;
 		if (videoId) {
+			if (!playerLoaded) return;
+
+			const directSeekSeconds = reviewsStore.consumePendingDirectVideoSeekSeconds();
+			if (directSeekSeconds !== null) {
+				log.info(`Loading video ${videoId} from direct request, seeking to ${directSeekSeconds}s`);
+				player.value.load(videoId, true, directSeekSeconds);
+				return;
+			}
+
+			if (!reviewsStore.selectedReportCode) {
+				log.info(`Loading video ${videoId} without report context, seeking to 0s`);
+				player.value.load(videoId, true, 0);
+				return;
+			}
+
 			const relativeFightStart = reviewsStore.getFightStartRelativeToVideo / 1000; // in seconds
 
 			const seekTime = relativeFightStart + YOUTUBE_DELAY_OFFSET + lastFightRelativeTime;
@@ -355,16 +371,20 @@ const currentVideoTime = ref(0);
 
 watch(playerIframe, (el) => {
 	if (player.value) {
+		log.info("Destroying existing YouTube player instance");
 		player.value.destroy();
 		player.value = null;
+		playerLoaded = false;
 	}
 	if (el) {
+		log.info("Creating new YouTube player instance");
 		player.value = new YTPlayer(el, {
 			autoplay: true,
 			host: "https://www.youtube-nocookie.com",
 			keyboard: false,
 			timeupdateFrequency: 200, // ms
 		});
+
 		player.value.on('unplayable', ({ videoId, errorCode, data }) => {
 			log.info("YouTube video unplayable:", videoId, errorCode);
 			log.info(player.value._player)
@@ -382,18 +402,26 @@ watch(playerIframe, (el) => {
 				}, 1500);
 			}
 		});
+
 		player.value.on('error', (error) => {
 			log.info("YouTube embed error:", error);
 			alert(`Error embedding video. Error code: ${error}`);
 		});
+
 		player.value.on('timeupdate', (seconds) => {
 			currentVideoTime.value = seconds;
 		});
+
 		player.value.on('cued', () => {
 			playVideo();
 		});
-		player.value.mute();
-		onVideoIdChanged();
+
+		player.value.on('ready', () => {
+			log.info('YouTube player ready');
+			playerLoaded = true;
+			player.value.mute();
+			onVideoIdChanged();
+		});
 	}
 });
 
@@ -404,6 +432,7 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
 	window.removeEventListener('keydown', onPlayerKeyDown);
+	resetCopyReviewLinkStatus();
 });
 
 async function wclAuth() {
@@ -468,42 +497,7 @@ const fightDurationDisplay = computed(() => {
 	return formatTime(duration);
 });
 
-const TWELVE_HOURS_MS = 12 * 60 * 60 * 1000;
-
-const videoList = computed<YouTubeVideo[]>(() => {
-	const reportTimeOffset = reviewsStore.getReportTimeOffset || Date.now();
-	log.info('Calculating video list with report time offset:', reportTimeOffset);
-	const fightStartTime = reportTimeOffset + (reviewsStore.getSelectedFight?.startTime || 0);
-	const fightEndTime = reportTimeOffset + (reviewsStore.getSelectedFight?.endTime || 0);
-
-	const videosArray: YouTubeVideo[] = Object.values(youtubeVideoInfo.value.byId || {});
-
-	// if no specific fight selected just check streams that were active when report started
-	if (reportTimeOffset) {
-		return videosArray.filter((video) => {
-			// If duration is 0, treat as "still live" (endTime = now + 12 hours)
-			const videoEnd = video.duration === 0
-				? Date.now() + TWELVE_HOURS_MS
-				: video.startTime + video.duration;
-
-			// log.info(`Video ${video.id} ${video.title} (${video.author}) from ${new Date(video.startTime).toLocaleString()} to ${new Date(videoEnd).toLocaleString()} checkTime: ${new Date(video.checkTime).toLocaleString()}}	`);
-			// log.info(video.startTime,
-			// 	videoEnd,
-			// 	fightEndTime,
-			// 	fightStartTime,
-			// 	(video.startTime <= fightEndTime) && (videoEnd >= fightStartTime),
-			// 	video.startTime <= fightEndTime,
-			// 	videoEnd >= fightStartTime
-			// );
-			// Check if video overlaps with fight time
-			return !reviewsStore.selectedReportCode || ((video.startTime <= fightEndTime) && (videoEnd >= fightStartTime));
-		}).sort((a, b) => (b.startTime || 0) - (a.startTime || 0));
-	}
-
-	return [];
-});
-
-watch(videoList, (newList) => {
+watch(reviewsStore.videoList, (newList) => {
 	if (!reviewsStore.selectedVideoInfo && newList.length > 0) {
 		reviewsStore.setSelectedVideoInfo(newList[0]);
 	}
@@ -548,6 +542,54 @@ const timelineTooltip = ref<{ visible: boolean; x: number; label: string }>({
 	label: '',
 });
 const isDeathTooltipShown = ref(false);
+const copyReviewLinkStatus = ref('');
+const isCopyReviewLinkHovered = ref(false);
+let copyReviewLinkResetTimeout = null as number | null;
+
+const copyReviewLinkTooltip = computed(() => {
+	if (copyReviewLinkStatus.value) return copyReviewLinkStatus.value;
+	if (isCopyReviewLinkHovered.value && reviewsStore.getSelectedVideoId) return 'Copy review link with timestamp';
+	return '';
+});
+
+function resetCopyReviewLinkStatus() {
+	if (copyReviewLinkResetTimeout) {
+		clearTimeout(copyReviewLinkResetTimeout);
+		copyReviewLinkResetTimeout = null;
+	}
+	copyReviewLinkStatus.value = '';
+}
+
+async function copyReviewLink(event?: MouseEvent) {
+	(event?.currentTarget as HTMLButtonElement | null)?.blur();
+
+	const videoId = reviewsStore.getSelectedVideoId;
+	if (!videoId) {
+		copyReviewLinkStatus.value = 'No video selected';
+		return;
+	}
+
+	const timestampSeconds = Math.max(0, Math.floor(currentVideoTime.value || 0));
+	const reviewUrl = `https://rak-gaming-updater.org/api/updater/open/reviews?videoId=${encodeURIComponent(videoId)}&t=${timestampSeconds}`;
+
+	try {
+		await navigator.clipboard.writeText(reviewUrl);
+		copyReviewLinkStatus.value = 'Copied';
+		log.info('Copied review link', { reviewUrl });
+	} catch (error) {
+		copyReviewLinkStatus.value = 'Copy failed';
+		log.error('Failed to copy review link', error);
+	}
+
+	if (copyReviewLinkResetTimeout) {
+		clearTimeout(copyReviewLinkResetTimeout);
+	}
+
+	copyReviewLinkResetTimeout = window.setTimeout(() => {
+		copyReviewLinkStatus.value = '';
+		copyReviewLinkResetTimeout = null;
+	}, 2000);
+}
 
 function onTimelineMove(event: MouseEvent) {
 	const button = event.currentTarget as HTMLElement;
@@ -745,7 +787,7 @@ function deleteYoutubeVideo(videoId: string) {
 					</div>
 
 					<ScrollFrame class="max-h-[calc(100%-85px)]">
-						<div v-for="video in videoList" :key="video.id" class="flex min-h-fit items-center">
+						<div v-for="video in reviewsStore.videoList" :key="video.id" class="flex min-h-fit items-center">
 							<button
 								class="min-h-8 m-0.5 rounded-md flex-1 cursor-pointer disabled:cursor-auto"
 								:disabled="video.id === reviewsStore.getSelectedVideoId"
@@ -753,7 +795,7 @@ function deleteYoutubeVideo(videoId: string) {
 									'border-1 border-secondary dark:bg-dark1 bg-light1': video.id === reviewsStore.getSelectedVideoId,
 									'dark:bg-dark4 dark:hover:bg-dark3 bg-light4 hover:bg-light3 ': video.id !== reviewsStore.getSelectedVideoId,
 								}"
-								@click="reviewsStore.selectedVideoInfo = video"
+								@click="reviewsStore.setSelectedVideoInfo(video)"
 							>
 								<div class="text-bold max-w-fit min-h-fit break-keep text-left px-2">{{ video.author }} - {{ new Date(video.startTime).toLocaleString()  }}<span v-if="video.duration===0" class="text-red-500"> (LIVE)</span></div>
 							</button>
@@ -799,8 +841,31 @@ function deleteYoutubeVideo(videoId: string) {
 				</div>
 			</div>
 			<div class="flex-1 min-h-18 flex w-full flex-col items-center">
-				<!-- Timeline -->
-				<button class="w-96/100 h-6 m-0.5 mt-6 rounded-md
+				<div class="relative w-96/100 mt-6">
+					<button
+						type="button"
+						class="absolute -left-4 top-1/2 z-30 flex -translate-x-1/2 -translate-y-1/2 items-center justify-center cursor-pointer text-neutral-500 transition-[color,transform,opacity] duration-150 hover:text-sky-500 focus:outline-none focus:text-sky-500 active:scale-95 dark:text-neutral-300 dark:hover:text-sky-400 dark:focus:text-sky-400 disabled:cursor-not-allowed disabled:opacity-50"
+						style="width: 30px; height: 30px;"
+						@click="copyReviewLink"
+						@mouseenter="isCopyReviewLinkHovered = true"
+						@mouseleave="isCopyReviewLinkHovered = false"
+						@focus="isCopyReviewLinkHovered = true"
+						@blur="isCopyReviewLinkHovered = false"
+						:disabled="!reviewsStore.getSelectedVideoId"
+					>
+						<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="size-6">
+							<path d="M7.5 3.375c0-1.036.84-1.875 1.875-1.875h.375a3.75 3.75 0 0 1 3.75 3.75v1.875C13.5 8.161 14.34 9 15.375 9h1.875A3.75 3.75 0 0 1 21 12.75v3.375C21 17.16 20.16 18 19.125 18h-9.75A1.875 1.875 0 0 1 7.5 16.125V3.375Z" />
+							<path d="M15 5.25a5.23 5.23 0 0 0-1.279-3.434 9.768 9.768 0 0 1 6.963 6.963A5.23 5.23 0 0 0 17.25 7.5h-1.875A.375.375 0 0 1 15 7.125V5.25ZM4.875 6H6v10.125A3.375 3.375 0 0 0 9.375 19.5H16.5v1.125c0 1.035-.84 1.875-1.875 1.875h-9.75A1.875 1.875 0 0 1 3 20.625V7.875C3 6.839 3.84 6 4.875 6Z" />
+						</svg>
+					</button>
+					<span
+						v-if="copyReviewLinkTooltip"
+						class="absolute -left-2 -top-7 z-30 rounded bg-black/80 px-2 py-1 text-xs text-white whitespace-nowrap"
+					>
+						{{ copyReviewLinkTooltip }}
+					</span>
+					<!-- Timeline -->
+					<button class="w-full h-6 m-0.5 rounded-md
 					dark:bg-dark4 dark:hover:bg-dark3
 					bg-light4 hover:bg-light3 relative"
 					@click="onTimelineClick"
@@ -868,7 +933,8 @@ function deleteYoutubeVideo(videoId: string) {
 					>
 						{{ timelineTooltip.label }}
 					</span>
-				</button>
+					</button>
+				</div>
 			</div>
 		</div>
 	</TabContent>

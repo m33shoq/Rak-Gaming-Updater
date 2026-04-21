@@ -167,6 +167,115 @@ function queueDialog(dialogOptions: Electron.MessageBoxOptions, onSuccessCallbac
 let mainWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
 
+const DEEP_LINK_PROTOCOL = 'rak-gaming-updater';
+
+type AppDeepLinkPayload = {
+	tab: 'reviews';
+	action: 'open-video';
+	videoId: string;
+	timestampSeconds: number;
+	rawUrl: string;
+};
+
+const queuedDeepLinks: AppDeepLinkPayload[] = [];
+let isMainWindowReadyForDeepLinks = false;
+
+function extractDeepLinkUrlFromArgv(argv: string[]): string | null {
+	return argv.find((arg) => arg.startsWith(`${DEEP_LINK_PROTOCOL}://`)) ?? null;
+}
+
+function parseDeepLinkUrl(url: string): AppDeepLinkPayload | null {
+	try {
+		const parsedUrl = new URL(url);
+		if (parsedUrl.protocol !== `${DEEP_LINK_PROTOCOL}:`) return null;
+
+		const normalizedPathname = parsedUrl.pathname.replace(/\/+$/, '');
+		const normalizedRoute = parsedUrl.hostname
+			? `/${parsedUrl.hostname}${normalizedPathname}`
+			: normalizedPathname;
+
+		if (normalizedRoute !== '/open/reviews') return null;
+
+		const videoId = parsedUrl.searchParams.get('videoId')?.trim();
+		if (!videoId) return null;
+
+		const timestampRaw = parsedUrl.searchParams.get('t') ?? parsedUrl.searchParams.get('timestamp') ?? '0';
+		const timestampSeconds = Number(timestampRaw);
+		if (!Number.isFinite(timestampSeconds) || timestampSeconds < 0) return null;
+
+		return {
+			tab: 'reviews',
+			action: 'open-video',
+			videoId,
+			timestampSeconds,
+			rawUrl: url,
+		};
+	} catch (error) {
+		log.warn('Failed to parse deep link URL', url, error);
+		return null;
+	}
+}
+
+function flushQueuedDeepLinks() {
+	if (!mainWindow || !isMainWindowReadyForDeepLinks || queuedDeepLinks.length === 0) return;
+
+	while (queuedDeepLinks.length > 0) {
+		const payload = queuedDeepLinks.shift();
+		if (!payload) continue;
+		log.info('Dispatching deep link payload to renderer', payload);
+		mainWindow.webContents.send(IPC_EVENTS.APP_DEEP_LINK_CALLBACK, payload);
+	}
+}
+
+function ensureMainWindowForDeepLink() {
+	if (!app.isReady()) return;
+
+	if (!mainWindow) {
+		startProcess();
+	}
+
+	if (!mainWindow) return;
+
+	if (!mainWindow.isVisible()) {
+		mainWindow.show();
+	}
+
+	mainWindow.focus();
+
+	if (process.platform === 'darwin') {
+		void app.dock.show();
+	}
+}
+
+function queueDeepLinkUrl(url: string, source: string) {
+	const payload = parseDeepLinkUrl(url);
+	if (!payload) {
+		log.warn(`Ignoring unsupported deep link from ${source}:`, url);
+		return;
+	}
+
+	log.info(`Queueing deep link from ${source}:`, payload);
+	queuedDeepLinks.push(payload);
+	flushQueuedDeepLinks();
+}
+
+function registerDeepLinkProtocolClient() {
+	if (app.isPackaged) {
+		app.setAsDefaultProtocolClient(DEEP_LINK_PROTOCOL);
+		return;
+	}
+
+	if (process.defaultApp) {
+		const entryPoint = process.argv[1];
+		if (entryPoint) {
+			app.setAsDefaultProtocolClient(DEEP_LINK_PROTOCOL, process.execPath, [path.resolve(entryPoint)]);
+			return;
+		}
+	}
+
+	app.setAsDefaultProtocolClient(DEEP_LINK_PROTOCOL);
+}
+
 async function startProcess() {
 	if (!app.isReady() || mainWindow) return;
 	createWindow();
@@ -208,6 +317,7 @@ function shouldAppClose(): boolean {
 
 async function createWindow() {
 	updateLoginItems();
+	isMainWindowReadyForDeepLinks = false;
 
 	const startMinimized = process.argv.includes('--hidden') && store.get('startMinimized');
 	log.info('Creating window', { startMinimized });
@@ -268,6 +378,12 @@ async function createWindow() {
 		// mainWindow?.webContents.openDevTools({ mode: "detach" });
 	});
 
+	mainWindow?.webContents.once('did-finish-load', () => {
+		log.info('Renderer finished loading; deep links can now be dispatched');
+		isMainWindowReadyForDeepLinks = true;
+		flushQueuedDeepLinks();
+	});
+
 	mainWindow?.setMenu(null);
 
 	if (isDev) {
@@ -279,7 +395,10 @@ async function createWindow() {
 		mainWindow?.loadFile(html);
 	}
 
-	mainWindow?.on('closed', () => (mainWindow = null));
+	mainWindow?.on('closed', () => {
+		mainWindow = null;
+		isMainWindowReadyForDeepLinks = false;
+	});
 
 	tray = new Tray(taskBarIconImage);
 	const contextMenu = Menu.buildFromTemplate([
@@ -384,19 +503,22 @@ if (!app.requestSingleInstanceLock()) {
 } else {
 	app.on('second-instance', (event, argv) => {
 		log.info('Second instance started');
-		// Someone tried to run a second instance, focus our window instead
-		if (mainWindow) {
-			if (!mainWindow?.isVisible()) {
-				log.info('Second instance, forcing show of first window');
-				mainWindow?.show();
-			}
-			mainWindow?.focus();
+		ensureMainWindowForDeepLink();
+
+		const deepLinkUrl = extractDeepLinkUrlFromArgv(argv);
+		if (deepLinkUrl) {
+			queueDeepLinkUrl(deepLinkUrl, 'second-instance');
 		}
 	});
 
 	app.whenReady().then(() => {
 		log.info('App is ready');
 		startProcess();
+
+		const initialDeepLinkUrl = extractDeepLinkUrlFromArgv(process.argv);
+		if (initialDeepLinkUrl) {
+			queueDeepLinkUrl(initialDeepLinkUrl, 'startup');
+		}
 	});
 }
 
@@ -418,11 +540,13 @@ app.on('activate', () => {
 
 // important for notifications on Windows
 app.setAppUserModelId('com.rak-gaming-updater');
-app.setAsDefaultProtocolClient('rak-gaming-updater');
+registerDeepLinkProtocolClient();
 
 // Protocol handler for macOS
 app.on('open-url', (event, url) => {
 	event.preventDefault();
+	ensureMainWindowForDeepLink();
+	queueDeepLinkUrl(url, 'open-url');
 });
 
 // Ctrl+Shift+I to open devTools, Ctrl+Shift+R to reload

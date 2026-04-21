@@ -443,6 +443,7 @@ export default class YouTubePlayer extends EventEmitter {
 			// iframe.setAttribute("tabindex", "-1");
 
 			this._ready = true;
+			this.emit('ready');
 
 			// Once the player is ready, always call `load(videoId, [autoplay, [size]])`
 			// to handle these possible cases:
