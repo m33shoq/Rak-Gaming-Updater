@@ -68,8 +68,6 @@ watch(youtubeLinkStatus, (newVal) => {
 	}
 });
 
-const { youtubeVideoInfo } = useYoutubeVideoInfo();
-
 async function requestVideoInfo() {
 	const url = youtubeLink.value
 	youtubeLink.value = ''
@@ -504,7 +502,7 @@ const fightDurationDisplay = computed(() => {
 });
 
 watch(reviewsStore.videoList, (newList) => {
-	if (!reviewsStore.selectedVideoInfo && newList.length > 0) {
+	if (!reviewsStore.selectedVideoInfo && newList.length > 0 && !reviewsStore.getSelectedVideoId) {
 		reviewsStore.setSelectedVideoInfo(newList[0]);
 	}
 	// log.info('Filtered video list length:', newList.length);

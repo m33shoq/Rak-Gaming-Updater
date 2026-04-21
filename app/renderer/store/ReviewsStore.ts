@@ -159,7 +159,6 @@ export const useReviewsStore = defineStore('Reviews', () => {
 
 		if (selectedReportCode.value && !videoList.value.some(v => v.id === normalizedVideoId)) {
 			log.info('Deep linked video is not relevant to currently selected report/fight, clearing selection');
-			setSelectedVideoInfo(null);
 			selectedFightID.value = null;
 			savedFightEvents.value = {};
 
@@ -170,8 +169,8 @@ export const useReviewsStore = defineStore('Reviews', () => {
 			}
 		}
 
-		pendingDirectVideoSeekSeconds.value = timestampSeconds;
 		setSelectedVideoInfo(targetVideo);
+		pendingDirectVideoSeekSeconds.value = timestampSeconds;
 		log.info('Opened video from deep link', { videoId: normalizedVideoId, timestampSeconds });
 
 		return { success: true };
