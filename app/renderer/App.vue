@@ -79,6 +79,13 @@ async function handleDeepLink(payload: AppDeepLinkPayload) {
 		return;
 	}
 
+	let timeout = 15000; // 15 seconds
+	while (!loginStore.isConnected && timeout > 0) {
+		// Wait for login to complete, but timeout after 15 seconds to avoid infinite loop
+		await new Promise(resolve => setTimeout(resolve, 500));
+		timeout -= 500;
+	}
+
 	if (!loginStore.isConnected) {
 		showError('Log in to open review links.');
 		return;
