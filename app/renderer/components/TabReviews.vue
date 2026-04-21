@@ -339,7 +339,9 @@ watch(() => reviewsStore.getSelectedVideoId, (newId) => {
 });
 
 watch(() => reviewsStore.pendingDirectVideoSeekSeconds, (newId) => {
-	onVideoIdChanged();
+	if (reviewsStore.pendingDirectVideoSeekSeconds !== null) {
+		onVideoIdChanged();
+	}
 });
 
 watch(() => reviewsStore.selectedFightID, (newVal) => {
