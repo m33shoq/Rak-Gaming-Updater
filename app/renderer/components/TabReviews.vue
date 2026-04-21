@@ -427,7 +427,9 @@ watch(playerIframe, (el) => {
 
 onMounted(() => {
 	window.addEventListener('keydown', onPlayerKeyDown);
-	reviewsStore.requestReports();
+	if (refreshToken.value) {
+		reviewsStore.requestReports();
+	}
 });
 
 onBeforeUnmount(() => {
@@ -728,25 +730,31 @@ function deleteYoutubeVideo(videoId: string) {
 
 <template>
 	<TabContent>
-		<div v-if="!refreshToken" class="flex flex-col items-center">
-			<UIButton @click="wclAuth" label="Authorize WCL client" class="m-5 h-10 min-w-1/3"></UIButton>
-		</div>
-		<div
-			v-else
-			class="w-full h-full flex flex-col"
-		>
+		<div class="w-full h-full flex flex-col">
 			<div class="flex flex-row gap-0 h-9/10 flex-14">
 				<div class="flex flex-1 flex-col max-w-[calc(100vw-350px)]">
-					<Dropdown :options="reportOptions" class="min-w-[34rem]"
-						:placeholder="$t('reviews.select_report')"
-						v-model="reviewsStore.selectedReportCode"
-						:onOpen="reviewsStore.requestReports"
-					></Dropdown>
-					<Dropdown :options="fightOptions" class="min-w-[34rem]"
-						:placeholder="$t('reviews.select_fight')"
-						v-model="reviewsStore.selectedFightID"
-						:onOpen="reviewsStore.requestReportData"
-					></Dropdown>
+					<template v-if="refreshToken">
+						<Dropdown :options="reportOptions" class="min-w-[34rem]"
+							:placeholder="$t('reviews.select_report')"
+							v-model="reviewsStore.selectedReportCode"
+							:onOpen="reviewsStore.requestReports"
+						></Dropdown>
+						<Dropdown :options="fightOptions" class="min-w-[34rem]"
+							:placeholder="$t('reviews.select_fight')"
+							v-model="reviewsStore.selectedFightID"
+							:onOpen="reviewsStore.requestReportData"
+						></Dropdown>
+					</template>
+					<div
+						v-else
+						class="flex min-w-[34rem] h-[72px] items-center justify-center"
+					>
+						<UIButton
+							@click="wclAuth"
+							label="Authorize WCL client"
+							class="h-14 min-w-[24rem] px-6 text-lg"
+						></UIButton>
+					</div>
 					<div
 						ref="videoContainer"
 						class="bg-gray-200 aspect-video max-w-[min(100%,80vw)] h-[calc(100%-85px)] rounded-md mt-2"
