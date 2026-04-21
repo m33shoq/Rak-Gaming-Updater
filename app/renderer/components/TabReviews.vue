@@ -502,7 +502,7 @@ const fightDurationDisplay = computed(() => {
 });
 
 watch(reviewsStore.videoList, (newList) => {
-	if (!reviewsStore.selectedVideoInfo && newList.length > 0 && !reviewsStore.getSelectedVideoId) {
+	if (!reviewsStore.selectedVideoInfo && newList.length > 0) {
 		reviewsStore.setSelectedVideoInfo(newList[0]);
 	}
 	// log.info('Filtered video list length:', newList.length);
