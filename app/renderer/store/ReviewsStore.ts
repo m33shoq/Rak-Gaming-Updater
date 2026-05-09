@@ -177,7 +177,6 @@ export const useReviewsStore = defineStore('Reviews', () => {
 	}
 
 	watch(selectedReportCode, async (newVal, oldVal) => {
-	watch(selectedReportCode, async (newVal, oldVal) => {
 		if (newVal !== oldVal) {
 			selectedFightID.value = null; // reset selected fight
 			savedFightEvents.value = {}; // clear cached fight events
