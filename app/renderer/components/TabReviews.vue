@@ -312,22 +312,17 @@ function onVideoIdChanged() {
 			if (directSeekSeconds !== null) {
 				log.info(`Loading video ${videoId} from direct request, seeking to ${directSeekSeconds}s`);
 				player.value.load(videoId, true, directSeekSeconds);
-				return;
-			}
-
-			if (!reviewsStore.selectedReportCode) {
+			} else if (!reviewsStore.selectedReportCode) {
 				log.info(`Loading video ${videoId} without report context, seeking to 0s`);
 				player.value.load(videoId, true, 0);
-				return;
+			} else {
+				const relativeFightStart = reviewsStore.getFightStartRelativeToVideo / 1000; // in seconds
+				const seekTime = relativeFightStart + YOUTUBE_DELAY_OFFSET + lastFightRelativeTime;
+
+				log.info(`Loading video ${videoId}, seeking to ${seekTime}s (relativeFightStart: ${relativeFightStart}s, lastFightRelativeTime: ${lastFightRelativeTime}s)`);
+
+				player.value.load(videoId, true, seekTime);
 			}
-
-			const relativeFightStart = reviewsStore.getFightStartRelativeToVideo / 1000; // in seconds
-
-			const seekTime = relativeFightStart + YOUTUBE_DELAY_OFFSET + lastFightRelativeTime;
-
-			log.info(`Loading video ${videoId}, seeking to ${seekTime}s (relativeFightStart: ${relativeFightStart}s, lastFightRelativeTime: ${lastFightRelativeTime}s)`);
-
-			player.value.load(videoId, true, seekTime);
 		} else {
 			player.value.stop();
 		}
@@ -346,7 +341,7 @@ watch(() => reviewsStore.pendingDirectVideoSeekSeconds, (newId) => {
 
 watch(() => reviewsStore.selectedFightID, (newVal) => {
 	lastFightRelativeTime = 0;
-	if (reviewsStore.selectedVideoInfo) {
+	if (newVal && reviewsStore.selectedVideoInfo) {
 		const relativeFightStart = reviewsStore.getFightStartRelativeToVideo / 1000; // in seconds
 
 		const seekTime = relativeFightStart + YOUTUBE_DELAY_OFFSET;
@@ -360,6 +355,16 @@ watch(() => reviewsStore.selectedFightID, (newVal) => {
 watch(() => reviewsStore.selectedReportCode, (newVal, oldVal) => {
 	if (newVal !== oldVal) {
 		lastFightRelativeTime = 0;
+
+		if (newVal && reviewsStore.selectedVideoInfo && reviewsStore.videoList.some(v => v.id === reviewsStore.selectedVideoInfo?.id)) {
+			const relativeFightStart = reviewsStore.getFightStartRelativeToVideo / 1000; // in seconds
+
+			const seekTime = relativeFightStart + YOUTUBE_DELAY_OFFSET;
+
+			log.info(`New report selected, seeking to ${seekTime}s (relativeFightStart: ${relativeFightStart}s)`);
+
+			seekTo(seekTime);
+		}
 	}
 });
 

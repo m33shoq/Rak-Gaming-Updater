@@ -176,11 +176,14 @@ export const useReviewsStore = defineStore('Reviews', () => {
 		return { success: true };
 	}
 
-	watch(selectedReportCode, (newVal, oldVal) => {
+	watch(selectedReportCode, async (newVal, oldVal) => {
 		if (newVal !== oldVal) {
 			selectedFightID.value = null; // reset selected fight
 			savedFightEvents.value = {}; // clear cached fight events
-			setSelectedVideoInfo(null); // clear selected video
+			await nextTick();
+			if (newVal && videoList.value.length > 0 && !videoList.value.some(v => v.id === selectedVideoInfo.value?.id)) {
+				setSelectedVideoInfo(videoList.value[0] || null); // auto-select first video if current selection is not relevant to new report
+			}
 			log.info('Selected report changed:', newVal);
 			requestReportData();
 		}
