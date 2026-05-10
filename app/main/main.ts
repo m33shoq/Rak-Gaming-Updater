@@ -321,6 +321,7 @@ function beginSystemShutdown(source: string) {
 		log.warn('Failed to destroy tray during shutdown', error);
 	}
 
+	socket.disconnect();
 	mainWindow?.close();
 	app.quit();
 }
@@ -605,6 +606,12 @@ app.on('before-quit', () => {
 	isQuiting = true;
 	if (isSystemShutdown) {
 		forceClose = true;
+	}
+});
+
+app.on('will-quit', (event) => {
+	if (isQuiting) {
+		socket.disconnect();
 	}
 });
 
