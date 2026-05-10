@@ -20,6 +20,8 @@ interface StoreSchema {
 	width: number;
 	height: number;
 	maximized: boolean;
+	x?: number;
+	y?: number;
   };
 }
 

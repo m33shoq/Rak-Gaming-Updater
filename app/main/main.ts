@@ -18,6 +18,7 @@ import mainWindowWrapper from '@/main/MainWindowWrapper';
 import store from '@/main/store';
 import { RegisterSVCallback } from '@/main/svWatcher';
 import BackupService from '@/main/backupService';
+import { getSafeInitialWindowBounds, getWindowSettingsFromWindow, type StoredWindowSettings } from '@/main/windowBounds';
 
 
 // @ts-ignore
@@ -75,6 +76,14 @@ let rechekTries = 0;
 let wasNotificationShown = false;
 
 const TEMP_DIR = path.join(app.getPath('temp'), app.getName()); // Temporary directory for unzipped/zipped files
+
+function getStoredWindowSettings(): StoredWindowSettings {
+	return (store.get('windowSettings') || {}) as StoredWindowSettings;
+}
+
+function persistWindowSettings(win: BrowserWindow) {
+	store.set('windowSettings', getWindowSettingsFromWindow(win));
+}
 
 const socket = Socket(SERVER_URL, { autoConnect: false });
 const backupService = new BackupService(socket);
@@ -365,10 +374,13 @@ async function createWindow() {
 
 	const startMinimized = process.argv.includes('--hidden') && store.get('startMinimized');
 	log.info('Creating window', { startMinimized });
-	const windowSettings = store.get('windowSettings');
+	const windowSettings = getStoredWindowSettings();
+	const initialBounds = getSafeInitialWindowBounds(windowSettings);
 	mainWindow = new BrowserWindow({
-		width: windowSettings?.width || 900,
-		height: windowSettings?.height || 600,
+		x: initialBounds.x,
+		y: initialBounds.y,
+		width: initialBounds.width,
+		height: initialBounds.height,
 		minWidth: 900,
 		minHeight: 600,
 		icon: taskBarIconImage,
@@ -498,30 +510,40 @@ async function createWindow() {
 		}
 	});
 
-	// @ts-ignore
-	mainWindow?.on('unmaximize', (event: Electron.Event) => {
+	mainWindow?.on('unmaximize', () => {
 		mainWindow?.webContents.send(IPC_EVENTS.WINDOW_MAXIMIZE_TOGGLE_CALLBACK, false);
-
-		const windowSettings = store.get('windowSettings');
-		windowSettings.maximized = false;
-		store.set('windowSettings', windowSettings);
+		if (mainWindow) {
+			persistWindowSettings(mainWindow);
+		}
 	});
 
-	// @ts-ignore
-	mainWindow?.on('maximize', (event: Electron.Event) => {
+	mainWindow?.on('maximize', () => {
 		mainWindow?.webContents.send(IPC_EVENTS.WINDOW_MAXIMIZE_TOGGLE_CALLBACK, true);
-		const windowSettings = store.get('windowSettings');
-		windowSettings.maximized = true;
-		store.set('windowSettings', windowSettings);
+		if (mainWindow) {
+			persistWindowSettings(mainWindow);
+		}
 	});
 
 	mainWindow?.on('resized', () => {
 		if (!mainWindow) return;
-		const { width, height } = mainWindow.getBounds();
-		store.set('windowSettings', { width, height, maximized: mainWindow.isMaximized() });
+		persistWindowSettings(mainWindow);
+	});
+
+	mainWindow?.on('moved', () => {
+		if (!mainWindow) return;
+		persistWindowSettings(mainWindow);
+	});
+
+	mainWindow?.on('move', () => {
+		if (!mainWindow) return;
+		persistWindowSettings(mainWindow);
 	});
 
 	mainWindow?.on('close', async (event: Electron.Event) => {
+		if (mainWindow) {
+			persistWindowSettings(mainWindow);
+		}
+
 		if (!isQuiting && !isSystemShutdown && !store.get('quitOnClose')) {
 			event.preventDefault();
 			mainWindow?.hide();
