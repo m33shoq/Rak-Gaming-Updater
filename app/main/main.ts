@@ -1,6 +1,6 @@
 import 'dotenv/config';
 
-import { app, BrowserWindow, ipcMain, dialog, Tray, Menu, nativeImage, protocol, shell, Notification, net } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, Tray, Menu, nativeImage, protocol, shell, Notification, net, powerMonitor } from 'electron';
 import { autoUpdater } from 'electron-updater';
 import log from 'electron-log/main';
 import { io as Socket } from 'socket.io-client';
@@ -67,6 +67,12 @@ process.on("unhandledRejection", (error) => {
 });
 
 let isQuiting = false;
+let isSystemShutdown = false;
+let shutdownInProgress = false;
+
+let updatedRecheckTimer: NodeJS.Timeout | null = null;
+let rechekTries = 0;
+let wasNotificationShown = false;
 
 const TEMP_DIR = path.join(app.getPath('temp'), app.getName()); // Temporary directory for unzipped/zipped files
 
@@ -276,6 +282,40 @@ function registerDeepLinkProtocolClient() {
 	app.setAsDefaultProtocolClient(DEEP_LINK_PROTOCOL);
 }
 
+function beginSystemShutdown(source: string) {
+	if (shutdownInProgress) return;
+	shutdownInProgress = true;
+
+	isSystemShutdown = true;
+	isQuiting = true;
+	forceClose = true;
+
+	log.info(`System shutdown requested from ${source}`);
+
+	if (updatedRecheckTimer) {
+		clearInterval(updatedRecheckTimer);
+		updatedRecheckTimer = null;
+	}
+
+	try {
+		if (socket.connected) {
+			socket.disconnect();
+		}
+	} catch (error) {
+		log.warn('Failed to disconnect socket during shutdown', error);
+	}
+
+	try {
+		tray?.destroy();
+		tray = null;
+	} catch (error) {
+		log.warn('Failed to destroy tray during shutdown', error);
+	}
+
+	mainWindow?.close();
+	app.quit();
+}
+
 async function startProcess() {
 	if (!app.isReady() || mainWindow) return;
 	createWindow();
@@ -287,6 +327,10 @@ async function startProcess() {
 
 let forceClose = false;
 function shouldAppClose(): boolean {
+	if (isSystemShutdown) {
+		return true;
+	}
+
 	if (backupService.IsBackupInProgress() && !forceClose) {
 		const dialogOpts = {
 			buttons: ['Okay', 'Force Close'],
@@ -485,7 +529,7 @@ async function createWindow() {
 	});
 
 	mainWindow?.on('close', async (event: Electron.Event) => {
-		if (!isQuiting && !store.get('quitOnClose')) {
+		if (!isQuiting && !isSystemShutdown && !store.get('quitOnClose')) {
 			event.preventDefault();
 			mainWindow?.hide();
 			return;
@@ -494,6 +538,14 @@ async function createWindow() {
 		if (!shouldAppClose()) {
 			event.preventDefault();
 		}
+	});
+
+	mainWindow?.on('query-session-end', () => {
+		beginSystemShutdown('query-session-end');
+	});
+
+	mainWindow?.on('session-end', () => {
+		beginSystemShutdown('session-end');
 	});
 }
 
@@ -513,6 +565,12 @@ if (!app.requestSingleInstanceLock()) {
 
 	app.whenReady().then(() => {
 		log.info('App is ready');
+		(powerMonitor as any).on('shutdown', (event: Electron.Event) => {
+			log.info('Power monitor reported system shutdown');
+			event.preventDefault();
+			beginSystemShutdown('powerMonitor-shutdown');
+		});
+
 		startProcess();
 
 		const initialDeepLinkUrl = extractDeepLinkUrlFromArgv(process.argv);
@@ -525,6 +583,13 @@ if (!app.requestSingleInstanceLock()) {
 app.on('window-all-closed', () => {
 	if (process.platform !== 'darwin') {
 		app.quit();
+	}
+});
+
+app.on('before-quit', () => {
+	isQuiting = true;
+	if (isSystemShutdown) {
+		forceClose = true;
 	}
 });
 
@@ -601,9 +666,6 @@ app.on('web-contents-created', (webContentsCreatedEvent, webContents) => {
 });
 
 // Auto-updater events
-let updatedRecheckTimer: NodeJS.Timeout | null = null;
-let rechekTries = 0;
-let wasNotificationShown = false;
 autoUpdater.on('update-available', (info) => {
 	log.info(`Update available Version: ${info.version} Release Date: ${info.releaseDate}`);
 	if (updatedRecheckTimer) {
