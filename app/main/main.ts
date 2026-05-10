@@ -499,13 +499,6 @@ async function createWindow() {
 	});
 
 	// @ts-ignore
-	mainWindow?.on('minimize', (event: Electron.Event) => {
-		mainWindow?.setSkipTaskbar(true);
-		event.preventDefault();
-		mainWindow?.hide();
-	});
-
-	// @ts-ignore
 	mainWindow?.on('unmaximize', (event: Electron.Event) => {
 		mainWindow?.webContents.send(IPC_EVENTS.WINDOW_MAXIMIZE_TOGGLE_CALLBACK, false);
 
@@ -842,6 +835,7 @@ ipcMain.on(IPC_EVENTS.WINDOW_MINIMIZE, (event) => {
 });
 
 ipcMain.on(IPC_EVENTS.WINDOW_CLOSE, (event) => {
+	mainWindow.setSkipTaskbar(true);
 	mainWindow?.close();
 });
 
