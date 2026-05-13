@@ -85,6 +85,19 @@ function persistWindowSettings(win: BrowserWindow) {
 	store.set('windowSettings', getWindowSettingsFromWindow(win));
 }
 
+let persistWindowSettingsTimeout: NodeJS.Timeout | null = null;
+
+function persistWindowSettingsDebounced(win: BrowserWindow, delayMs = 250) {
+	if (persistWindowSettingsTimeout) {
+		clearTimeout(persistWindowSettingsTimeout);
+	}
+
+	persistWindowSettingsTimeout = setTimeout(() => {
+		persistWindowSettings(win);
+		persistWindowSettingsTimeout = null;
+	}, delayMs);
+}
+
 const socket = Socket(SERVER_URL, { autoConnect: false });
 const backupService = new BackupService(socket);
 
@@ -527,17 +540,17 @@ async function createWindow() {
 
 	mainWindow?.on('resized', () => {
 		if (!mainWindow) return;
-		persistWindowSettings(mainWindow);
+		persistWindowSettingsDebounced(mainWindow);
 	});
 
 	mainWindow?.on('moved', () => {
 		if (!mainWindow) return;
-		persistWindowSettings(mainWindow);
+		persistWindowSettingsDebounced(mainWindow);
 	});
 
 	mainWindow?.on('move', () => {
 		if (!mainWindow) return;
-		persistWindowSettings(mainWindow);
+		persistWindowSettingsDebounced(mainWindow);
 	});
 
 	mainWindow?.on('close', async (event: Electron.Event) => {
