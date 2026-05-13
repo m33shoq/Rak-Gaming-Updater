@@ -184,7 +184,7 @@ function seekByDelta(delta: number, source: string) {
 	const maxTime = duration > 0 ? duration : Number.POSITIVE_INFINITY;
 	const nextTime = Math.max(0, Math.min(currentTime + delta, maxTime));
 
-	log.info(`${source}: ${currentTime}s -> ${nextTime}s (delta: ${delta}s)`);
+	// log.debug(`${source}: ${currentTime}s -> ${nextTime}s (delta: ${delta}s)`);
 	seekTo(nextTime);
 	return true;
 }
