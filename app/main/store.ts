@@ -16,6 +16,9 @@ interface StoreSchema {
   darkMode?: boolean;
   updaterInfo?: any;
   WCL_REFRESH_TOKEN?: string | null;
+  obsEnabled: boolean;
+  obsPort: number;
+  obsPassword: string;
   windowSettings: {
 	width: number;
 	height: number;
@@ -40,6 +43,9 @@ const store = new Store<StoreSchema>({
 	backupsPath: null,
 	lastBackupTime: null,
 	darkMode: true,
+  obsEnabled: false,
+  obsPort: 4455,
+  obsPassword: '',
 	windowSettings: {
 		width: 900,
 		height: 600,

@@ -65,6 +65,11 @@ export const IPC_EVENTS = {
 	YOUTUBE_VIDEO_REFRESH: 'youtube-video-refresh',
 	YOUTUBE_VIDEO_DELETE: 'youtube-video-delete',
 
+	OBS_SETTINGS_GET: 'obs-settings-get',
+	OBS_SETTINGS_SET: 'obs-settings-set',
+	OBS_RECONNECT: 'obs-reconnect',
+	OBS_STATUS_UPDATED: 'obs-status-updated',
+
 	WCL_REQUEST_AUTH_LINK: 'wcl-request-auth-link',
 	WCL_REQUEST_REPORTS_LIST: 'wcl-request-reports',
 	WCL_REQUEST_REPORT_DATA: 'wcl-request-report-data',

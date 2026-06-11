@@ -63,6 +63,24 @@ declare type YouTubeVideo = {
 	checkTime: number; // UNIX ms - time when the video was checked/added to the list
 }
 
+declare type ObsSettings = {
+	enabled: boolean;
+	port: number;
+	password: string;
+}
+
+declare type ObsStatus = {
+	connected: boolean;
+	streaming: boolean;
+	reconnecting: boolean;
+	appRunning: boolean | null;
+	websocketEnabled: boolean | null;
+	lastError: string | null;
+	updatedAt: number;
+	serviceName: string | null;
+	server: string | null;
+}
+
 declare type fightEvent = {
 	timestamp: number;
 	type: string;

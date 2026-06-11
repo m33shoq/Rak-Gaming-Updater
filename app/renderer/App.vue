@@ -13,6 +13,7 @@ import TabSettings from '@/renderer/components/TabSettings.vue';
 import TabStatus from '@/renderer/components/TabStatus.vue';
 import TabBackups from '@/renderer/components/TabBackups.vue';
 import TabReviews from '@/renderer/components/TabReviews.vue';
+import TabObsIntegration from '@/renderer/components/TabObsIntegration.vue';
 import WinButtons from '@/renderer/components/WinButtons.vue';
 import ErrorNotification from '@/renderer/components/ErrorNotification.vue';
 
@@ -44,7 +45,8 @@ const tabs = [
 	{ name: 'settings', svg: 'settings', component: TabSettings },
 	{ name: 'status', svg: 'status', adminOnly: true, component: TabStatus },
 	{ name: 'backups', label: 'tabname.backups', svg: 'backups', component: TabBackups },
-	{ name: 'reviews', label: 'tabname.reviews', svg: 'reviews', component: TabReviews }
+	{ name: 'reviews', label: 'tabname.reviews', svg: 'reviews', component: TabReviews },
+	{ name: 'obs-integration', label: 'tabname.obs_integration', svg: 'obs', component: TabObsIntegration }
 ];
 
 function selectTab(tabName: string) {

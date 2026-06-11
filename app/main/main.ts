@@ -19,6 +19,7 @@ import store from '@/main/store';
 import { RegisterSVCallback } from '@/main/svWatcher';
 import BackupService from '@/main/backupService';
 import { getSafeInitialWindowBounds, getWindowSettingsFromWindow, type StoredWindowSettings } from '@/main/windowBounds';
+import ObsWebsocketService, { type ObsSettings as ObsServiceSettings } from '@/main/obsWebsocketService';
 
 
 // @ts-ignore
@@ -145,6 +146,16 @@ store.onDidChange('startMinimized', (newValue) => {
 	updateLoginItems();
 });
 
+function getObsSettingsFromStore(): ObsServiceSettings {
+	const obsPort = Number(store.get('obsPort'));
+
+	return {
+		enabled: Boolean(store.get('obsEnabled')),
+		port: Number.isFinite(obsPort) ? obsPort : 4455,
+		password: String(store.get('obsPassword') || ''),
+	};
+}
+
 
 import taskBarIcon from '@/assets/taskbaricon.png';
 import notificationIcon from '@/assets/icon.png';
@@ -194,6 +205,36 @@ function queueDialog(dialogOptions: Electron.MessageBoxOptions, onSuccessCallbac
 
 let mainWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
+
+const obsService = new ObsWebsocketService({
+	onStatus: (status) => {
+		mainWindow?.webContents.send(IPC_EVENTS.OBS_STATUS_UPDATED, status);
+	},
+	onStreamStarted: (payload) => {
+		log.info('[OBS] Stream is live', payload.youtubeUrl);
+
+		if (!socket.connected) {
+			log.warn('[OBS] Server socket is disconnected, skipping YouTube URL emit');
+			return;
+		}
+
+		socket.emit(SOCKET_EVENTS.YOUTUBE_VIDEO_INFO_ADD, { URL: payload.youtubeUrl }, (response: { success: boolean; error?: string }) => {
+			if (response.success) {
+				log.info('[OBS] Sent YouTube URL to server', payload.youtubeUrl);
+			} else {
+				log.warn('[OBS] Failed to send YouTube URL to server', response.error);
+			}
+		});
+	},
+	log,
+});
+
+const OBS_STORE_KEYS = ['obsEnabled', 'obsPort', 'obsPassword'] as const;
+for (const key of OBS_STORE_KEYS) {
+	store.onDidChange(key, () => {
+		void obsService.updateSettings(getObsSettingsFromStore());
+	});
+}
 
 const DEEP_LINK_PROTOCOL = 'rak-gaming-updater';
 
@@ -327,6 +368,8 @@ function beginSystemShutdown(source: string) {
 		log.warn('Failed to disconnect socket during shutdown', error);
 	}
 
+	void obsService.dispose();
+
 	try {
 		tray?.destroy();
 		tray = null;
@@ -451,6 +494,7 @@ async function createWindow() {
 	mainWindow?.webContents.once('did-finish-load', () => {
 		log.info('Renderer finished loading; deep links can now be dispatched');
 		isMainWindowReadyForDeepLinks = true;
+		mainWindow?.webContents.send(IPC_EVENTS.OBS_STATUS_UPDATED, obsService.getStatus());
 		flushQueuedDeepLinks();
 	});
 
@@ -626,6 +670,7 @@ app.on('will-quit', (event) => {
 	if (isQuiting) {
 		socket.disconnect();
 	}
+	void obsService.dispose();
 });
 
 app.on('activate', () => {
@@ -843,6 +888,42 @@ ipcMain.on('store-sync-request', (event, key) => {
 	});
 });
 
+ipcMain.handle(IPC_EVENTS.OBS_SETTINGS_GET, async () => {
+	return {
+		settings: getObsSettingsFromStore(),
+		status: obsService.getStatus(),
+	};
+});
+
+ipcMain.handle(IPC_EVENTS.OBS_SETTINGS_SET, async (event, nextSettings: Partial<ObsServiceSettings>) => {
+	const currentSettings = getObsSettingsFromStore();
+	const normalizedSettings: ObsServiceSettings = {
+		enabled: typeof nextSettings.enabled === 'boolean' ? nextSettings.enabled : currentSettings.enabled,
+		port: Number.isFinite(Number(nextSettings.port)) ? Math.max(1, Math.min(65535, Number(nextSettings.port))) : currentSettings.port,
+		password: typeof nextSettings.password === 'string' ? nextSettings.password : currentSettings.password,
+	};
+
+	store.set('obsEnabled', normalizedSettings.enabled);
+	store.set('obsPort', normalizedSettings.port);
+	store.set('obsPassword', normalizedSettings.password);
+
+	await obsService.updateSettings(normalizedSettings);
+
+	return {
+		success: true,
+		settings: normalizedSettings,
+		status: obsService.getStatus(),
+	};
+});
+
+ipcMain.handle(IPC_EVENTS.OBS_RECONNECT, async () => {
+	await obsService.reconnectNow();
+	return {
+		success: true,
+		status: obsService.getStatus(),
+	};
+});
+
 ipcMain.handle(IPC_EVENTS.APP_GET_VERSION, () => {
 	return {
 		version: app.getVersion(),
@@ -1012,6 +1093,8 @@ socket.on(SOCKET_EVENTS.SOCKET_CONNECTED, () => {
 	});
 	log.info('Connected to server');
 	mainWindow?.webContents.send(IPC_EVENTS.SOCKET_CONNECTED_CALLBACK);
+
+	void obsService.updateSettings(getObsSettingsFromStore());
 
 	backupService.InitiateBackup(false);
 
