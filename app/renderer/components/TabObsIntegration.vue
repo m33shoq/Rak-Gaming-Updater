@@ -83,15 +83,23 @@ async function forceReconnect() {
 
 <template>
 	<TabContent>
-		<div class="max-w-xl">
-			<div class="mb-4">
+		<div class="max-w-3xl">
+			<div class="mb-2">
 				<p class="text-base font-semibold">{{ $t('obs.title') }}</p>
 				<p class="text-xs opacity-75">{{ $t('obs.description') }}</p>
+				<div class="mt-1 text-xs opacity-75">
+					<p class="font-medium opacity-90">{{ $t('obs.instructions_title') }}</p>
+					<ul class="list-disc ml-4 space-y-0">
+						<li>{{ $t('obs.instructions_step_1') }}</li>
+						<li>{{ $t('obs.instructions_step_2') }}</li>
+						<li>{{ $t('obs.instructions_step_3') }}</li>
+					</ul>
+				</div>
 			</div>
 
 			<Checkbox :label="$t('obs.enabled')" v-model="obsEnabled" />
 
-			<div class="mt-4">
+			<div class="mt-2">
 				<label class="text-sm opacity-80 block mb-1">{{ $t('obs.port') }}</label>
 				<input
 					type="number"
@@ -102,7 +110,7 @@ async function forceReconnect() {
 				/>
 			</div>
 
-			<div class="mt-4">
+			<div class="mt-2">
 				<label class="text-sm opacity-80 block mb-1">{{ $t('obs.password') }}</label>
 				<input
 					type="password"
@@ -112,15 +120,15 @@ async function forceReconnect() {
 				/>
 			</div>
 
-			<div class="flex gap-2 flex-wrap mt-5">
+			<div class="flex gap-2 flex-wrap mt-3">
 				<UIButton :label="$t('obs.apply_settings')" :disabled="isSaving" @click="applySettings" />
 				<UIButton :label="$t('obs.reconnect')" :disabled="isReconnecting || !obsEnabled" @click="forceReconnect" />
 			</div>
 
-			<p v-if="saveStatus" class="text-xs mt-2 opacity-80">{{ $t(saveStatus) }}</p>
+			<p v-if="saveStatus" class="text-xs mt-1 opacity-80">{{ $t(saveStatus) }}</p>
 
-			<div class="mt-6 border border-gray-500/30 rounded-lg p-4 dark:bg-dark3 bg-light3">
-				<div class="flex flex-wrap items-center gap-3 text-xs mb-3">
+			<div class="mt-4 border border-gray-500/30 rounded-lg p-3 dark:bg-dark3 bg-light3">
+				<div class="flex flex-wrap items-center gap-2 text-xs mb-2">
 					<div class="flex items-center gap-2">
 						<span class="opacity-70">App:</span>
 						<span class="px-2 py-1 rounded text-xs"
@@ -155,9 +163,9 @@ async function forceReconnect() {
 					</div>
 				</div>
 				<p class="text-xs opacity-80 break-words"><span class="opacity-60">{{ $t('obs.service') }}:</span> {{ obsStatus.serviceName || '-' }}</p>
-				<p class="text-xs opacity-80 break-words mt-1"><span class="opacity-60">{{ $t('obs.server') }}:</span> {{ obsStatus.server || '-' }}</p>
-				<p class="text-xs opacity-80 break-words mt-1"><span class="opacity-60">{{ $t('obs.last_update') }}:</span> {{ statusUpdatedAtLabel }}</p>
-				<p v-if="obsStatus.lastError" class="text-xs text-red-400 break-words mt-2">{{ obsStatus.lastError }}</p>
+				<p class="text-xs opacity-80 break-words mt-0.5"><span class="opacity-60">{{ $t('obs.server') }}:</span> {{ obsStatus.server || '-' }}</p>
+				<p class="text-xs opacity-80 break-words mt-0.5"><span class="opacity-60">{{ $t('obs.last_update') }}:</span> {{ statusUpdatedAtLabel }}</p>
+				<p v-if="obsStatus.lastError" class="text-xs text-red-400 break-words mt-1">{{ obsStatus.lastError }}</p>
 			</div>
 		</div>
 	</TabContent>

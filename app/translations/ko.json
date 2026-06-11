@@ -25,7 +25,11 @@
 	"tabname.reviews": "Reviews",
 	"tabname.obs_integration": "OBS",
 	"obs.title": "OBS 연동",
-	"obs.description": "OBS WebSocket 설정 및 스트림 상태 모니터링",
+	"obs.description": "OBS WebSocket을 연결해 스트림 상태를 모니터링하고 YouTube 라이브 URL을 자동으로 공유합니다.",
+	"obs.instructions_title": "연결 방법:",
+	"obs.instructions_step_1": "OBS에서 도구 -> WebSocket 서버 설정으로 이동하여 서버와 인증을 활성화한 뒤 적용을 누르세요.",
+	"obs.instructions_step_2": "OBS WebSocket 연결 정보에서 포트와 비밀번호를 복사하세요.",
+	"obs.instructions_step_3": "포트와 비밀번호를 여기에 붙여넣고 OBS 통합을 활성화한 뒤 설정 적용을 누르세요.",
 	"obs.enabled": "OBS 연동 사용",
 
 	"obs.port": "포트",
