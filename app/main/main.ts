@@ -150,7 +150,7 @@ function getObsSettingsFromStore(): ObsServiceSettings {
 	const obsPort = Number(store.get('obsPort'));
 
 	return {
-		enabled: Boolean(store.get('obsEnabled')),
+		enabled: store.get('obsEnabled'),
 		port: Number.isFinite(obsPort) ? obsPort : 4455,
 		password: String(store.get('obsPassword') || ''),
 	};

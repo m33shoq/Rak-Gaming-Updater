@@ -1,30 +1,22 @@
 <script setup lang="ts">
-import { computed, reactive, ref, watch } from 'vue';
+import { computed, ref } from 'vue';
 
 import TabContent from '@/renderer/components/TabContent.vue';
 import Checkbox from '@/renderer/components/Checkbox.vue';
 import Input from '@/renderer/components/Input.vue';
 import UIButton from '@/renderer/components/Button.vue';
+import { getElectronStoreRef } from '@/renderer/store/ElectronRefStore';
 
 import { useObsStatus } from '@/renderer/composables/useObsStatus';
 
-const { obsSettings, obsStatus, saveObsSettings, reconnectObs } = useObsStatus();
-
-const form = reactive<ObsSettings>({
-	enabled: false,
-	port: 4455,
-	password: '',
-});
+const { obsStatus, saveObsSettings, reconnectObs } = useObsStatus();
+const obsEnabled = getElectronStoreRef('obsEnabled', false);
+const obsPort = getElectronStoreRef('obsPort', 4455);
+const obsPassword = getElectronStoreRef('obsPassword', '');
 
 const saveStatus = ref('');
 const isSaving = ref(false);
 const isReconnecting = ref(false);
-
-watch(obsSettings, (next) => {
-	form.enabled = next.enabled;
-	form.port = next.port;
-	form.password = next.password;
-}, { immediate: true, deep: true });
 
 const connectionStateLabel = computed(() => {
 	if (obsStatus.value.connected) return 'obs.status.connected';
@@ -58,11 +50,11 @@ async function applySettings() {
 	isSaving.value = true;
 	saveStatus.value = '';
 
-	const normalizedPort = Number(form.port);
+	const normalizedPort = Number(obsPort.value);
 	const payload: ObsSettings = {
-		enabled: Boolean(form.enabled),
+		enabled: obsEnabled.value,
 		port: Number.isFinite(normalizedPort) ? normalizedPort : 4455,
-		password: form.password,
+		password: obsPassword.value,
 	};
 
 	try {
@@ -97,7 +89,7 @@ async function forceReconnect() {
 				<p class="text-xs opacity-75">{{ $t('obs.description') }}</p>
 			</div>
 
-			<Checkbox :label="$t('obs.enabled')" v-model="form.enabled" />
+			<Checkbox :label="$t('obs.enabled')" v-model="obsEnabled" />
 
 			<div class="mt-4">
 				<label class="text-sm opacity-80 block mb-1">{{ $t('obs.port') }}</label>
@@ -105,7 +97,7 @@ async function forceReconnect() {
 					type="number"
 					min="1"
 					max="65535"
-					v-model.number="form.port"
+					v-model.number="obsPort"
 					class="dark:bg-dark4 dark:hover:bg-dark4/80 bg-light4 hover:bg-light4/80 p-2 rounded-md focus:outline-hidden transition-all ease-in w-full"
 				/>
 			</div>
@@ -114,7 +106,7 @@ async function forceReconnect() {
 				<label class="text-sm opacity-80 block mb-1">{{ $t('obs.password') }}</label>
 				<input
 					type="password"
-					v-model="form.password"
+					v-model="obsPassword"
 					:placeholder="$t('obs.password_placeholder')"
 					class="dark:bg-dark4 dark:hover:bg-dark4/80 bg-light4 hover:bg-light4/80 p-2 rounded-md focus:outline-hidden transition-all ease-in w-full"
 				/>
@@ -122,7 +114,7 @@ async function forceReconnect() {
 
 			<div class="flex gap-2 flex-wrap mt-5">
 				<UIButton :label="$t('obs.apply_settings')" :disabled="isSaving" @click="applySettings" />
-				<UIButton :label="$t('obs.reconnect')" :disabled="isReconnecting || !form.enabled" @click="forceReconnect" />
+				<UIButton :label="$t('obs.reconnect')" :disabled="isReconnecting || !obsEnabled" @click="forceReconnect" />
 			</div>
 
 			<p v-if="saveStatus" class="text-xs mt-2 opacity-80">{{ $t(saveStatus) }}</p>
