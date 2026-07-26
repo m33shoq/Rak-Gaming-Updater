@@ -23,7 +23,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '18'
+          node-version: '22'
 
       - name: Extract version from tag
         id: version
@@ -41,7 +41,7 @@ jobs:
         shell: pwsh
 
       - name: Install dependencies
-        run: npm install
+        run: npm ci --include=optional
 
       - name: Update package version
         run: npm version ${{ steps.version.outputs.version }} --no-git-tag-version
