@@ -97,35 +97,46 @@ jobs:
         run: |
           find . -type f -name "*.exe" -o -name "*.AppImage" -o -name "*.deb" -o -name "*.rpm"
 
-      - name: Remove existing assets for this tag
+      - name: Ensure release exists
         run: |
-          release_id=$(gh api repos/${{ github.repository }}/releases/tags/${{ steps.version.outputs.tag }} --jq '.id' 2>/dev/null || true)
-          if [ -n "$release_id" ]; then
-            gh api repos/${{ github.repository }}/releases/$release_id/assets --jq '.[].id' | while read -r asset_id; do
-              gh api --method DELETE repos/${{ github.repository }}/releases/assets/$asset_id
-            done
+          TAG="${{ steps.version.outputs.tag }}"
+          TITLE="Release $TAG"
+          NOTES=$(cat <<'EOF'
+          ### Downloads
+          - **Windows**: `.exe` installer
+          - **Linux**:
+            - `.AppImage` - Portable application
+            - `.deb` - For Ubuntu/Debian systems
+            - `.rpm` - For Red Hat/Fedora/CentOS systems
+          EOF
+          )
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            if [ "${{ steps.version.outputs.prerelease }}" = "true" ]; then
+              gh release edit "$TAG" --title "$TITLE" --prerelease
+            else
+              gh release edit "$TAG" --title "$TITLE"
+            fi
+          else
+            if [ "${{ steps.version.outputs.prerelease }}" = "true" ]; then
+              gh release create "$TAG" --title "$TITLE" --generate-notes --notes "$NOTES" --prerelease
+            else
+              gh release create "$TAG" --title "$TITLE" --generate-notes --notes "$NOTES"
+            fi
           fi
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Create Release
-        uses: softprops/action-gh-release@v1
-        with:
-          tag_name: ${{ steps.version.outputs.tag }}
-          name: Release ${{ steps.version.outputs.tag }}
-          prerelease: ${{ steps.version.outputs.prerelease == 'true' }}
-          generate_release_notes: true
-          append_body: true
-          files: |
-            windows-build/*
-            linux-build/*
-          body: |
+      - name: Upload release assets
+        run: |
+          TAG="${{ steps.version.outputs.tag }}"
 
-            ### Downloads
-            - **Windows**: `.exe` installer
-            - **Linux**:
-              - `.AppImage` - Portable application
-              - `.deb` - For Ubuntu/Debian systems
-              - `.rpm` - For Red Hat/Fedora/CentOS systems
+          mapfile -d '' files < <(find windows-build linux-build -maxdepth 1 -type f \( -name "*.exe" -o -name "*.AppImage" -o -name "*.deb" -o -name "*.rpm" -o -name "*.blockmap" -o -name "latest*.yml" \) -print0)
+          if [ "${#files[@]}" -eq 0 ]; then
+            echo "No release assets found to upload."
+            exit 1
+          fi
+
+          gh release upload "$TAG" --clobber "${files[@]}"
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
