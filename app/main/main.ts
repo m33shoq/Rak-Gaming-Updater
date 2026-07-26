@@ -1464,10 +1464,10 @@ socket.on(SOCKET_EVENTS.WCL_REFRESH_TOKEN_UPDATE, (data) => {
 	store.set('WCL_REFRESH_TOKEN', data);
 });
 
-ipcMain.handle(IPC_EVENTS.WCL_REQUEST_REPORTS_LIST, async () => {
+ipcMain.handle(IPC_EVENTS.WCL_REQUEST_REPORTS_LIST, async (event, { endTime }) => {
 	return new Promise<any[]>((resolve) => {
-		log.info('Requesting WCL reports list');
-		socket.emit(SOCKET_EVENTS.WCL_REQUEST_REPORTS_LIST, null, (response: { reports: any[]; error?: string }) => {
+		log.info(`Requesting WCL reports list, endTime: ${endTime}`);
+		socket.emit(SOCKET_EVENTS.WCL_REQUEST_REPORTS_LIST, { endTime }, (response: { reports: any[]; error?: string }) => {
 			if (response.reports) {
 				log.info('Received reports list, count:', response.reports.length);
 				resolve(response.reports);

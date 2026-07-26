@@ -81,11 +81,25 @@ export const useReviewsStore = defineStore('Reviews', () => {
 		return selected.endTime - selected.startTime;
 	});
 
-	async function requestReports() {
-		// log.info('Requesting WCL reports');
-		const reports = await ipc.invoke(IPC_EVENTS.WCL_REQUEST_REPORTS_LIST);
+	async function requestReports(endTime?: number) {
+		// log.info(`Requesting WCL reports, endtime: ${endTime}`);
+		let reports = await ipc.invoke(IPC_EVENTS.WCL_REQUEST_REPORTS_LIST, { endTime });
+		// prepend older reports to the existing list
+
+		const newReports = [...getReports.value];
+		for (const report of reports) {
+			const existingIndex = newReports.findIndex(r => r.code === report.code);
+			if (existingIndex >= 0) {
+				newReports[existingIndex] = report;
+			} else {
+				newReports.push(report);
+			}
+		}
+
+		newReports.sort((a, b) => b.startTime - a.startTime); // sort by start time descending
+
 		// log.info('Received WCL reports');
-		setReports(reports);
+		setReports(newReports);
 	}
 
 	async function requestReportData() {

@@ -9,6 +9,7 @@ const props = defineProps<{
 		value: any;
 		label: string;
 		color?: string;
+		overrideAction?: () => void;
 	}>;
 	maxVisible?: number;
 	placeholder?: string;
@@ -46,8 +47,12 @@ const innerText = computed(() => {
 	return props.placeholder || 'Select an option';
 });
 
-function selectOption(value) {
-	model.value = value;
+function selectOption(option) {
+	if (option.overrideAction) {
+		option.overrideAction();
+		return;
+	}
+	model.value = option.value;
 	toggled.value = false;
 }
 
@@ -133,7 +138,7 @@ const colorMap = {
 				<button v-for="option in options" class="text-white last:rounded-b-md p-0.5 px-2 text-left h-[24px] last:h-[28px] dark:hover:bg-dark3 hover:bg-light3 w-full whitespace-nowrap relative"
 					:key="option.value"
 					:selected="model === option.value"
-					@click="selectOption(option.value)"
+					@click="selectOption(option)"
 				>
 					<div class="w-[3px] h-full absolute left-0 top-0 delay-150"
 					:class="{

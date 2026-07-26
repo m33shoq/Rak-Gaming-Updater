@@ -452,16 +452,29 @@ async function wclAuth() {
 }
 
 const reportOptions = computed(() => {
-	const list = [
-		{
-			label: '--',
-			value: null,
-		}
-	];
+	const list = []
+
+	list.push({
+		label: '--',
+		value: null,
+	});
+
 	list.push(...reviewsStore.getReports.map(r => ({
 		label: `${r.title} - ${new Date(r.startTime).toLocaleString()}`,
 		value: r.code,
 	})));
+
+	const lastReport = reviewsStore.getReports[reviewsStore.getReports.length - 1];
+	const lastReportEndTime = lastReport ? lastReport.endTime : undefined;
+
+	if (lastReportEndTime) {
+		list.push({
+			label: 'Load older reports...',
+			overrideAction: () => {
+				reviewsStore.requestReports(lastReportEndTime);
+			},
+		});
+	}
 
 	return list;
 });
