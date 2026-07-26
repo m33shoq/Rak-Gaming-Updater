@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import archiver from 'archiver';
+import { ZipArchive } from 'archiver';
 import extract from 'extract-zip';
 import log from 'electron-log/main';
 
@@ -11,7 +11,7 @@ export async function zipFile(sourcePath: string, destinationPath: string) {
 		log.info(`Zipping ${isFolder ? 'folder' : 'file'}: ${sourcePath} to ${destinationPath}`);
 
 		const output = fs.createWriteStream(destinationPath);
-		const archive = archiver('zip', {
+		const archive = new ZipArchive({
 			zlib: { level: 9 }, // Sets the compression level
 		});
 
