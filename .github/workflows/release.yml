@@ -100,10 +100,12 @@ jobs:
         run: |
           find . -type f -name "*.exe" -o -name "*.AppImage" -o -name "*.deb" -o -name "*.rpm"
 
-      - name: Ensure release exists
+      - name: Create or update release via API
+        id: release_meta
         run: |
           TAG="${{ steps.version.outputs.tag }}"
           REPO="${{ github.repository }}"
+          IS_PRERELEASE="${{ steps.version.outputs.prerelease }}"
           TITLE="Release $TAG"
           NOTES=$(cat <<'EOF'
           ### Downloads
@@ -115,27 +117,45 @@ jobs:
           EOF
           )
 
-          if gh release view "$TAG" -R "$REPO" >/dev/null 2>&1; then
-            if [ "${{ steps.version.outputs.prerelease }}" = "true" ]; then
-              gh release edit "$TAG" -R "$REPO" --title "$TITLE" --prerelease
-            else
-              gh release edit "$TAG" -R "$REPO" --title "$TITLE"
-            fi
+          release_json=$(gh api "repos/$REPO/releases/tags/$TAG" 2>/dev/null || true)
+
+          if [ -n "$release_json" ]; then
+            release_id=$(echo "$release_json" | jq -r '.id')
+            gh api --method PATCH "repos/$REPO/releases/$release_id" \
+              -f name="$TITLE" \
+              -F prerelease="$IS_PRERELEASE" \
+              -f body="$NOTES" >/dev/null
           else
-            if [ "${{ steps.version.outputs.prerelease }}" = "true" ]; then
-              gh release create "$TAG" -R "$REPO" --title "$TITLE" --generate-notes --notes "$NOTES" --prerelease
-            else
-              gh release create "$TAG" -R "$REPO" --title "$TITLE" --generate-notes --notes "$NOTES"
-            fi
+            release_json=$(gh api --method POST "repos/$REPO/releases" \
+              -f tag_name="$TAG" \
+              -f name="$TITLE" \
+              -F prerelease="$IS_PRERELEASE" \
+              -f generate_release_notes=true \
+              -f body="$NOTES")
+            release_id=$(echo "$release_json" | jq -r '.id')
           fi
+
+          echo "release_id=$release_id" >> "$GITHUB_OUTPUT"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GH_REPO: ${{ github.repository }}
+
+      - name: Remove existing assets from release
+        run: |
+          REPO="${{ github.repository }}"
+          RELEASE_ID="${{ steps.release_meta.outputs.release_id }}"
+
+          gh api "repos/$REPO/releases/$RELEASE_ID/assets" --jq '.[].id' | while read -r asset_id; do
+            if [ -n "$asset_id" ]; then
+              gh api --method DELETE "repos/$REPO/releases/assets/$asset_id" >/dev/null
+            fi
+          done
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Upload release assets
         run: |
-          TAG="${{ steps.version.outputs.tag }}"
           REPO="${{ github.repository }}"
+          RELEASE_ID="${{ steps.release_meta.outputs.release_id }}"
 
           mapfile -d '' files < <(find windows-build linux-build -maxdepth 1 -type f \( -name "*.exe" -o -name "*.AppImage" -o -name "*.deb" -o -name "*.rpm" -o -name "*.blockmap" -o -name "latest*.yml" \) -print0)
           if [ "${#files[@]}" -eq 0 ]; then
@@ -143,7 +163,14 @@ jobs:
             exit 1
           fi
 
-          gh release upload "$TAG" -R "$REPO" --clobber "${files[@]}"
+          for file in "${files[@]}"; do
+            filename=$(basename "$file")
+            encoded_name=$(jq -rn --arg v "$filename" '$v|@uri')
+            gh api --method POST \
+              -H "Content-Type: application/octet-stream" \
+              --input "$file" \
+              "repos/$REPO/releases/$RELEASE_ID/assets?name=$encoded_name" >/dev/null
+            echo "Uploaded: $filename"
+          done
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GH_REPO: ${{ github.repository }}
