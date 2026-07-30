@@ -1502,21 +1502,87 @@ ipcMain.handle(IPC_EVENTS.WCL_REQUEST_REPORT_DATA, async (event, { reportCode })
 });
 
 ipcMain.handle(IPC_EVENTS.WCL_REQUEST_FIGHT_EVENTS, async (event, { reportCode, fightID }) => {
-	return new Promise<any>((resolve) => {
+	return new Promise<reviewFightEventsResponse>((resolve) => {
 		log.info('Requesting WCL fight events for report', reportCode, 'fightID', fightID);
-		socket.emit(SOCKET_EVENTS.WCL_REQUEST_FIGHT_EVENTS, { reportCode, fightID }, (response: { fightEvents: any; error?: string }) => {
-			if (response.fightEvents) {
+		let settled = false;
+		const timeout = setTimeout(() => {
+			settled = true;
+			resolve({ error: 'Timed out while requesting fight events' });
+		}, 15000);
+
+		socket.emit(SOCKET_EVENTS.WCL_REQUEST_FIGHT_EVENTS, { reportCode, fightID }, (response?: reviewFightEventsResponse) => {
+			if (settled) return;
+			settled = true;
+			clearTimeout(timeout);
+
+			if (Array.isArray(response?.fightEvents)) {
 				log.info('Received fight events for report', reportCode, 'fightID', fightID);
-				resolve(response.fightEvents);
+				resolve({ fightEvents: response.fightEvents });
 			} else {
-				log.error('Error receiving fight events for report', reportCode, response.error);
-				resolve([]);
+				log.error('Error receiving fight events for report', reportCode, response?.error);
+				resolve({ error: response?.error || 'Failed to receive fight events' });
 			}
 		});
-		setTimeout(() => {
-			resolve([]);
-		}, 15000);
 	});
+});
+
+ipcMain.handle(IPC_EVENTS.WCL_REQUEST_FIGHT_COOLDOWNS, async (event, { reportCode, fightID }) => {
+	return new Promise<reviewFightCooldownResponse>((resolve) => {
+		log.info('Requesting WCL fight cooldowns for report', reportCode, 'fightID', fightID);
+
+		let settled = false;
+		const timeout = setTimeout(() => {
+			settled = true;
+			resolve({ error: 'Timed out while requesting fight cooldowns' });
+		}, 15000);
+
+		socket.emit(
+			SOCKET_EVENTS.WCL_REQUEST_FIGHT_COOLDOWNS,
+			{ reportCode, fightID },
+			(response?: reviewFightCooldownResponse) => {
+				if (settled) return;
+				settled = true;
+				clearTimeout(timeout);
+
+				if (Array.isArray(response?.fightCooldownEvents)) {
+					log.info(
+						'Received fight cooldowns for report',
+						reportCode,
+						'fightID',
+						fightID,
+						'count',
+						response.fightCooldownEvents.length,
+					);
+					resolve(response);
+					return;
+				}
+
+				log.error('Error receiving fight cooldowns for report', reportCode, response?.error);
+				resolve({ error: response?.error || 'Failed to receive fight cooldowns' });
+			},
+		);
+	});
+});
+
+ipcMain.on(IPC_EVENTS.WCL_OPEN_FIGHT, async (
+	_event,
+	payload?: { reportCode?: unknown; fightID?: unknown },
+) => {
+	const { reportCode, fightID } = payload || {};
+	if (
+		typeof reportCode !== 'string'
+		|| reportCode.length === 0
+		|| typeof fightID !== 'number'
+		|| !Number.isSafeInteger(fightID)
+		|| fightID <= 0
+	) {
+		log.warn('Refusing to open invalid WCL fight link', { reportCode, fightID });
+		return;
+	}
+
+	const url = `https://www.warcraftlogs.com/reports/${encodeURIComponent(reportCode)}?fight=${fightID}`;
+	log.info('Opening WCL fight link:', url);
+	void shell.openExternal(url);
 });
 
 ipcMain.on(IPC_EVENTS.WCL_OPEN_DEATH, async (event, { reportCode, fightID, deathID }) => {
@@ -1592,7 +1658,3 @@ function deleteYoutubeVideoInfo(videoId: string) { // todo
 		}
 	});
 }
-
-
-
-

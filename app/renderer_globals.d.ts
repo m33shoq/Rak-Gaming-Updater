@@ -20,17 +20,27 @@ declare type fightDetails = {
 	id: number;
 	name: string;
 	encounterID: number;
-	// difficulty: number;
+	difficulty: number;
 	startTime: number;
 	endTime: number;
 	bossPercentage: number;
 	// fightPercentage: number;
 	kill: boolean;
+	friendlyPlayers: number[];
+	friendlySpecs: string[];
 	// originalEncounterID: number;
 	phaseTransitions: Array<{
 		id: number;
 		startTime: number;
 	}>
+}
+
+declare type reportActor = {
+	id: number;
+	name: string;
+	server?: string;
+	subType?: string;
+	type?: string;
 }
 
 declare type reportDetails = {
@@ -42,6 +52,9 @@ declare type reportDetails = {
 	// owner: { name: string };
 	// zone: { name: string };
 	fights : Array<fightDetails>;
+	masterData?: {
+		actors?: reportActor[];
+	};
 	phases: Array<{
 		encounterID: number;
 		// separatesWipes: boolean;
@@ -84,35 +97,106 @@ declare type ObsStatus = {
 declare type fightEvent = {
 	timestamp: number;
 	type: string;
-	source: {
-		guid: number,
-		icon: string,
-		id: number,
-		name: string,
-		type: string
+	source?: {
+		guid?: number,
+		icon?: string,
+		id?: number,
+		name?: string,
+		type?: string
 	};
-	target: {
-		guid: number,
-		icon: string,
-		id: number,
-		name: string,
-		type: string
+	target?: {
+		guid?: number,
+		icon?: string,
+		id?: number,
+		name?: string,
+		type?: string
 	};
-	ability: {
-		abilityIcon: string,
-		guid: number,
-		name: string,
-		type: number,
+	ability?: {
+		abilityIcon?: string,
+		guid?: number,
+		name?: string,
+		type?: number,
 	};
-	fight: number;
-	pin: number;
+	fight?: number;
+	pin?: number;
 	killerID?: number;
 	killingAbility?: {
-		abilityIcon: string,
-		guid: number,
-		name: string,
-		type: number,
+		abilityIcon?: string,
+		guid?: number,
+		name?: string,
+		type?: number,
 	};
+}
+
+declare type reviewFightEventsResponse = {
+	fightEvents?: fightEvent[];
+	error?: string;
+}
+
+declare type reviewPhaseMarker = {
+	name: string | number;
+	percent: number;
+}
+
+declare type reviewCooldownGroupID =
+	| 'raid_cd'
+	| 'personals'
+	| 'externals'
+	| 'utility'
+	| 'movement'
+	| 'dps_cd'
+	| 'items'
+	| 'aoe_cc'
+	| 'single_cc';
+
+declare type reviewCooldownGroup = {
+	id: reviewCooldownGroupID;
+	label: string;
+	defaultEnabled: boolean;
+}
+
+declare type reviewCooldownEvent = {
+	timestamp: number;
+	type: string;
+	source?: {
+		guid?: number;
+		icon?: string;
+		id?: number;
+		name?: string;
+		type?: string;
+	};
+	target?: {
+		guid?: number;
+		icon?: string;
+		id?: number;
+		name?: string;
+		type?: string;
+	};
+	ability?: {
+		abilityIcon?: string;
+		guid?: number;
+		name?: string;
+		type?: number;
+	};
+	fight?: number;
+	cooldown: {
+		spellID: number;
+		groups: reviewCooldownGroupID[];
+		primaryGroup: reviewCooldownGroupID;
+	};
+}
+
+declare type reviewFightCooldownData = {
+	catalogVersion: number;
+	cooldownGroups: reviewCooldownGroup[];
+	fightCooldownEvents: reviewCooldownEvent[];
+}
+
+declare type reviewFightCooldownResponse = {
+	catalogVersion?: number;
+	cooldownGroups?: reviewCooldownGroup[];
+	fightCooldownEvents?: reviewCooldownEvent[];
+	error?: string;
 }
 
 declare const ipc: typeof Electron.ipcRenderer;
@@ -121,5 +205,3 @@ declare namespace store {
 	const get:(key: string) => Promise<any>;
 	const onSync: (key: string, callback: (key, newValue) => void) => void;
 }
-
-

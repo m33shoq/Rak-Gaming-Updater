@@ -2,7 +2,7 @@
 import log from 'electron-log/renderer';
 import { IPC_EVENTS } from '@/events';
 
-import { ref, computed, watch, onMounted, onBeforeUnmount, useTemplateRef } from 'vue';
+import { ref, computed, watch, onMounted, onBeforeUnmount, useTemplateRef, nextTick } from 'vue';
 import { useIpcRendererOn } from '@vueuse/electron';
 
 import TabContent from '@/renderer/components/TabContent.vue';
@@ -10,6 +10,7 @@ import UIButton from '@/renderer/components/Button.vue';
 import Dropdown from '@/renderer/components/Dropdown.vue';
 import Input from '@/renderer/components/Input.vue';
 import ScrollFrame from '@/renderer/components/ScrollFrame.vue';
+import ReviewCooldownTimeline from '@/renderer/components/ReviewCooldownTimeline.vue';
 
 import { getElectronStoreRef } from '@/renderer/store/ElectronRefStore';
 import { useReviewsStore } from '@/renderer/store/ReviewsStore';
@@ -18,25 +19,6 @@ import { useLoginStore } from '@/renderer/store/LoginStore';
 import { useYoutubeVideoInfo } from '@/renderer/composables/useYoutubeVideoInfo';
 
 import YTPlayer from '@/renderer/yt-player';
-
-function getClassColor(className: string) {
-	switch (className?.toLowerCase()) {
-		case 'deathknight': return 'text-[#C41E3A]';      // Red
-		case 'demonhunter': return 'text-[#A330C9]';      // Dark Magenta
-		case 'druid':        return 'text-[#FF7C0A]';      // Orange
-		case 'evoker':       return 'text-[#33937F]';      // Dark Emerald
-		case 'hunter':       return 'text-[#AAD372]';      // Pistachio
-		case 'mage':         return 'text-[#3FC7EB]';      // Light Blue
-		case 'monk':         return 'text-[#00FF98]';      // Spring Green
-		case 'paladin':      return 'text-[#F48CBA]';      // Pink
-		case 'priest':       return 'text-[#FFFFFF]';      // White
-		case 'rogue':        return 'text-[#FFF468]';      // Yellow
-		case 'shaman':       return 'text-[#0070DD]';      // Blue
-		case 'warlock':      return 'text-[#8788EE]';      // Purple
-		case 'warrior':      return 'text-[#C69B6D]';      // Tan
-		default:             return 'text-white';
-	}
-}
 
 // format seconds to mm:ss
 function formatTime(t) {
@@ -339,12 +321,16 @@ watch(() => reviewsStore.pendingDirectVideoSeekSeconds, (newId) => {
 	}
 });
 
+let pendingComparisonSeek: { fightID: number; timestampSeconds: number } | null = null;
 watch(() => reviewsStore.selectedFightID, (newVal) => {
-	lastFightRelativeTime = 0;
+	const comparisonTimestamp = pendingComparisonSeek?.fightID === newVal
+		? pendingComparisonSeek.timestampSeconds
+		: 0;
+	lastFightRelativeTime = comparisonTimestamp;
 	if (newVal && reviewsStore.selectedVideoInfo) {
 		const relativeFightStart = reviewsStore.getFightStartRelativeToVideo / 1000; // in seconds
 
-		const seekTime = relativeFightStart + YOUTUBE_DELAY_OFFSET;
+		const seekTime = relativeFightStart + YOUTUBE_DELAY_OFFSET + comparisonTimestamp;
 
 		log.info(`New fight selected, seeking to ${seekTime}s (relativeFightStart: ${relativeFightStart}s)`);
 
@@ -516,11 +502,6 @@ const fightOptions = computed(() => {
 	return list;
 });
 
-const fightDurationDisplay = computed(() => {
-	const duration = reviewsStore.getFightDuration / 1000; // in seconds
-	return formatTime(duration);
-});
-
 watch(reviewsStore.videoList, (newList) => {
 	if (!reviewsStore.selectedVideoInfo && newList.length > 0) {
 		reviewsStore.setSelectedVideoInfo(newList[0]);
@@ -546,26 +527,26 @@ function seekToFightTimestamp(fightTimestamp) {
 	playVideo();
 }
 
-function onTimelineClick(event: MouseEvent) {
-	const button = event.currentTarget as HTMLElement;
-	const rect = button.getBoundingClientRect();
-	const x = event.clientX - rect.left; // X position within the button
-	const width = rect.width;
+async function seekToPullTimestamp(fightID: number, timestampSeconds: number) {
+	if (!reviewsStore.getReportDetails?.fights.some(fight => fight.id === fightID)) return;
+	pendingComparisonSeek = { fightID, timestampSeconds };
 
-	// Calculate the time based on click position
-	const percent = x / width;
-	const fightTimestamp = percent * (reviewsStore.getFightDuration / 1000); // in seconds
-	log.info(`Timeline clicked at ${x}px (width: ${width}px), fight timestamp is ${fightTimestamp}s`);
+	if (reviewsStore.selectedFightID !== fightID) {
+		reviewsStore.selectedFightID = fightID;
+		await nextTick();
+	} else {
+		lastFightRelativeTime = timestampSeconds;
+	}
 
-	seekToFightTimestamp(fightTimestamp);
+	if (!reviewsStore.videoList.some(video => video.id === reviewsStore.getSelectedVideoId)) {
+		reviewsStore.setSelectedVideoInfo(reviewsStore.videoList[0] || null);
+		await nextTick();
+	}
+
+	seekToFightTimestamp(timestampSeconds);
+	pendingComparisonSeek = null;
 }
 
-const timelineTooltip = ref<{ visible: boolean; x: number; label: string }>({
-	visible: false,
-	x: 0,
-	label: '',
-});
-const isDeathTooltipShown = ref(false);
 const copyReviewLinkStatus = ref('');
 const isCopyReviewLinkHovered = ref(false);
 let copyReviewLinkResetTimeout = null as number | null;
@@ -613,26 +594,6 @@ async function copyReviewLink(event?: MouseEvent) {
 		copyReviewLinkStatus.value = '';
 		copyReviewLinkResetTimeout = null;
 	}, 2000);
-}
-
-function onTimelineMove(event: MouseEvent) {
-	const button = event.currentTarget as HTMLElement;
-	const rect = button.getBoundingClientRect();
-	const x = event.clientX - rect.left;
-	const width = rect.width;
-
-	const percent = x / width;
-	const fightSeconds = percent * (reviewsStore.getFightDuration / 1000);
-
-	timelineTooltip.value = {
-		visible: true,
-		x,
-		label: formatTime(fightSeconds),
-	};
-}
-
-function onTimelineLeave() {
-  	timelineTooltip.value.visible = false;
 }
 
 const currentFightCursor = computed(() => {
@@ -696,42 +657,25 @@ const phaseTransitions = computed(() => {
 		.filter(phase => phase.percent > 0 && phase.percent < 1); // exclude start and end
 });
 
-const playerDeaths = computed(() => {
-	const fightStartTime = reviewsStore.getFightStartTimeOffset; // in ms
-
-	let deathID = 0;
-	return reviewsStore.getFightEvents
-		.map(event => {
-			if (event.type !== 'death') return null;
-			deathID++;
-			const eventTimestamp = event.timestamp; // in ms
-			const percent = (eventTimestamp - fightStartTime) / reviewsStore.getFightDuration;
-			return {
-				name: event.target.name,
-				class: event.target.type,
-				spell: event.killingAbility?.name ?? '???',
-				icon: event.killingAbility?.abilityIcon ?? '',
-				percent,
-				timestamp: (eventTimestamp - fightStartTime) / 1000, // in seconds
-				id: deathID,
-			};
-		})
-		.filter(death => death.percent > 0 && death.percent < 1);
-});
-
-// watch(phaseTransitions, (newVal) => {
-// 	log.info('Phase transitions updated:', newVal);
-// }, { immediate: true });
-
-// watch(playerDeaths, (newVal) => {
-// 	log.info('Player deaths updated:', newVal);
-// }, { immediate: true });
-
 function openWCLDeath(deathID: number) {
 	if (!reviewsStore.selectedReportCode || !reviewsStore.selectedFightID) return;
+	openWCLPullDeath(reviewsStore.selectedFightID, deathID);
+}
+
+function openWCLFight(fightID?: number) {
+	const targetFightID = fightID || reviewsStore.selectedFightID;
+	if (!reviewsStore.selectedReportCode || !targetFightID) return;
+	ipc.send(IPC_EVENTS.WCL_OPEN_FIGHT, {
+		reportCode: reviewsStore.selectedReportCode,
+		fightID: targetFightID,
+	});
+}
+
+function openWCLPullDeath(fightID: number, deathID: number) {
+	if (!reviewsStore.selectedReportCode) return;
 	ipc.send(IPC_EVENTS.WCL_OPEN_DEATH, {
 		reportCode: reviewsStore.selectedReportCode,
-		fightID: reviewsStore.selectedFightID,
+		fightID,
 		deathID: deathID,
 	});
 }
@@ -752,7 +696,7 @@ function deleteYoutubeVideo(videoId: string) {
 
 <template>
 	<TabContent>
-		<div class="w-full h-full flex flex-col">
+		<div class="w-full h-full min-h-0 flex flex-col">
 			<div class="flex flex-row gap-0 h-9/10 flex-14">
 				<div class="flex flex-1 flex-col max-w-[calc(100vw-350px)]">
 					<template v-if="refreshToken">
@@ -870,8 +814,8 @@ function deleteYoutubeVideo(videoId: string) {
 					</ScrollFrame>
 				</div>
 			</div>
-			<div class="flex-1 min-h-18 flex w-full flex-col items-center">
-				<div class="relative w-96/100 mt-6">
+			<div class="flex-1 min-h-26 flex w-full flex-col items-center">
+				<div class="relative mt-12 w-96/100">
 					<button
 						type="button"
 						class="absolute -left-4 top-1/2 z-30 flex -translate-x-1/2 -translate-y-1/2 items-center justify-center cursor-pointer text-neutral-500 transition-[color,transform,opacity] duration-150 hover:text-sky-500 focus:outline-none focus:text-sky-500 active:scale-95 dark:text-neutral-300 dark:hover:text-sky-400 dark:focus:text-sky-400 disabled:cursor-not-allowed disabled:opacity-50"
@@ -894,76 +838,23 @@ function deleteYoutubeVideo(videoId: string) {
 					>
 						{{ copyReviewLinkTooltip }}
 					</span>
-					<!-- Timeline -->
-					<button class="w-full h-6 m-0.5 rounded-md
-					dark:bg-dark4 dark:hover:bg-dark3
-					bg-light4 hover:bg-light3 relative"
-					@click="onTimelineClick"
-					@mousemove="onTimelineMove"
-  					@mouseleave="onTimelineLeave"
-					tabindex="-1"
-  					@mousedown.prevent
-				>
-					<!-- Time Labels -->
-					<p class="absolute left-0 bottom-[-26px] bg-black/50 rounded-md p-0.5 px-1 pointer-events-none text-sm text-white">{{ formatTime(0) }}</p>
-					<p class="absolute right-0 bottom-[-26px] bg-black/50 rounded-md p-0.5 px-1 pointer-events-none text-sm text-white">{{ fightDurationDisplay }}</p>
-					<!-- Phases -->
-					<template v-for="phase in phaseTransitions" :key="phase.name.toString() + phase.percent">
-						<div
-							class="absolute top-0 bottom-0 w-[2px] bg-blue-400 z-5 pointer-events-none"
-							:style="{ left: `calc(${(phase.percent * 100).toFixed(2)}%)` }"
-						>
-						<p class="absolute top-[-20px]">{{ phase.name }}</p>
-						</div>
-					</template>
-					<!-- Deaths -->
-					<template v-for="death in playerDeaths" :key="death.name + death.percent">
-						<div
-							class="absolute top-0 bottom-0 w-[2px] bg-red-600 z-5 pointer-events-none"
-							:style="{ left: `calc(${(death.percent * 100).toFixed(2)}%)` }"
-							>
-							<div class="relative flex justify-center">
-								<p class="absolute top-[-20px] text-red-600 cursor-pointer pointer-events-auto group clickable"
-									@mouseover="isDeathTooltipShown = true"
-									@mouseout="isDeathTooltipShown = false"
-									@click="$event.stopPropagation(); seekToFightTimestamp(death.timestamp-10)"
-									@contextmenu="openWCLDeath(death.id)"
-								>
-								💀
-									<span
-										class="absolute left-1/2 -translate-x-1/2 -top-18 z-30 px-2 pr-8 py-1 rounded bg-black/80 text-xs text-white whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none"
-									>
-										{{ formatTime(death.timestamp) }} <span :class="getClassColor(death.class)">{{ death.name }}</span><br /> died to
-										<img v-if ="death.icon"
-											:src="`https://wow.zamimg.com/images/wow/icons/large/${death.icon?.toLowerCase()}`"
-											alt="Spell Icon"
-											class="inline-block w-6 h-6 align-middle rounded"
-										/>
-										{{ death.spell }}
-									</span>
-								</p>
-							</div>
-						</div>
-					</template>
-					<!-- Cursor -->
-					<div
-						v-if="currentFightCursor > 0 && currentFightCursor < 1"
-						class="absolute top-0 bottom-0 w-[2px] bg-amber-400 z-10 pointer-events-none"
-						:style="{ left: `calc(${(currentFightCursor * 100).toFixed(2)}%)` }"
-					></div>
-					<!-- Tooltip + Mover Cursor -->
-					<div v-if="timelineTooltip.visible"
-						class="absolute top-0 bottom-0 w-0.5 bg-white/50 z-20 pointer-events-none"
-						:style="{ left: timelineTooltip.x + 'px' }"
-					></div>
-					<span
-						v-if="timelineTooltip.visible && !isDeathTooltipShown"
-						:style="{ left: timelineTooltip.x + 'px' }"
-						class="pointer-events-none absolute -top-7 z-20 px-2 py-1 rounded bg-black/80 text-xs text-white whitespace-nowrap"
-					>
-						{{ timelineTooltip.label }}
-					</span>
-					</button>
+					<ReviewCooldownTimeline
+						v-if="reviewsStore.selectedFightID && reviewsStore.getFightDuration > 0"
+						:events="reviewsStore.getFightCooldownEvents"
+						:fight-events="reviewsStore.getFightEvents"
+						:groups="reviewsStore.getFightCooldownGroups"
+						:phases="phaseTransitions"
+						:fight-start-time="reviewsStore.getFightStartTimeOffset"
+						:fight-duration="reviewsStore.getFightDuration"
+						:cursor-percent="currentFightCursor"
+						:loading="reviewsStore.isFightCooldownsLoading"
+						:error="reviewsStore.getFightCooldownError"
+						@seek="seekToFightTimestamp"
+						@open-fight="openWCLFight"
+						@open-death="openWCLDeath"
+						@seek-pull="seekToPullTimestamp"
+						@open-pull-death="openWCLPullDeath"
+					/>
 				</div>
 			</div>
 		</div>

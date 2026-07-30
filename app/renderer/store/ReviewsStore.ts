@@ -6,6 +6,7 @@ import { IPC_EVENTS } from '@/events';
 import { useYoutubeVideoInfo } from '@/renderer/composables/useYoutubeVideoInfo';
 
 const TWELVE_HOURS_MS = 12 * 60 * 60 * 1000;
+const FIGHT_DATA_CACHE_TTL_MS = 30 * 60 * 1000;
 
 export const useReviewsStore = defineStore('Reviews', () => {
 	const { youtubeVideoInfo, refreshYoutubeVideoInfo } = useYoutubeVideoInfo();
@@ -26,7 +27,16 @@ export const useReviewsStore = defineStore('Reviews', () => {
 	const selectedReportCode = ref<string | null>(null);
 	const reportDetails = ref<reportDetails | null>(null);
 	const selectedFightID = ref<number | null>(null);
-	const savedFightEvents = ref<{ [key: number]: fightEvent[] }>({}); // fightID -> events
+	const savedFightEvents = ref<Record<string, fightEvent[]>>({});
+	const fightEventCachedAt = ref<Record<string, number>>({});
+	const fightEventRequests = ref<Record<string, boolean>>({});
+	const fightEventErrors = ref<Record<string, string | null>>({});
+	const savedFightCooldowns = ref<Record<string, reviewFightCooldownData>>({});
+	const fightCooldownCachedAt = ref<Record<string, number>>({});
+	const fightCooldownRequests = ref<Record<string, boolean>>({});
+	const fightCooldownErrors = ref<Record<string, string | null>>({});
+	const fightEventPromises = new Map<string, Promise<fightEvent[]>>();
+	const fightCooldownPromises = new Map<string, Promise<reviewFightCooldownData>>();
 
 	const getSelectedVideoId = computed(() => selectedVideoInfo.value?.id || null);
 
@@ -43,12 +53,65 @@ export const useReviewsStore = defineStore('Reviews', () => {
 
 	const getSelectedFight = computed(() => getReportDetails.value?.fights?.find(f => f.id === selectedFightID.value) || null);
 
+	function getFightCooldownCacheKey(reportCode: string, fightID: number) {
+		return `${reportCode}:${fightID}`;
+	}
+
+	function getFightEventsFor(reportCode: string, fightID: number) {
+		return savedFightEvents.value[getFightCooldownCacheKey(reportCode, fightID)] || [];
+	}
+
+	function getFightCooldownDataFor(reportCode: string, fightID: number) {
+		return savedFightCooldowns.value[getFightCooldownCacheKey(reportCode, fightID)] || null;
+	}
+
+	function isFightEventsLoadingFor(reportCode: string, fightID: number) {
+		return Boolean(fightEventRequests.value[getFightCooldownCacheKey(reportCode, fightID)]);
+	}
+
+	function getFightEventsErrorFor(reportCode: string, fightID: number) {
+		return fightEventErrors.value[getFightCooldownCacheKey(reportCode, fightID)] || null;
+	}
+
+	function isFightCooldownsLoadingFor(reportCode: string, fightID: number) {
+		return Boolean(fightCooldownRequests.value[getFightCooldownCacheKey(reportCode, fightID)]);
+	}
+
+	function getFightCooldownErrorFor(reportCode: string, fightID: number) {
+		return fightCooldownErrors.value[getFightCooldownCacheKey(reportCode, fightID)] || null;
+	}
+
+	function isFresh(cachedAt: Record<string, number>, cacheKey: string) {
+		return Date.now() - (cachedAt[cacheKey] || 0) < FIGHT_DATA_CACHE_TTL_MS;
+	}
+
 	const getFightEvents = computed(() => {
+		const reportCode = selectedReportCode.value;
 		const fightID = selectedFightID.value;
-		if (fightID && savedFightEvents.value[fightID]) {
-			return savedFightEvents.value[fightID];
-		}
-		return [];
+		return reportCode && fightID ? getFightEventsFor(reportCode, fightID) : [];
+	});
+
+	const getSelectedFightCooldownCacheKey = computed(() => {
+		const reportCode = selectedReportCode.value;
+		const fightID = selectedFightID.value;
+		if (!reportCode || !fightID) return null;
+		return getFightCooldownCacheKey(reportCode, fightID);
+	});
+
+	const getFightCooldownData = computed<reviewFightCooldownData | null>(() => {
+		const cacheKey = getSelectedFightCooldownCacheKey.value;
+		return cacheKey ? savedFightCooldowns.value[cacheKey] || null : null;
+	});
+
+	const getFightCooldownEvents = computed(() => getFightCooldownData.value?.fightCooldownEvents || []);
+	const getFightCooldownGroups = computed(() => getFightCooldownData.value?.cooldownGroups || []);
+	const isFightCooldownsLoading = computed(() => {
+		const cacheKey = getSelectedFightCooldownCacheKey.value;
+		return cacheKey ? Boolean(fightCooldownRequests.value[cacheKey]) : false;
+	});
+	const getFightCooldownError = computed(() => {
+		const cacheKey = getSelectedFightCooldownCacheKey.value;
+		return cacheKey ? fightCooldownErrors.value[cacheKey] || null : null;
 	});
 
 	const getReportTimeOffset = computed(() => {
@@ -114,16 +177,97 @@ export const useReviewsStore = defineStore('Reviews', () => {
 		setReportDetails(reportData);
 	}
 
-	async function requestFightEvents() {
-		const selected = getSelectedReport.value;
-		const fightID = getSelectedFight.value?.id;
-		if (!selected || !fightID || savedFightEvents.value[fightID]) return;
+	async function ensureFightEvents(reportCode: string, fightID: number, force = false): Promise<fightEvent[]> {
+		const cacheKey = getFightCooldownCacheKey(reportCode, fightID);
+		const cached = savedFightEvents.value[cacheKey];
+		if (!force && cached && isFresh(fightEventCachedAt.value, cacheKey)) return cached;
 
-		const reportCode = selected.code;
+		const pending = fightEventPromises.get(cacheKey);
+		if (pending) return pending;
 
-		const fightEvents = await ipc.invoke(IPC_EVENTS.WCL_REQUEST_FIGHT_EVENTS, { reportCode, fightID });
+		fightEventRequests.value[cacheKey] = true;
+		fightEventErrors.value[cacheKey] = null;
+		const request = (async () => {
+			try {
+				const response = await ipc.invoke(
+					IPC_EVENTS.WCL_REQUEST_FIGHT_EVENTS,
+					{ reportCode, fightID },
+				) as reviewFightEventsResponse;
+				if (response.error) throw new Error(response.error);
+				savedFightEvents.value[cacheKey] = response.fightEvents || [];
+				fightEventCachedAt.value[cacheKey] = Date.now();
+				return savedFightEvents.value[cacheKey];
+			} catch (error) {
+				const message = error instanceof Error ? error.message : 'Failed to request fight events';
+				fightEventErrors.value[cacheKey] = message;
+				log.error('Failed to request WCL fight events', { reportCode, fightID, error });
+				return savedFightEvents.value[cacheKey] || [];
+			} finally {
+				fightEventRequests.value[cacheKey] = false;
+				fightEventPromises.delete(cacheKey);
+			}
+		})();
+		fightEventPromises.set(cacheKey, request);
+		return request;
+	}
 
-		savedFightEvents.value[fightID] = fightEvents;
+	async function ensureFightCooldowns(reportCode: string, fightID: number, force = false): Promise<reviewFightCooldownData> {
+		const cacheKey = getFightCooldownCacheKey(reportCode, fightID);
+		const cached = savedFightCooldowns.value[cacheKey];
+		if (!force && cached && isFresh(fightCooldownCachedAt.value, cacheKey)) return cached;
+
+		const pending = fightCooldownPromises.get(cacheKey);
+		if (pending) return pending;
+
+		fightCooldownRequests.value[cacheKey] = true;
+		fightCooldownErrors.value[cacheKey] = null;
+		const request = (async () => {
+			try {
+				const response = await ipc.invoke(
+					IPC_EVENTS.WCL_REQUEST_FIGHT_COOLDOWNS,
+					{ reportCode, fightID },
+				) as reviewFightCooldownResponse;
+
+				if (response.error) throw new Error(response.error);
+
+				const data: reviewFightCooldownData = {
+					catalogVersion: response.catalogVersion || 0,
+					cooldownGroups: response.cooldownGroups || [],
+					fightCooldownEvents: response.fightCooldownEvents || [],
+				};
+				savedFightCooldowns.value[cacheKey] = data;
+				fightCooldownCachedAt.value[cacheKey] = Date.now();
+				return data;
+			} catch (error) {
+				const message = error instanceof Error ? error.message : 'Failed to request fight cooldowns';
+				fightCooldownErrors.value[cacheKey] = message;
+				log.error('Failed to request WCL fight cooldowns', { reportCode, fightID, error });
+				return savedFightCooldowns.value[cacheKey] || {
+					catalogVersion: 0,
+					cooldownGroups: [],
+					fightCooldownEvents: [],
+				};
+			} finally {
+				fightCooldownRequests.value[cacheKey] = false;
+				fightCooldownPromises.delete(cacheKey);
+			}
+		})();
+		fightCooldownPromises.set(cacheKey, request);
+		return request;
+	}
+
+	async function requestFightEvents(force = false) {
+		const reportCode = selectedReportCode.value;
+		const fightID = selectedFightID.value;
+		if (!reportCode || !fightID) return [];
+		return ensureFightEvents(reportCode, fightID, force);
+	}
+
+	async function requestFightCooldowns(force = false) {
+		const reportCode = selectedReportCode.value;
+		const fightID = selectedFightID.value;
+		if (!reportCode || !fightID) return null;
+		return ensureFightCooldowns(reportCode, fightID, force);
 	}
 
 	const videoList = computed<YouTubeVideo[]>(() => {
@@ -174,7 +318,6 @@ export const useReviewsStore = defineStore('Reviews', () => {
 		if (selectedReportCode.value && !videoList.value.some(v => v.id === normalizedVideoId)) {
 			log.info('Deep linked video is not relevant to currently selected report/fight, clearing selection');
 			selectedFightID.value = null;
-			savedFightEvents.value = {};
 
 			if (selectedReportCode.value !== null) {
 				selectedReportCode.value = null;
@@ -193,7 +336,6 @@ export const useReviewsStore = defineStore('Reviews', () => {
 	watch(selectedReportCode, async (newVal, oldVal) => {
 		if (newVal !== oldVal) {
 			selectedFightID.value = null; // reset selected fight
-			savedFightEvents.value = {}; // clear cached fight events
 			await nextTick(); // wait for videoList to update based on new report selection
 			if (newVal && videoList.value.length > 0 && !videoList.value.some(v => v.id === selectedVideoInfo.value?.id)) {
 				setSelectedVideoInfo(videoList.value[0] || null); // auto-select first video if current selection is not relevant to new report
@@ -205,7 +347,8 @@ export const useReviewsStore = defineStore('Reviews', () => {
 
 	watch(selectedFightID, (newVal, oldVal) => {
 		if (newVal !== oldVal) {
-			requestFightEvents();
+			void requestFightEvents();
+			void requestFightCooldowns();
 		}
 	});
 
@@ -218,6 +361,7 @@ export const useReviewsStore = defineStore('Reviews', () => {
 		reportDetails,
 		selectedFightID,
 		savedFightEvents,
+		savedFightCooldowns,
 		videoList,
 
 		getReports,
@@ -231,6 +375,17 @@ export const useReviewsStore = defineStore('Reviews', () => {
 		setReportDetails,
 		getSelectedFight,
 		getFightEvents,
+		getFightEventsFor,
+		isFightEventsLoadingFor,
+		getFightEventsErrorFor,
+		getFightCooldownData,
+		getFightCooldownDataFor,
+		getFightCooldownEvents,
+		getFightCooldownGroups,
+		isFightCooldownsLoading,
+		isFightCooldownsLoadingFor,
+		getFightCooldownError,
+		getFightCooldownErrorFor,
 		getReportTimeOffset,
 		getFightStartTimeOffset,
 		getFightStartTime,
@@ -240,7 +395,9 @@ export const useReviewsStore = defineStore('Reviews', () => {
 		requestReports,
 		requestReportData,
 		requestFightEvents,
+		requestFightCooldowns,
+		ensureFightEvents,
+		ensureFightCooldowns,
 		openVideoFromDeepLink,
 	};
 });
-
