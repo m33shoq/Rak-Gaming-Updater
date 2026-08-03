@@ -52,8 +52,7 @@
 			"artifactName": "Rak-Gaming-Updater-Setup-${version}.${ext}"
 		},
 		"nsis": {
-			"deleteAppDataOnUninstall": true,
-			"disableWebInstaller": true
+			"deleteAppDataOnUninstall": true
 		},
 		"linux": {
 			"target": [
