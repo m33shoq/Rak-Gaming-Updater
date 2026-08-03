@@ -3,6 +3,7 @@ import log from 'electron-log/renderer';
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 
 import ReviewCooldownComparison from '@/renderer/components/ReviewCooldownComparison.vue';
+import ReviewCooldownTarget from '@/renderer/components/ReviewCooldownTarget.vue';
 
 const props = withDefaults(defineProps<{
 	events?: reviewCooldownEvent[];
@@ -516,6 +517,7 @@ function getGroupIndicatorColor(groupID: reviewCooldownGroupID) {
 		case 'movement': return 'bg-emerald-400';
 		case 'dps_cd': return 'bg-amber-400';
 		case 'items': return 'bg-slate-300';
+		case 'interrupts': return 'bg-lime-400';
 		case 'aoe_cc': return 'bg-orange-400';
 		case 'single_cc': return 'bg-red-400';
 	}
@@ -836,6 +838,7 @@ function getGroupBorderColor(groupID: reviewCooldownGroupID) {
 		case 'movement': return 'border-emerald-400';
 		case 'dps_cd': return 'border-amber-400';
 		case 'items': return 'border-slate-300';
+		case 'interrupts': return 'border-lime-400';
 		case 'aoe_cc': return 'border-orange-400';
 		case 'single_cc': return 'border-red-400';
 	}
@@ -1745,7 +1748,7 @@ function onComparisonPlayerRequestApplied(token: number) {
 										left: `clamp(12px, ${cooldown.percent * 100}%, calc(100% - 12px))`,
 										top: `${TRACK_TOP_OFFSET_PX + cooldown.track * TRACK_HEIGHT_PX}px`,
 									}"
-									:aria-label="`${cooldown.event.source?.name || 'Unknown player'} used ${cooldown.event.ability?.name || `Spell ${cooldown.event.cooldown.spellID}`} at ${formatCooldownTimestamp(cooldown.timestampSeconds)}`"
+									:aria-label="`${cooldown.event.source?.name || 'Unknown player'} used ${cooldown.event.ability?.name || `Spell ${cooldown.event.cooldown.spellID}`} at ${formatCooldownTimestamp(cooldown.timestampSeconds)}${cooldown.event.cooldown.interruptSuccessful == null ? '' : cooldown.event.cooldown.interruptSuccessful ? ', interrupt successful' : ', no interrupt recorded'}`"
 									@click.stop="emit('seek', cooldown.timestampSeconds)"
 									@mouseenter="showCooldownTooltip(cooldown, $event)"
 									@mousemove="updateDetailTooltipPosition"
@@ -1760,6 +1763,13 @@ function onComparisonPlayerRequestApplied(token: number) {
 									/>
 									<span v-else class="flex size-full items-center justify-center text-[10px] text-white">
 										{{ cooldown.event.ability?.name?.slice(0, 1) || '?' }}
+									</span>
+									<span
+										v-if="cooldown.event.cooldown.interruptSuccessful != null"
+										class="pointer-events-none absolute bottom-0 right-0 flex size-3 items-center justify-center border-l border-t border-black/70 text-[9px] font-black leading-none text-white"
+										:class="cooldown.event.cooldown.interruptSuccessful ? 'bg-emerald-600' : 'bg-red-700'"
+									>
+										{{ cooldown.event.cooldown.interruptSuccessful ? '✓' : '×' }}
 									</span>
 								</button>
 								</div>
@@ -1939,21 +1949,28 @@ function onComparisonPlayerRequestApplied(token: number) {
 							<span :class="getClassTextColor(detailTooltip.cooldown.event.source?.type)">
 								{{ detailTooltip.cooldown.event.source?.name || 'Unknown player' }}
 							</span>
+							<span v-if="detailTooltip.cooldown.event.sourcePet?.name" class="text-neutral-400">
+								via {{ detailTooltip.cooldown.event.sourcePet.name }}
+							</span>
 							at {{ formatCooldownTimestamp(detailTooltip.cooldown.timestampSeconds) }}
 						</div>
 					</div>
 				</div>
+				<ReviewCooldownTarget
+					v-if="detailTooltip.cooldown.event.target"
+					:target="detailTooltip.cooldown.event.target"
+					:target-marker="detailTooltip.cooldown.event.targetMarker"
+					:target-instance="detailTooltip.cooldown.event.targetInstance"
+				/>
 				<div
-					v-if="
-						detailTooltip.cooldown.event.target?.name
-						&& detailTooltip.cooldown.event.target.name.toLowerCase() !== 'environment'
-					"
-					class="mt-1 text-[11px] text-neutral-300"
+					v-if="detailTooltip.cooldown.event.cooldown.interruptSuccessful != null"
+					class="mt-1 text-[11px] font-medium"
+					:class="detailTooltip.cooldown.event.cooldown.interruptSuccessful ? 'text-emerald-300' : 'text-red-300'"
 				>
-					Target:
-					<span :class="getClassTextColor(detailTooltip.cooldown.event.target.type)">
-						{{ detailTooltip.cooldown.event.target.name }}
-					</span>
+					<template v-if="detailTooltip.cooldown.event.cooldown.interruptSuccessful">
+						Interrupted {{ detailTooltip.cooldown.event.extraAbility?.name || 'a spell' }}
+					</template>
+					<template v-else>No interrupt recorded</template>
 				</div>
 				<div class="mt-1 text-[11px] text-neutral-300">
 					{{ detailTooltip.cooldown.event.cooldown.groups.map(groupID => groupLabels.get(groupID) || groupID).join(', ') }}

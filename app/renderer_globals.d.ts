@@ -36,8 +36,11 @@ declare type fightDetails = {
 }
 
 declare type reportActor = {
+	gameID?: number;
 	id: number;
+	icon?: string;
 	name: string;
+	petOwner?: number;
 	server?: string;
 	subType?: string;
 	type?: string;
@@ -146,6 +149,7 @@ declare type reviewCooldownGroupID =
 	| 'movement'
 	| 'dps_cd'
 	| 'items'
+	| 'interrupts'
 	| 'aoe_cc'
 	| 'single_cc';
 
@@ -165,6 +169,13 @@ declare type reviewCooldownEvent = {
 		name?: string;
 		type?: string;
 	};
+	sourcePet?: {
+		guid?: number;
+		icon?: string;
+		id?: number;
+		name?: string;
+		type?: string;
+	};
 	target?: {
 		guid?: number;
 		icon?: string;
@@ -178,11 +189,20 @@ declare type reviewCooldownEvent = {
 		name?: string;
 		type?: number;
 	};
+	extraAbility?: {
+		abilityIcon?: string;
+		guid?: number;
+		name?: string;
+		type?: number;
+	};
+	targetInstance?: number;
+	targetMarker?: number;
 	fight?: number;
 	cooldown: {
 		spellID: number;
 		groups: reviewCooldownGroupID[];
 		primaryGroup: reviewCooldownGroupID;
+		interruptSuccessful?: boolean;
 	};
 }
 

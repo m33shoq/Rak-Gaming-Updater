@@ -33,10 +33,12 @@ export const useReviewsStore = defineStore('Reviews', () => {
 	const fightEventErrors = ref<Record<string, string | null>>({});
 	const savedFightCooldowns = ref<Record<string, reviewFightCooldownData>>({});
 	const fightCooldownCachedAt = ref<Record<string, number>>({});
+	const fightCooldownCacheEpoch = ref(0);
 	const fightCooldownRequests = ref<Record<string, boolean>>({});
 	const fightCooldownErrors = ref<Record<string, string | null>>({});
 	const fightEventPromises = new Map<string, Promise<fightEvent[]>>();
 	const fightCooldownPromises = new Map<string, Promise<reviewFightCooldownData>>();
+	let fightCooldownRequestEpoch = 0;
 
 	const getSelectedVideoId = computed(() => selectedVideoInfo.value?.id || null);
 
@@ -221,6 +223,7 @@ export const useReviewsStore = defineStore('Reviews', () => {
 
 		fightCooldownRequests.value[cacheKey] = true;
 		fightCooldownErrors.value[cacheKey] = null;
+		const requestEpoch = fightCooldownRequestEpoch;
 		const request = (async () => {
 			try {
 				const response = await ipc.invoke(
@@ -235,24 +238,31 @@ export const useReviewsStore = defineStore('Reviews', () => {
 					cooldownGroups: response.cooldownGroups || [],
 					fightCooldownEvents: response.fightCooldownEvents || [],
 				};
+				if (requestEpoch !== fightCooldownRequestEpoch) {
+					return savedFightCooldowns.value[cacheKey] || data;
+				}
 				savedFightCooldowns.value[cacheKey] = data;
 				fightCooldownCachedAt.value[cacheKey] = Date.now();
 				return data;
 			} catch (error) {
 				const message = error instanceof Error ? error.message : 'Failed to request fight cooldowns';
-				fightCooldownErrors.value[cacheKey] = message;
+				if (requestEpoch === fightCooldownRequestEpoch) {
+					fightCooldownErrors.value[cacheKey] = message;
+				}
 				log.error('Failed to request WCL fight cooldowns', { reportCode, fightID, error });
 				return savedFightCooldowns.value[cacheKey] || {
 					catalogVersion: 0,
 					cooldownGroups: [],
 					fightCooldownEvents: [],
 				};
-			} finally {
-				fightCooldownRequests.value[cacheKey] = false;
-				fightCooldownPromises.delete(cacheKey);
 			}
 		})();
 		fightCooldownPromises.set(cacheKey, request);
+		void request.finally(() => {
+			if (fightCooldownPromises.get(cacheKey) !== request) return;
+			fightCooldownRequests.value[cacheKey] = false;
+			fightCooldownPromises.delete(cacheKey);
+		});
 		return request;
 	}
 
@@ -352,6 +362,24 @@ export const useReviewsStore = defineStore('Reviews', () => {
 		}
 	});
 
+	ipc.on(IPC_EVENTS.SOCKET_CONNECTED_CALLBACK, () => {
+		// A reconnect can mean the server was deployed with a new cooldown
+		// catalog. Keep current data visible, but make every entry stale so
+		// active comparison pulls and the selected pull refresh immediately.
+		fightCooldownCachedAt.value = {};
+		fightCooldownRequests.value = {};
+		fightCooldownErrors.value = {};
+		fightCooldownRequestEpoch++;
+		fightCooldownPromises.clear();
+		fightCooldownCacheEpoch.value++;
+
+		const reportCode = selectedReportCode.value;
+		const fightID = selectedFightID.value;
+		if (!reportCode || !fightID) return;
+
+		void ensureFightCooldowns(reportCode, fightID, true);
+	});
+
 	return {
 		youtubeVideoInfo,
 		selectedVideoInfo,
@@ -362,6 +390,7 @@ export const useReviewsStore = defineStore('Reviews', () => {
 		selectedFightID,
 		savedFightEvents,
 		savedFightCooldowns,
+		fightCooldownCacheEpoch,
 		videoList,
 
 		getReports,

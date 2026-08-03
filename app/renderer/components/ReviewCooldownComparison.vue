@@ -2,6 +2,7 @@
 import log from 'electron-log/renderer';
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 
+import ReviewCooldownTarget from '@/renderer/components/ReviewCooldownTarget.vue';
 import { useReviewsStore } from '@/renderer/store/ReviewsStore';
 
 const props = defineProps<{
@@ -669,9 +670,16 @@ async function loadPulls(pulls: fightDetails[]) {
 	}
 	await Promise.all([worker(), worker(), worker()]);
 }
-watch(() => selectedPulls.value.map(fight => fight.id).join(','), () => {
-	void loadPulls(selectedPulls.value);
-}, { immediate: true });
+watch(
+	[
+		() => selectedPulls.value.map(fight => fight.id).join(','),
+		() => reviewsStore.fightCooldownCacheEpoch,
+	],
+	() => {
+		void loadPulls(selectedPulls.value);
+	},
+	{ immediate: true },
+);
 
 async function retryPull(fightID: number) {
 	const reportCode = anchorReportCode.value;
@@ -868,7 +876,7 @@ function getClassColor(className?: string) {
 }
 function getBorderColor(event: reviewCooldownEvent) {
 	const group = event.cooldown.groups.find(groupID => enabledGroupIDSet.value.has(groupID)) || event.cooldown.primaryGroup;
-	return { raid_cd: 'border-cyan-400', personals: 'border-violet-400', externals: 'border-pink-400', utility: 'border-blue-400', movement: 'border-emerald-400', dps_cd: 'border-amber-400', items: 'border-slate-300', aoe_cc: 'border-orange-400', single_cc: 'border-red-400' }[group];
+	return { raid_cd: 'border-cyan-400', personals: 'border-violet-400', externals: 'border-pink-400', utility: 'border-blue-400', movement: 'border-emerald-400', dps_cd: 'border-amber-400', items: 'border-slate-300', interrupts: 'border-lime-400', aoe_cc: 'border-orange-400', single_cc: 'border-red-400' }[group];
 }
 
 let tooltipFrame: number | null = null;
@@ -1202,8 +1210,9 @@ onBeforeUnmount(() => {
 								<span class="pointer-events-none absolute left-[calc(50%+3px)] top-0 whitespace-nowrap bg-slate-950/75 px-1 text-[9px] font-semibold text-sky-300">{{ formatPhaseLabel(phase) }}</span>
 							</button>
 							<button v-for="death in row.deaths" :key="death.key" type="button" class="absolute inset-y-0 z-[6] min-w-[3px] border-x border-red-400/70 bg-red-800/45 hover:z-20 hover:bg-red-700/65 focus:outline-none" :style="{ left: `${death.percent * 100}%`, width: `${Math.max(0, death.endPercent - death.percent) * 100}%`, backgroundImage: 'repeating-linear-gradient(135deg, rgba(248,113,113,.22) 0, rgba(248,113,113,.22) 4px, transparent 4px, transparent 8px)' }" @click.stop="emit('seekPull', row.fight.id, Math.max(0, death.timestampSeconds - 10))" @contextmenu.prevent.stop="emit('openDeath', row.fight.id, death.id)" @mouseenter="showDeath(row, death, $event)" @mousemove="updateTooltip" @mouseleave="hideDetail"></button>
-							<button v-for="cooldown in row.cooldowns" :key="cooldown.key" type="button" class="absolute z-20 size-6 -translate-x-1/2 overflow-hidden rounded-none border bg-black shadow-[0_1px_4px_rgba(0,0,0,.45)] transition-none hover:z-30 hover:scale-105 focus:z-30 focus:outline-none focus:ring-1 focus:ring-white/70" :class="getBorderColor(cooldown.event)" :style="{ left: `clamp(12px, ${cooldown.percent * 100}%, calc(100% - 12px))`, top: `${18 + cooldown.track * 27}px` }" @click.stop="emit('seekPull', row.fight.id, cooldown.timestampSeconds)" @mouseenter="showCooldown(row, cooldown, $event)" @mousemove="updateTooltip" @mouseleave="hideDetail">
+							<button v-for="cooldown in row.cooldowns" :key="cooldown.key" type="button" class="absolute z-20 size-6 -translate-x-1/2 overflow-hidden rounded-none border bg-black shadow-[0_1px_4px_rgba(0,0,0,.45)] transition-none hover:z-30 hover:scale-105 focus:z-30 focus:outline-none focus:ring-1 focus:ring-white/70" :class="getBorderColor(cooldown.event)" :style="{ left: `clamp(12px, ${cooldown.percent * 100}%, calc(100% - 12px))`, top: `${18 + cooldown.track * 27}px` }" :aria-label="`${cooldown.event.source?.name || 'Unknown player'} used ${cooldown.event.ability?.name || `Spell ${cooldown.event.cooldown.spellID}`}${cooldown.event.cooldown.interruptSuccessful == null ? '' : cooldown.event.cooldown.interruptSuccessful ? ', interrupt successful' : ', no interrupt recorded'}`" @click.stop="emit('seekPull', row.fight.id, cooldown.timestampSeconds)" @mouseenter="showCooldown(row, cooldown, $event)" @mousemove="updateTooltip" @mouseleave="hideDetail">
 								<img v-if="cooldown.event.ability?.abilityIcon" :src="getSpellIconURL(cooldown.event.ability.abilityIcon)" alt="" class="size-full" draggable="false" /><span v-else class="flex size-full items-center justify-center text-[10px] text-white">?</span>
+								<span v-if="cooldown.event.cooldown.interruptSuccessful != null" class="pointer-events-none absolute bottom-0 right-0 flex size-3 items-center justify-center border-l border-t border-black/70 text-[9px] font-black leading-none text-white" :class="cooldown.event.cooldown.interruptSuccessful ? 'bg-emerald-600' : 'bg-red-700'">{{ cooldown.event.cooldown.interruptSuccessful ? '✓' : '×' }}</span>
 							</button>
 							<div v-if="row.isAligned && timelineHover.visible" class="pointer-events-none absolute inset-y-0 z-40 w-px bg-white/55" :style="{ left: `${timelineHover.percent * 100}%` }"></div>
 							<div v-if="!row.isAligned" class="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/15 text-[10px] font-medium text-neutral-500">{{ alignmentPhaseName }} not reached</div>
@@ -1236,9 +1245,13 @@ onBeforeUnmount(() => {
 		<Teleport to="body">
 			<div v-if="detailTooltip?.kind === 'cooldown'" class="pointer-events-none fixed z-[999] w-max max-w-80 -translate-x-1/2 -translate-y-full rounded-md border border-neutral-500/60 bg-black/90 px-3 py-2 text-xs text-white shadow-xl" :style="{ left: `${detailTooltip.x}px`, top: `${detailTooltip.y}px` }">
 				<div class="flex items-center gap-2"><img v-if="detailTooltip.marker.event.ability?.abilityIcon" :src="getSpellIconURL(detailTooltip.marker.event.ability.abilityIcon)" alt="" class="size-8 rounded-none" />
-					<div><div class="font-semibold">{{ detailTooltip.marker.event.ability?.name || `Spell ${detailTooltip.marker.event.cooldown.spellID}` }}</div><div><span :class="getClassColor(detailTooltip.marker.event.source?.type)">{{ detailTooltip.marker.event.source?.name }}</span> at {{ formatCooldownTime(detailTooltip.row, detailTooltip.marker.timestampSeconds) }}</div></div>
+					<div><div class="font-semibold">{{ detailTooltip.marker.event.ability?.name || `Spell ${detailTooltip.marker.event.cooldown.spellID}` }}</div><div><span :class="getClassColor(detailTooltip.marker.event.source?.type)">{{ detailTooltip.marker.event.source?.name }}</span><span v-if="detailTooltip.marker.event.sourcePet?.name" class="text-neutral-400"> via {{ detailTooltip.marker.event.sourcePet.name }}</span> at {{ formatCooldownTime(detailTooltip.row, detailTooltip.marker.timestampSeconds) }}</div></div>
 				</div>
-				<div v-if="detailTooltip.marker.event.target?.name && detailTooltip.marker.event.target.name.toLowerCase() !== 'environment'" class="mt-1 text-[11px] text-neutral-300">Target: <span :class="getClassColor(detailTooltip.marker.event.target.type)">{{ detailTooltip.marker.event.target.name }}</span></div>
+				<ReviewCooldownTarget v-if="detailTooltip.marker.event.target" :target="detailTooltip.marker.event.target" :target-marker="detailTooltip.marker.event.targetMarker" :target-instance="detailTooltip.marker.event.targetInstance" />
+				<div v-if="detailTooltip.marker.event.cooldown.interruptSuccessful != null" class="mt-1 text-[11px] font-medium" :class="detailTooltip.marker.event.cooldown.interruptSuccessful ? 'text-emerald-300' : 'text-red-300'">
+					<template v-if="detailTooltip.marker.event.cooldown.interruptSuccessful">Interrupted {{ detailTooltip.marker.event.extraAbility?.name || 'a spell' }}</template>
+					<template v-else>No interrupt recorded</template>
+				</div>
 				<div class="mt-1 text-[10px] text-neutral-400">Pull #{{ detailTooltip.row.pullNumber }} · Click to open and seek</div>
 			</div>
 			<div v-else-if="detailTooltip?.kind === 'death'" class="pointer-events-none fixed z-[999] w-max max-w-80 -translate-x-1/2 -translate-y-full rounded-md border border-red-500/60 bg-black/90 px-3 py-2 text-xs text-white shadow-xl" :style="{ left: `${detailTooltip.x}px`, top: `${detailTooltip.y}px` }">
