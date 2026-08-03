@@ -48,10 +48,12 @@
 		],
 		"win": {
 			"target": "nsis",
-			"icon": "./app/assets/taskbaricon.png"
+			"icon": "./app/assets/taskbaricon.png",
+			"artifactName": "Rak-Gaming-Updater-Setup-${version}.${ext}"
 		},
 		"nsis": {
-			"deleteAppDataOnUninstall": true
+			"deleteAppDataOnUninstall": true,
+			"disableWebInstaller": true
 		},
 		"linux": {
 			"target": [
