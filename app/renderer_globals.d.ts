@@ -148,7 +148,6 @@ declare type reviewCooldownGroupID =
 	| 'utility'
 	| 'movement'
 	| 'dps_cd'
-	| 'items'
 	| 'interrupts'
 	| 'aoe_cc'
 	| 'single_cc';

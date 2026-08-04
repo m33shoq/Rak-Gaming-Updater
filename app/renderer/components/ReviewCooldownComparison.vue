@@ -88,6 +88,10 @@ const TANK_SPECS = new Set(['blood', 'brewmaster', 'guardian', 'protection', 've
 const HEALER_SPECS = new Set(['discipline', 'holy', 'mistweaver', 'preservation', 'restoration']);
 const PLAYER_SELECTION_STORE_KEY = 'reviewCooldownComparisonPlayerSelections';
 const COMPARISON_PREFERENCES_STORE_KEY = 'reviewCooldownComparisonPreferences';
+const INITIAL_PULL_LIMIT = 8;
+const PULL_LOAD_BATCH_SIZE = 8;
+const AUTO_LOAD_THRESHOLD_PX = 160;
+const AUTO_LOAD_THROTTLE_MS = 250;
 
 const reviewsStore = useReviewsStore();
 const anchorReportCode = ref(reviewsStore.selectedReportCode);
@@ -97,7 +101,7 @@ const storedPlayerSelections = ref<StoredPlayerSelections>({});
 const playerSelectionsLoaded = ref(false);
 const storedAlignmentPhaseKeys = ref<Record<string, string>>({});
 const comparisonPreferencesLoaded = ref(false);
-const visiblePullLimit = ref(8);
+const visiblePullLimit = ref(INITIAL_PULL_LIMIT);
 const sortMode = ref<SortMode>('chronological');
 const sortDirection = ref<SortDirection>('desc');
 const alignmentPhaseKey = ref('');
@@ -109,6 +113,8 @@ const isPlayerPickerOpen = ref(false);
 const scroller = ref<HTMLElement | null>(null);
 const scrollbarTrack = ref<HTMLElement | null>(null);
 const scrollbar = ref({ visible: false, active: false, thumbHeight: 0, thumbTop: 0, maxScroll: 0 });
+let autoLoadPending = false;
+let lastAutoLoadAt = Number.NEGATIVE_INFINITY;
 let pendingPlayerRosterValidationFightID: number | null = reviewsStore.selectedFightID;
 const enabledGroupIDSet = computed(() => new Set(props.enabledGroupIds));
 const excludedSpellIDSet = computed(() => new Set(props.excludedSpellIds));
@@ -179,7 +185,7 @@ watch(
 
 		anchorReportCode.value = reportCode;
 		anchorFightID.value = fightID;
-		visiblePullLimit.value = 8;
+		resetVisiblePulls();
 		alignmentPhaseKey.value = '';
 		timelineHover.value.visible = false;
 		hideDetail();
@@ -363,7 +369,7 @@ watch(
 	{ immediate: true, flush: 'post' },
 );
 watch(selectedPlayerID, () => {
-	visiblePullLimit.value = 8;
+	resetVisiblePulls();
 	isPlayerPickerOpen.value = false;
 });
 watch([sortMode, sortDirection], persistComparisonPreferences);
@@ -876,7 +882,7 @@ function getClassColor(className?: string) {
 }
 function getBorderColor(event: reviewCooldownEvent) {
 	const group = event.cooldown.groups.find(groupID => enabledGroupIDSet.value.has(groupID)) || event.cooldown.primaryGroup;
-	return { raid_cd: 'border-cyan-400', personals: 'border-violet-400', externals: 'border-pink-400', utility: 'border-blue-400', movement: 'border-emerald-400', dps_cd: 'border-amber-400', items: 'border-slate-300', interrupts: 'border-lime-400', aoe_cc: 'border-orange-400', single_cc: 'border-red-400' }[group];
+	return { raid_cd: 'border-cyan-400', personals: 'border-violet-400', externals: 'border-pink-400', utility: 'border-blue-400', movement: 'border-emerald-400', dps_cd: 'border-amber-400', interrupts: 'border-lime-400', aoe_cc: 'border-orange-400', single_cc: 'border-red-400' }[group];
 }
 
 let tooltipFrame: number | null = null;
@@ -987,6 +993,63 @@ function isPullLoading(fightID: number) {
 let scrollbarTimer: number | null = null;
 let resizeObserver: ResizeObserver | null = null;
 let scrollbarDrag: { pointerID: number; startY: number; startTop: number } | null = null;
+type PullScrollAnchor = { fightID: string; offsetTop: number };
+
+function resetVisiblePulls() {
+	visiblePullLimit.value = INITIAL_PULL_LIMIT;
+	lastAutoLoadAt = Number.NEGATIVE_INFINITY;
+	void nextTick(() => {
+		if (scroller.value) scroller.value.scrollTop = 0;
+		updateScrollbar();
+	});
+}
+
+function getPullScrollAnchor(viewport: HTMLElement): PullScrollAnchor | null {
+	const viewportTop = viewport.getBoundingClientRect().top;
+	const row = [...viewport.querySelectorAll<HTMLElement>('[data-comparison-pull-id]')]
+		.find(element => element.getBoundingClientRect().bottom > viewportTop + 1);
+	const fightID = row?.dataset.comparisonPullId;
+	if (!row || !fightID) return null;
+	return {
+		fightID,
+		offsetTop: row.getBoundingClientRect().top - viewportTop,
+	};
+}
+
+function restorePullScrollAnchor(viewport: HTMLElement, anchor: PullScrollAnchor | null) {
+	if (!anchor) return;
+	const row = viewport.querySelector<HTMLElement>(`[data-comparison-pull-id="${anchor.fightID}"]`);
+	if (!row) return;
+	const viewportTop = viewport.getBoundingClientRect().top;
+	viewport.scrollTop += row.getBoundingClientRect().top - viewportTop - anchor.offsetTop;
+}
+
+async function loadNextPullBatch() {
+	if (autoLoadPending || !hasMorePulls.value) return;
+	const viewport = scroller.value;
+	const anchor = viewport ? getPullScrollAnchor(viewport) : null;
+	autoLoadPending = true;
+	visiblePullLimit.value = Math.min(
+		visiblePullLimit.value + PULL_LOAD_BATCH_SIZE,
+		eligiblePulls.value.length,
+	);
+	await nextTick();
+	if (viewport) restorePullScrollAnchor(viewport, anchor);
+	autoLoadPending = false;
+	updateScrollbar();
+}
+
+function tryAutoLoadPulls() {
+	const viewport = scroller.value;
+	if (!viewport || autoLoadPending || !hasMorePulls.value) return;
+	const distanceFromBottom = viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop;
+	if (distanceFromBottom > AUTO_LOAD_THRESHOLD_PX) return;
+	const now = performance.now();
+	if (now - lastAutoLoadAt < AUTO_LOAD_THROTTLE_MS) return;
+	lastAutoLoadAt = now;
+	void loadNextPullBatch();
+}
+
 function updateScrollbar() {
 	const viewport = scroller.value;
 	const track = scrollbarTrack.value;
@@ -1004,6 +1067,10 @@ function onScroll() {
 	scrollbar.value.active = true;
 	if (scrollbarTimer != null) clearTimeout(scrollbarTimer);
 	scrollbarTimer = window.setTimeout(() => { scrollbar.value.active = false; }, 900);
+	tryAutoLoadPulls();
+}
+function onComparisonWheel(event: WheelEvent) {
+	if (event.deltaY > 0) tryAutoLoadPulls();
 }
 function onTrackPointer(event: PointerEvent) {
 	const viewport = scroller.value;
@@ -1151,7 +1218,6 @@ onBeforeUnmount(() => {
 			<div class="ml-auto flex min-w-0 items-center gap-1.5">
 				<span class="hidden rounded-sm border border-neutral-500/25 bg-neutral-500/[0.07] px-2 py-1 tabular-nums text-neutral-500 2xl:inline-flex">{{ selectedPulls.length }}/{{ eligiblePulls.length }} pulls · {{ visibleCooldownCount }} casts · {{ visibleDeathCount }} deaths</span>
 				<span class="rounded-sm border border-neutral-500/25 bg-neutral-500/[0.07] px-2 py-1 tabular-nums text-neutral-500 2xl:hidden">{{ selectedPulls.length }}/{{ eligiblePulls.length }}</span>
-				<button v-if="hasMorePulls" type="button" class="h-7 rounded-sm border border-neutral-500/30 px-2 hover:border-sky-500/60 hover:bg-sky-500/10" @click="visiblePullLimit += 8"><span class="hidden xl:inline">Load 8 older</span><span class="xl:hidden">+8</span></button>
 				<button v-if="hasMorePulls" type="button" class="h-7 rounded-sm px-2 text-neutral-500 hover:bg-neutral-500/10 hover:text-inherit" @click="visiblePullLimit = eligiblePulls.length">Load all</button>
 			</div>
 		</div>
@@ -1177,8 +1243,8 @@ onBeforeUnmount(() => {
 				</div>
 			</div>
 			<div class="relative min-h-0 flex-1">
-				<div id="review-cooldown-comparison-scroll-viewport" ref="scroller" class="comparison-scroll h-full min-h-0 overflow-x-hidden overflow-y-auto" @scroll="onScroll">
-					<div v-for="(row, rowIndex) in rows" :key="row.fight.id" class="flex min-w-0 border-b border-neutral-500/20" :class="rowIndex % 2 ? 'bg-neutral-500/[0.07]' : 'bg-transparent'" :style="{ height: `${row.height}px` }">
+				<div id="review-cooldown-comparison-scroll-viewport" ref="scroller" class="comparison-scroll h-full min-h-0 overflow-x-hidden overflow-y-auto" @scroll="onScroll" @wheel.passive="onComparisonWheel">
+					<div v-for="(row, rowIndex) in rows" :key="row.fight.id" :data-comparison-pull-id="row.fight.id" class="flex min-w-0 border-b border-neutral-500/20" :class="rowIndex % 2 ? 'bg-neutral-500/[0.07]' : 'bg-transparent'" :style="{ height: `${row.height}px` }">
 						<div class="relative z-20 flex shrink-0 items-center gap-1.5 border-r border-neutral-500/25 bg-light4/95 px-2 shadow-[3px_0_7px_rgba(0,0,0,0.1)] dark:bg-dark4/95" style="width: var(--review-timeline-sidebar-width);">
 							<span class="pointer-events-none absolute inset-y-1 left-0 z-20 w-1 bg-sky-500/55" :class="{ 'bg-amber-400/80': row.fight.id === anchorFightID }"></span>
 							<button

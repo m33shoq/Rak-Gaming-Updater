@@ -516,7 +516,6 @@ function getGroupIndicatorColor(groupID: reviewCooldownGroupID) {
 		case 'utility': return 'bg-blue-400';
 		case 'movement': return 'bg-emerald-400';
 		case 'dps_cd': return 'bg-amber-400';
-		case 'items': return 'bg-slate-300';
 		case 'interrupts': return 'bg-lime-400';
 		case 'aoe_cc': return 'bg-orange-400';
 		case 'single_cc': return 'bg-red-400';
@@ -837,7 +836,6 @@ function getGroupBorderColor(groupID: reviewCooldownGroupID) {
 		case 'utility': return 'border-blue-400';
 		case 'movement': return 'border-emerald-400';
 		case 'dps_cd': return 'border-amber-400';
-		case 'items': return 'border-slate-300';
 		case 'interrupts': return 'border-lime-400';
 		case 'aoe_cc': return 'border-orange-400';
 		case 'single_cc': return 'border-red-400';
