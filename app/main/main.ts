@@ -74,7 +74,7 @@ let shutdownInProgress = false;
 
 let updatedRecheckTimer: NodeJS.Timeout | null = null;
 let rechekTries = 0;
-let wasNotificationShown = false;
+let lastQueuedUpdateVersion: string | null = null;
 
 const TEMP_DIR = path.join(app.getPath('temp'), app.getName()); // Temporary directory for unzipped/zipped files
 
@@ -793,29 +793,36 @@ autoUpdater.on('update-available', (info) => {
 		log.info('Recheck timer cleared');
 	}
 
-	if (!wasNotificationShown) {
-		new Notification({
-			title: 'Update available',
-			body: `Rak Gaming Updater ${info.version} is avalilable.`,
-			icon: notificationIconImage,
-		}).show();
-
-		const dialogOpts = {
-			buttons: ['Update', 'Later'],
-			title: 'Rak Gaming Updater',
-			message: info.releaseName || 'Update Available',
-			detail: `A new version ${info.version} is available. Do you want to update now?`,
-			noLink: true,
-			modal: true,
-			parent: mainWindow,
-		} as Electron.MessageBoxOptions;
-
-		queueDialog(dialogOpts, ({ response }) => {
-			if (response === 0) {
-				startAppUpdateDownload(info.version);
-			}
-		});
+	if (lastQueuedUpdateVersion === info.version) {
+		log.info(`Update dialog for version ${info.version} was already queued; skipping duplicate`);
+		return;
 	}
+
+	// Record the version before queueing so concurrent update checks cannot add
+	// another dialog for the same release while the window is hidden.
+	lastQueuedUpdateVersion = info.version;
+
+	new Notification({
+		title: 'Update available',
+		body: `Rak Gaming Updater ${info.version} is available.`,
+		icon: notificationIconImage,
+	}).show();
+
+	const dialogOpts = {
+		buttons: ['Update', 'Later'],
+		title: 'Rak Gaming Updater',
+		message: info.releaseName || 'Update Available',
+		detail: `A new version ${info.version} is available. Do you want to update now?`,
+		noLink: true,
+		modal: true,
+		parent: mainWindow,
+	} as Electron.MessageBoxOptions;
+
+	queueDialog(dialogOpts, ({ response }) => {
+		if (response === 0) {
+			startAppUpdateDownload(info.version);
+		}
+	});
 });
 
 autoUpdater.on('update-not-available', () => {
