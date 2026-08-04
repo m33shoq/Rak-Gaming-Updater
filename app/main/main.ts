@@ -50,7 +50,7 @@ import {
 	BACKUP_INTERVAL_ONE_WEK,
 } from '@/constants'
 
-import { IPC_EVENTS, SOCKET_EVENTS } from '@/events';
+import { IPC_EVENTS, SOCKET_EVENTS, type AppUpdateDownloadState } from '@/events';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -205,6 +205,46 @@ function queueDialog(dialogOptions: Electron.MessageBoxOptions, onSuccessCallbac
 
 let mainWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
+
+let appUpdateDownloadState: AppUpdateDownloadState | null = null;
+
+function publishAppUpdateDownloadState(state: AppUpdateDownloadState) {
+	appUpdateDownloadState = state;
+	mainWindow?.webContents.send(IPC_EVENTS.APP_UPDATE_DOWNLOAD_STATE_CALLBACK, state);
+}
+
+function failAppUpdateDownload(error: unknown) {
+	if (appUpdateDownloadState?.status !== 'downloading') return;
+
+	const errorMessage = error instanceof Error ? error.message : String(error);
+	publishAppUpdateDownloadState({
+		...appUpdateDownloadState,
+		status: 'error',
+		error: errorMessage,
+	});
+	mainWindow?.setProgressBar(-1);
+}
+
+function startAppUpdateDownload(version: string) {
+	publishAppUpdateDownloadState({
+		status: 'downloading',
+		version,
+		percent: 0,
+		bytesPerSecond: 0,
+		transferred: 0,
+		total: 0,
+	});
+
+	void (async () => {
+		try {
+			await autoUpdater.downloadUpdate();
+		} catch (error) {
+			failAppUpdateDownload(error);
+		}
+	})();
+}
+
+ipcMain.handle(IPC_EVENTS.APP_UPDATE_DOWNLOAD_STATE_GET, () => appUpdateDownloadState);
 
 const obsService = new ObsWebsocketService({
 	onStatus: (status) => {
@@ -772,7 +812,7 @@ autoUpdater.on('update-available', (info) => {
 
 		queueDialog(dialogOpts, ({ response }) => {
 			if (response === 0) {
-				autoUpdater.downloadUpdate();
+				startAppUpdateDownload(info.version);
 			}
 		});
 	}
@@ -784,9 +824,12 @@ autoUpdater.on('update-not-available', () => {
 
 autoUpdater.on('error', (err) => {
 	log.info('Error in auto-updater. ' + err);
+	failAppUpdateDownload(err);
 });
 
 autoUpdater.on('download-progress', (progress) => {
+	if (appUpdateDownloadState?.status !== 'downloading') return;
+
 	// Convert bytes per second to megabytes per second and format to 2 decimal places
 	const speedInMbps = (progress.bytesPerSecond / (1024 * 1024)).toFixed(2);
 	// Convert transferred and total bytes to megabytes and format to 2 decimal places
@@ -796,12 +839,29 @@ autoUpdater.on('download-progress', (progress) => {
 	const percentFormatted = progress.percent.toFixed(2);
 
 	log.info(`Download speed: ${speedInMbps} MB/s - Downloaded ${percentFormatted}% (${transferredInMB}/${totalInMB} MB)`);
-	mainWindow?.setProgressBar(progress.percent / 100);
+	const percent = Math.min(100, Math.max(0, Number.isFinite(progress.percent) ? progress.percent : 0));
+	publishAppUpdateDownloadState({
+		status: 'downloading',
+		version: appUpdateDownloadState?.version || '',
+		percent,
+		bytesPerSecond: progress.bytesPerSecond,
+		transferred: progress.transferred,
+		total: progress.total,
+	});
+	mainWindow?.setProgressBar(percent / 100);
 });
 
 let updatePending = false
 autoUpdater.on('update-downloaded', () => {
 	mainWindow?.setProgressBar(-1);
+	publishAppUpdateDownloadState({
+		status: 'downloaded',
+		version: appUpdateDownloadState?.version || '',
+		percent: 100,
+		bytesPerSecond: 0,
+		transferred: appUpdateDownloadState?.total || appUpdateDownloadState?.transferred || 0,
+		total: appUpdateDownloadState?.total || 0,
+	});
 
 	updatePending = true;
 

@@ -1,3 +1,13 @@
+export type AppUpdateDownloadState = {
+	status: 'downloading' | 'downloaded' | 'error';
+	version: string;
+	percent: number;
+	bytesPerSecond: number;
+	transferred: number;
+	total: number;
+	error?: string;
+};
+
 // IPC Events
 export const IPC_EVENTS = {
 	APP_GET_LANGUAGE: 'get-language',
@@ -7,6 +17,8 @@ export const IPC_EVENTS = {
 	APP_UNCAUGHT_EXCEPTION_CALLBACK: 'uncaught-exception',
 	APP_UNHANDLED_REJECTION_CALLBACK: 'unhandled-rejection',
 	APP_OPEN_LOGS_FOLDER: 'open-logs-folder',
+	APP_UPDATE_DOWNLOAD_STATE_GET: 'app-update-download-state-get',
+	APP_UPDATE_DOWNLOAD_STATE_CALLBACK: 'app-update-download-state',
 
 
 	LOGIN_SEND_CREDENTIALS: 'login',

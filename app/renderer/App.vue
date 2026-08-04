@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import log from 'electron-log/renderer'
-import { IPC_EVENTS } from '@/events';
+import { IPC_EVENTS, type AppUpdateDownloadState } from '@/events';
 import { ref } from 'vue';
 
 import icon from '@/assets/icon.png';
@@ -16,6 +16,7 @@ import TabReviews from '@/renderer/components/TabReviews.vue';
 import TabObsIntegration from '@/renderer/components/TabObsIntegration.vue';
 import WinButtons from '@/renderer/components/WinButtons.vue';
 import ErrorNotification from '@/renderer/components/ErrorNotification.vue';
+import AppUpdateProgress from '@/renderer/components/AppUpdateProgress.vue';
 
 import { useLoginStore } from '@/renderer/store/LoginStore';
 import { useReviewsStore } from '@/renderer/store/ReviewsStore';
@@ -38,6 +39,23 @@ const darkMode = getElectronStoreRef('darkMode', true);
 const { appVersionInfo } = useAppVersion();
 
 const selectedTab = ref('main');
+const appUpdateDownloadState = ref<AppUpdateDownloadState | null>(null);
+
+let receivedAppUpdateStateCallback = false;
+useIpcRendererOn(ipc, IPC_EVENTS.APP_UPDATE_DOWNLOAD_STATE_CALLBACK, (event, state: AppUpdateDownloadState) => {
+	receivedAppUpdateStateCallback = true;
+	appUpdateDownloadState.value = state;
+});
+
+void ipc.invoke(IPC_EVENTS.APP_UPDATE_DOWNLOAD_STATE_GET)
+	.then((state: AppUpdateDownloadState | null) => {
+		if (!receivedAppUpdateStateCallback) {
+			appUpdateDownloadState.value = state;
+		}
+	})
+	.catch((error) => {
+		log.warn('Failed to get app update download state', error);
+	});
 
 const tabs = [
 	{ name: 'main', svg: 'home', component: TabUpdater },
@@ -141,6 +159,7 @@ useIpcRendererOn(ipc, IPC_EVENTS.APP_DEEP_LINK_CALLBACK, (event, payload: AppDee
 			</div>
 			<WinButtons class="w-22" />
 		</div>
+		<AppUpdateProgress v-if="appUpdateDownloadState" :state="appUpdateDownloadState" />
 		<div class="flex-grow overflow-hidden">
 			<transition name="fade">
 				<ErrorNotification v-if="errorMessage" :label="errorMessage" />

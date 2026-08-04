@@ -8,6 +8,13 @@
 	"updater.autoupdate": "Оновлювати автоматично",
 	"updater.refresh": "Оновити",
 	"updater.nouploadedfiles": "Немає файлів для завантаження",
+	"appupdate.downloading": "Завантаження оновлення застосунку",
+	"appupdate.downloaded": "Оновлення застосунку завантажено",
+	"appupdate.failed": "Не вдалося завантажити оновлення застосунку",
+	"appupdate.version": "Версія {version}",
+	"appupdate.preparing": "Підготовка завантаження...",
+	"appupdate.installing": "Оновлення незабаром буде встановлено...",
+	"appupdate.unknown_error": "Невідома помилка завантаження",
 	"downloadreason.nopathset": "Шлях WoW не встановлено",
 	"downloadreason.install": "Встановити",
 	"downloadreason.symlink": "Симлінк",
@@ -83,4 +90,3 @@
 	"backups.status.deleted": "Старий бекап видалено",
 	"backups.openbackupsfolder": "Відкрити папку з бекапами"
 }
-
