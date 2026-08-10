@@ -87,6 +87,7 @@ export const IPC_EVENTS = {
 	WCL_REQUEST_REPORT_DATA: 'wcl-request-report-data',
 	WCL_REQUEST_FIGHT_EVENTS: 'wcl-request-fight-events',
 	WCL_REQUEST_FIGHT_COOLDOWNS: 'wcl-request-fight-cooldowns',
+	WCL_REQUEST_FIGHT_BOSS_CASTS: 'wcl-request-fight-boss-casts',
 	WCL_OPEN_FIGHT: 'open-wcl-fight',
 	WCL_OPEN_DEATH: 'open-wcl-death',
 };
@@ -128,6 +129,7 @@ export const SOCKET_EVENTS = {
 	WCL_REQUEST_REPORT_DATA: 'wcl-report-data',
 	WCL_REQUEST_FIGHT_EVENTS: 'wcl-fight-events',
 	WCL_REQUEST_FIGHT_COOLDOWNS: 'wcl-fight-cooldowns',
+	WCL_REQUEST_FIGHT_BOSS_CASTS: 'wcl-fight-boss-casts',
 
 	UPDATER_DOWNLOAD_REQUEST: 'updater-download-request',
 	UPDATER_DOWNLOAD_CHUNK: 'updater-download-chunk',

@@ -4,10 +4,13 @@ import { createPinia } from 'pinia'
 import { createI18n } from 'vue-i18n'
 
 import App from '@/renderer/App.vue';
+import { installWowheadTooltipEnhancements } from '@/renderer/utils/wowheadTooltips';
 
 import "tailwindcss";
 
 const app = createApp(App);
+
+installWowheadTooltipEnhancements();
 
 import en from '@/translations/en.json';
 import ru from '@/translations/ru.json';
