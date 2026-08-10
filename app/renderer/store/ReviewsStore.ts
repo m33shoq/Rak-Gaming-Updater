@@ -7,6 +7,10 @@ import { useYoutubeVideoInfo } from '@/renderer/composables/useYoutubeVideoInfo'
 
 const TWELVE_HOURS_MS = 12 * 60 * 60 * 1000;
 const FIGHT_DATA_CACHE_TTL_MS = 30 * 60 * 1000;
+const BOSS_CAST_PREFERENCES_STORE_KEY = 'reviewBossCastVisibilityOverrides';
+const BOSS_CAST_DISPLAY_MODE_STORE_KEY = 'reviewBossCastDisplayMode';
+type BossCastVisibilityOverrides = Record<string, Record<string, boolean>>;
+type BossCastDisplayMode = 'full' | 'collapsed';
 
 export const useReviewsStore = defineStore('Reviews', () => {
 	const { youtubeVideoInfo, refreshYoutubeVideoInfo } = useYoutubeVideoInfo();
@@ -36,9 +40,20 @@ export const useReviewsStore = defineStore('Reviews', () => {
 	const fightCooldownCacheEpoch = ref(0);
 	const fightCooldownRequests = ref<Record<string, boolean>>({});
 	const fightCooldownErrors = ref<Record<string, string | null>>({});
+	const savedFightBossCasts = ref<Record<string, reviewFightBossCastData>>({});
+	const fightBossCastCachedAt = ref<Record<string, number>>({});
+	const fightBossCastCacheEpoch = ref(0);
+	const fightBossCastRequests = ref<Record<string, boolean>>({});
+	const fightBossCastErrors = ref<Record<string, string | null>>({});
+	const bossCastVisibilityOverrides = ref<BossCastVisibilityOverrides>({});
+	const bossCastDisplayMode = ref<BossCastDisplayMode>('collapsed');
+	const bossCastPreferencesLoaded = ref(false);
 	const fightEventPromises = new Map<string, Promise<fightEvent[]>>();
 	const fightCooldownPromises = new Map<string, Promise<reviewFightCooldownData>>();
+	const fightBossCastPromises = new Map<string, Promise<reviewFightBossCastData>>();
 	let fightCooldownRequestEpoch = 0;
+	let fightBossCastRequestEpoch = 0;
+	let bossCastPreferencesPromise: Promise<void> | null = null;
 
 	const getSelectedVideoId = computed(() => selectedVideoInfo.value?.id || null);
 
@@ -67,6 +82,10 @@ export const useReviewsStore = defineStore('Reviews', () => {
 		return savedFightCooldowns.value[getFightCooldownCacheKey(reportCode, fightID)] || null;
 	}
 
+	function getFightBossCastDataFor(reportCode: string, fightID: number) {
+		return savedFightBossCasts.value[getFightCooldownCacheKey(reportCode, fightID)] || null;
+	}
+
 	function isFightEventsLoadingFor(reportCode: string, fightID: number) {
 		return Boolean(fightEventRequests.value[getFightCooldownCacheKey(reportCode, fightID)]);
 	}
@@ -81,6 +100,14 @@ export const useReviewsStore = defineStore('Reviews', () => {
 
 	function getFightCooldownErrorFor(reportCode: string, fightID: number) {
 		return fightCooldownErrors.value[getFightCooldownCacheKey(reportCode, fightID)] || null;
+	}
+
+	function isFightBossCastsLoadingFor(reportCode: string, fightID: number) {
+		return Boolean(fightBossCastRequests.value[getFightCooldownCacheKey(reportCode, fightID)]);
+	}
+
+	function getFightBossCastErrorFor(reportCode: string, fightID: number) {
+		return fightBossCastErrors.value[getFightCooldownCacheKey(reportCode, fightID)] || null;
 	}
 
 	function isFresh(cachedAt: Record<string, number>, cacheKey: string) {
@@ -115,6 +142,115 @@ export const useReviewsStore = defineStore('Reviews', () => {
 		const cacheKey = getSelectedFightCooldownCacheKey.value;
 		return cacheKey ? fightCooldownErrors.value[cacheKey] || null : null;
 	});
+	const getFightBossCastData = computed<reviewFightBossCastData | null>(() => {
+		const cacheKey = getSelectedFightCooldownCacheKey.value;
+		return cacheKey ? savedFightBossCasts.value[cacheKey] || null : null;
+	});
+	const isFightBossCastsLoading = computed(() => {
+		const cacheKey = getSelectedFightCooldownCacheKey.value;
+		return cacheKey ? Boolean(fightBossCastRequests.value[cacheKey]) : false;
+	});
+	const getFightBossCastError = computed(() => {
+		const cacheKey = getSelectedFightCooldownCacheKey.value;
+		return cacheKey ? fightBossCastErrors.value[cacheKey] || null : null;
+	});
+
+	function getBossCastPreferenceScope(encounterID: number, difficulty: number) {
+		return `${encounterID}:${difficulty}`;
+	}
+
+	function parseBossCastVisibilityOverrides(value: unknown): BossCastVisibilityOverrides {
+		if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+		const parsed: BossCastVisibilityOverrides = {};
+		Object.entries(value).forEach(([scope, overrides]) => {
+			if (!scope || !overrides || typeof overrides !== 'object' || Array.isArray(overrides)) return;
+			const scopeOverrides: Record<string, boolean> = {};
+			Object.entries(overrides).forEach(([spellID, enabled]) => {
+				if (/^\d+$/.test(spellID) && typeof enabled === 'boolean') {
+					scopeOverrides[spellID] = enabled;
+				}
+			});
+			parsed[scope] = scopeOverrides;
+		});
+		return parsed;
+	}
+
+	function getPersistableBossCastVisibilityOverrides() {
+		// Values stored in a normal ref are deeply wrapped by Vue. Electron IPC cannot
+		// structured-clone those proxies, so rebuild a plain object before crossing it.
+		return parseBossCastVisibilityOverrides(bossCastVisibilityOverrides.value);
+	}
+
+	function ensureBossCastPreferencesLoaded() {
+		if (bossCastPreferencesLoaded.value) return Promise.resolve();
+		if (bossCastPreferencesPromise) return bossCastPreferencesPromise;
+		bossCastPreferencesPromise = (async () => {
+			try {
+				const [storedOverrides, storedDisplayMode] = await Promise.all([
+					store.get(BOSS_CAST_PREFERENCES_STORE_KEY),
+					store.get(BOSS_CAST_DISPLAY_MODE_STORE_KEY),
+				]);
+				bossCastVisibilityOverrides.value = parseBossCastVisibilityOverrides(
+					storedOverrides,
+				);
+				bossCastDisplayMode.value = storedDisplayMode === 'full' ? 'full' : 'collapsed';
+			} catch (error) {
+				log.error('Failed to load boss cast visibility preferences', error);
+				bossCastVisibilityOverrides.value = {};
+				bossCastDisplayMode.value = 'collapsed';
+			} finally {
+				bossCastPreferencesLoaded.value = true;
+				bossCastPreferencesPromise = null;
+			}
+		})();
+		return bossCastPreferencesPromise;
+	}
+
+	async function setBossCastDisplayMode(mode: BossCastDisplayMode) {
+		await ensureBossCastPreferencesLoaded();
+		bossCastDisplayMode.value = mode;
+		try {
+			await store.set(BOSS_CAST_DISPLAY_MODE_STORE_KEY, mode);
+		} catch (error) {
+			log.error('Failed to persist boss cast display mode', error);
+		}
+	}
+
+	function isBossCastAbilityEnabled(encounterID: number, difficulty: number, ability: reviewBossCastAbility) {
+		const scope = getBossCastPreferenceScope(encounterID, difficulty);
+		const override = bossCastVisibilityOverrides.value[scope]?.[String(ability.spellID)];
+		return typeof override === 'boolean' ? override : ability.defaultEnabled;
+	}
+
+	async function setBossCastAbilityEnabled(encounterID: number, difficulty: number, spellID: number, enabled: boolean) {
+		await ensureBossCastPreferencesLoaded();
+		const scope = getBossCastPreferenceScope(encounterID, difficulty);
+		bossCastVisibilityOverrides.value = {
+			...bossCastVisibilityOverrides.value,
+			[scope]: {
+				...bossCastVisibilityOverrides.value[scope],
+				[String(spellID)]: enabled,
+			},
+		};
+		try {
+			await store.set(BOSS_CAST_PREFERENCES_STORE_KEY, getPersistableBossCastVisibilityOverrides());
+		} catch (error) {
+			log.error('Failed to persist boss cast visibility preferences', error);
+		}
+	}
+
+	async function resetBossCastAbilityPreferences(encounterID: number, difficulty: number) {
+		await ensureBossCastPreferencesLoaded();
+		const scope = getBossCastPreferenceScope(encounterID, difficulty);
+		bossCastVisibilityOverrides.value = Object.fromEntries(
+			Object.entries(bossCastVisibilityOverrides.value).filter(([key]) => key !== scope),
+		);
+		try {
+			await store.set(BOSS_CAST_PREFERENCES_STORE_KEY, getPersistableBossCastVisibilityOverrides());
+		} catch (error) {
+			log.error('Failed to reset boss cast visibility preferences', error);
+		}
+	}
 
 	const getReportTimeOffset = computed(() => {
 		const selected = getSelectedReport.value;
@@ -266,6 +402,53 @@ export const useReviewsStore = defineStore('Reviews', () => {
 		return request;
 	}
 
+	async function ensureFightBossCasts(reportCode: string, fightID: number, force = false): Promise<reviewFightBossCastData> {
+		const cacheKey = getFightCooldownCacheKey(reportCode, fightID);
+		const cached = savedFightBossCasts.value[cacheKey];
+		if (!force && cached && isFresh(fightBossCastCachedAt.value, cacheKey)) return cached;
+		const pending = fightBossCastPromises.get(cacheKey);
+		if (pending) return pending;
+
+		fightBossCastRequests.value[cacheKey] = true;
+		fightBossCastErrors.value[cacheKey] = null;
+		const requestEpoch = fightBossCastRequestEpoch;
+		const request = (async () => {
+			try {
+				const response = await ipc.invoke(
+					IPC_EVENTS.WCL_REQUEST_FIGHT_BOSS_CASTS,
+					{ reportCode, fightID },
+				) as reviewFightBossCastResponse;
+				if (response.error || !response.bossCastData) {
+					throw new Error(response.error || 'Failed to request fight boss casts');
+				}
+				if (requestEpoch !== fightBossCastRequestEpoch) {
+					return savedFightBossCasts.value[cacheKey] || response.bossCastData;
+				}
+				if (response.bossCastData.interruptsComplete === false) {
+					if (cached && cached.interruptsComplete !== false) return cached;
+					savedFightBossCasts.value[cacheKey] = response.bossCastData;
+					delete fightBossCastCachedAt.value[cacheKey];
+					return response.bossCastData;
+				}
+				savedFightBossCasts.value[cacheKey] = response.bossCastData;
+				fightBossCastCachedAt.value[cacheKey] = Date.now();
+				return response.bossCastData;
+			} catch (error) {
+				const message = error instanceof Error ? error.message : 'Failed to request fight boss casts';
+				if (requestEpoch === fightBossCastRequestEpoch) fightBossCastErrors.value[cacheKey] = message;
+				log.error('Failed to request WCL fight boss casts', { reportCode, fightID, error });
+				return savedFightBossCasts.value[cacheKey] || { fightID, abilities: [], bossCastEvents: [] };
+			}
+		})();
+		fightBossCastPromises.set(cacheKey, request);
+		void request.finally(() => {
+			if (fightBossCastPromises.get(cacheKey) !== request) return;
+			fightBossCastRequests.value[cacheKey] = false;
+			fightBossCastPromises.delete(cacheKey);
+		});
+		return request;
+	}
+
 	async function requestFightEvents(force = false) {
 		const reportCode = selectedReportCode.value;
 		const fightID = selectedFightID.value;
@@ -278,6 +461,13 @@ export const useReviewsStore = defineStore('Reviews', () => {
 		const fightID = selectedFightID.value;
 		if (!reportCode || !fightID) return null;
 		return ensureFightCooldowns(reportCode, fightID, force);
+	}
+
+	async function requestFightBossCasts(force = false) {
+		const reportCode = selectedReportCode.value;
+		const fightID = selectedFightID.value;
+		if (!reportCode || !fightID) return null;
+		return ensureFightBossCasts(reportCode, fightID, force);
 	}
 
 	const videoList = computed<YouTubeVideo[]>(() => {
@@ -372,6 +562,12 @@ export const useReviewsStore = defineStore('Reviews', () => {
 		fightCooldownRequestEpoch++;
 		fightCooldownPromises.clear();
 		fightCooldownCacheEpoch.value++;
+		fightBossCastCachedAt.value = {};
+		fightBossCastRequests.value = {};
+		fightBossCastErrors.value = {};
+		fightBossCastRequestEpoch++;
+		fightBossCastPromises.clear();
+		fightBossCastCacheEpoch.value++;
 
 		const reportCode = selectedReportCode.value;
 		const fightID = selectedFightID.value;
@@ -390,7 +586,12 @@ export const useReviewsStore = defineStore('Reviews', () => {
 		selectedFightID,
 		savedFightEvents,
 		savedFightCooldowns,
+		savedFightBossCasts,
 		fightCooldownCacheEpoch,
+		fightBossCastCacheEpoch,
+		bossCastVisibilityOverrides,
+		bossCastDisplayMode,
+		bossCastPreferencesLoaded,
 		videoList,
 
 		getReports,
@@ -415,6 +616,12 @@ export const useReviewsStore = defineStore('Reviews', () => {
 		isFightCooldownsLoadingFor,
 		getFightCooldownError,
 		getFightCooldownErrorFor,
+		getFightBossCastData,
+		getFightBossCastDataFor,
+		isFightBossCastsLoading,
+		isFightBossCastsLoadingFor,
+		getFightBossCastError,
+		getFightBossCastErrorFor,
 		getReportTimeOffset,
 		getFightStartTimeOffset,
 		getFightStartTime,
@@ -425,8 +632,15 @@ export const useReviewsStore = defineStore('Reviews', () => {
 		requestReportData,
 		requestFightEvents,
 		requestFightCooldowns,
+		requestFightBossCasts,
 		ensureFightEvents,
 		ensureFightCooldowns,
+		ensureFightBossCasts,
+		ensureBossCastPreferencesLoaded,
+		setBossCastDisplayMode,
+		isBossCastAbilityEnabled,
+		setBossCastAbilityEnabled,
+		resetBossCastAbilityPreferences,
 		openVideoFromDeepLink,
 	};
 });

@@ -1631,6 +1631,60 @@ ipcMain.handle(IPC_EVENTS.WCL_REQUEST_FIGHT_COOLDOWNS, async (event, { reportCod
 	});
 });
 
+ipcMain.handle(IPC_EVENTS.WCL_REQUEST_FIGHT_BOSS_CASTS, async (
+	_event,
+	payload?: { reportCode?: unknown; fightID?: unknown },
+) => {
+	const { reportCode, fightID } = payload || {};
+	if (
+		typeof reportCode !== 'string'
+		|| reportCode.trim().length === 0
+		|| typeof fightID !== 'number'
+		|| !Number.isSafeInteger(fightID)
+		|| fightID <= 0
+	) {
+		return { error: 'Invalid report code or fight ID' } satisfies reviewFightBossCastResponse;
+	}
+	const normalizedReportCode = reportCode.trim();
+
+	return new Promise<reviewFightBossCastResponse>((resolve) => {
+		log.info('Requesting WCL fight boss casts for report', normalizedReportCode, 'fightID', fightID);
+		let settled = false;
+		const timeout = setTimeout(() => {
+			settled = true;
+			resolve({ error: 'Timed out while requesting fight boss casts' });
+		}, 30_000);
+
+		socket.emit(
+			SOCKET_EVENTS.WCL_REQUEST_FIGHT_BOSS_CASTS,
+			{ reportCode: normalizedReportCode, fightID },
+			(response?: reviewFightBossCastResponse) => {
+				if (settled) return;
+				settled = true;
+				clearTimeout(timeout);
+				if (
+					response?.bossCastData
+					&& Array.isArray(response.bossCastData.abilities)
+					&& Array.isArray(response.bossCastData.bossCastEvents)
+				) {
+					log.info(
+						'Received fight boss casts for report',
+						normalizedReportCode,
+						'fightID',
+						fightID,
+						'count',
+						response.bossCastData.bossCastEvents.length,
+					);
+					resolve(response);
+					return;
+				}
+				log.error('Error receiving fight boss casts for report', normalizedReportCode, response?.error);
+				resolve({ error: response?.error || 'Failed to receive fight boss casts' });
+			},
+		);
+	});
+});
+
 ipcMain.on(IPC_EVENTS.WCL_OPEN_FIGHT, async (
 	_event,
 	payload?: { reportCode?: unknown; fightID?: unknown },

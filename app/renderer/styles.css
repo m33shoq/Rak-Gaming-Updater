@@ -32,6 +32,141 @@ body .dark {
   scrollbar-color: #888 transparent;
 }
 
+/* Wowhead owns the spell data; this shell matches the timeline's boss-cast tooltips. */
+.wowhead-tooltip {
+	box-sizing: border-box !important;
+	border: 1px solid rgb(245 158 11 / 55%) !important;
+	border-radius: 6px !important;
+	background: rgb(0 0 0 / 90%) !important;
+	box-shadow:
+		0 20px 25px -5px rgb(0 0 0 / 35%),
+		0 8px 10px -6px rgb(0 0 0 / 35%) !important;
+}
+
+.wowhead-tooltip > table > tbody > tr:first-child > td {
+	box-sizing: border-box !important;
+	padding: 8px 12px 32px !important;
+	background: transparent !important;
+	color: rgb(255 255 255) !important;
+	font-family: var(--font-main), 'Segoe UI', sans-serif !important;
+	font-size: 12px !important;
+	font-weight: 600 !important;
+	line-height: 17px !important;
+}
+
+.wowhead-tooltip > table > tbody > tr:first-child > th,
+.wowhead-tooltip > table > tbody > tr:last-child {
+	display: none !important;
+}
+
+.wowhead-tooltip > table > tbody > tr:first-child > td > b:first-child {
+	font-family: var(--font-main), 'Segoe UI', sans-serif !important;
+	font-size: 13px !important;
+	font-weight: 600 !important;
+}
+
+.wowhead-tooltip > .whtt-tooltip-icon > .iconmedium > del {
+	display: none !important;
+}
+
+.wowhead-tooltip > .whtt-tooltip-icon > .iconmedium > ins {
+	box-sizing: border-box !important;
+	border: 1px solid rgb(245 158 11 / 50%) !important;
+	border-radius: 0 !important;
+	box-shadow: 0 1px 4px rgb(0 0 0 / 45%) !important;
+}
+
+.wowhead-tooltip > .whtt-tooltip-icon > .iconmedium > a {
+	border-radius: 0 !important;
+}
+
+.rg-wowhead-tooltip-footer {
+	position: absolute;
+	right: 8px;
+	bottom: 1px;
+	left: 8px;
+	display: flex;
+	height: 25px;
+	min-width: 0;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+	overflow: hidden;
+	border-top: 1px solid rgb(115 115 115 / 35%);
+	color: rgb(163 163 163);
+	font-family: var(--font-main), 'Segoe UI', sans-serif;
+	font-size: 10px;
+	font-weight: 600;
+	line-height: 1;
+	white-space: nowrap;
+	pointer-events: none;
+}
+
+.rg-wowhead-tooltip-spell-id {
+	flex-shrink: 0;
+	color: rgb(212 212 212);
+	font-variant-numeric: tabular-nums;
+}
+
+.rg-wowhead-tooltip-action {
+	min-width: 0;
+	overflow: hidden;
+	text-align: right;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	color: rgb(163 163 163);
+}
+
+/* A quiet known cast-time rail leads into the observed outcome icon. */
+.review-boss-cast-rail {
+	--review-cast-track-color: 145 169 157;
+	border: 0;
+	background: none;
+	box-shadow: none;
+	opacity: 0.76;
+	transition: opacity 55ms linear, filter 55ms linear;
+}
+
+.review-boss-cast-rail::before,
+.review-boss-cast-rail::after {
+	position: absolute;
+	content: '';
+	pointer-events: none;
+}
+
+.review-boss-cast-rail::before {
+	top: 50%;
+	right: 0;
+	left: 0;
+	height: 2px;
+	transform: translateY(-50%);
+	background: rgb(var(--review-cast-track-color) / 78%);
+	box-shadow: 0 1px rgb(0 0 0 / 24%);
+}
+
+.review-boss-cast-rail::after {
+	top: 50%;
+	left: 0;
+	width: 2px;
+	height: 13px;
+	transform: translateY(-50%);
+	background: rgb(var(--review-cast-track-color) / 88%);
+	box-shadow: 1px 0 rgb(0 0 0 / 20%);
+}
+
+.review-boss-cast-rail--interrupted {
+	--review-cast-track-color: 83 160 128;
+}
+
+.review-boss-cast-rail--compact::after {
+	height: 9px;
+}
+
+.review-boss-cast-lane:hover > .review-boss-cast-rail {
+	filter: brightness(1.12);
+	opacity: 0.96;
+}
+
 .animate-gradient {
 	background-size: 300%;
   	-webkit-animation: animatedgradient 6s ease infinite alternate;
@@ -58,4 +193,3 @@ body .dark {
 @utility no-drag {
 	-webkit-app-region: no-drag;
 }
-

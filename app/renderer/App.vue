@@ -142,7 +142,7 @@ useIpcRendererOn(ipc, IPC_EVENTS.APP_DEEP_LINK_CALLBACK, (event, payload: AppDee
 	<div class="m-0 p-0 text-base font-main flex flex-col h-screen
 	dark:bg-dark1 dark:text-gray-50
 	bg-light1 text-black" :class="{'dark': darkMode}">
-		<div class="m-0 flex items-center justify-between w-full p-0 drag">
+		<div data-app-title-bar class="m-0 flex items-center justify-between w-full p-0 drag">
 			<div class="flex items-center gap-2">
 				<img :src="icon" alt="icon" class="h-10 mx-1 vertical-align align-middle" />
 				<h1 class="font-bold text-3xl bg-gradient-to-r from-sky-600 via-blue-500 to-blue-600 text-transparent bg-clip-text animate-gradient">RG Updater</h1>

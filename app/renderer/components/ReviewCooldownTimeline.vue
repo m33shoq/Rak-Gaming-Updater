@@ -2,8 +2,14 @@
 import log from 'electron-log/renderer';
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 
+import ReviewBossCastInterrupt from '@/renderer/components/ReviewBossCastInterrupt.vue';
 import ReviewCooldownComparison from '@/renderer/components/ReviewCooldownComparison.vue';
 import ReviewCooldownTarget from '@/renderer/components/ReviewCooldownTarget.vue';
+import ReviewRaidMarker from '@/renderer/components/ReviewRaidMarker.vue';
+import { useReviewsStore } from '@/renderer/store/ReviewsStore';
+import { buildCollapsedBossCastMarkers, sortBossCastAbilitiesByFirstOccurrence } from '@/renderer/utils/bossCastAggregation';
+import { useBossCastTooltipLayout } from '@/renderer/utils/bossCastTooltipLayout';
+import { refreshWowheadTooltips } from '@/renderer/utils/wowheadTooltips';
 
 const props = withDefaults(defineProps<{
 	events?: reviewCooldownEvent[];
@@ -33,6 +39,7 @@ const emit = defineEmits<{
 	openPullDeath: [fightID: number, deathID: number];
 }>();
 
+const reviewsStore = useReviewsStore();
 const isExpanded = ref(false);
 const timelineViewMode = ref<'fight' | 'comparison'>('fight');
 const comparisonSpellEvents = ref<reviewCooldownEvent[]>([]);
@@ -47,12 +54,19 @@ const MIN_EVENT_GAP_PERCENT = 0.026;
 const TRACK_HEIGHT_PX = 27;
 const TRACK_TOP_OFFSET_PX = 5;
 const ROLE_HEADER_HEIGHT_PX = 22;
+const BOSS_CAST_LANE_HEIGHT_PX = 34;
 const REINCARNATION_CAST_SPELL_ID = 21169;
 const GROUP_FILTER_STORE_KEY = 'reviewCooldownTimelineGroupFilters';
 const SPELL_FILTER_STORE_KEY = 'reviewCooldownTimelineSpellFilters';
 const LEGACY_SPELL_FILTER_STORE_KEY = 'reviewCooldownTimelineExcludedSpells';
-const HIDE_INACTIVE_DEAD_LANE_THRESHOLD = 0.9;
+const EXPANDED_HEIGHT_STORE_KEY = 'reviewCooldownTimelineExpandedHeight';
 const CUSTOM_SCROLLBAR_HIDE_DELAY_MS = 900;
+const MIN_EXPANDED_HEIGHT_PX = 160;
+const MAX_DEFAULT_EXPANDED_HEIGHT_PX = 608;
+const EXPANDED_HEIGHT_VIEWPORT_RATIO = 0.62;
+const EXPANDED_HEIGHT_KEYBOARD_STEP_PX = 24;
+const EXPANDED_TIMELINE_TOP_GAP_PX = 8;
+const APP_TITLE_BAR_FALLBACK_HEIGHT_PX = 40;
 const minuteTimeMarkers = computed(() => Array.from(
 	{ length: Math.max(0, Math.ceil(props.fightDuration / 60_000) - 1) },
 	(_, index) => (index + 1) * 60_000 / props.fightDuration,
@@ -74,6 +88,20 @@ type TimelineCooldown = {
 	percent: number;
 	timestampSeconds: number;
 	track: number;
+};
+
+type BossCastMarker = {
+	event: reviewBossCastEvent;
+	key: string;
+	percent: number;
+	startPercent: number;
+	timestampSeconds: number;
+	durationSeconds: number;
+};
+
+type BossCastLane = {
+	ability: reviewBossCastAbility;
+	markers: BossCastMarker[];
 };
 
 type DeathPeriod = {
@@ -151,7 +179,8 @@ type TimelineHover = {
 
 type DetailTooltip =
 	| { kind: 'cooldown'; cooldown: TimelineCooldown; x: number; y: number }
-	| { kind: 'death'; death: DeathPeriod; x: number; y: number };
+	| { kind: 'death'; death: DeathPeriod; x: number; y: number }
+	| { kind: 'boss'; lane: BossCastLane; marker: BossCastMarker; occurrences: BossCastMarker[]; placement: 'above' | 'below'; x: number; y: number };
 
 type StoredCooldownGroupPreferences = {
 	knownGroupIDs: string[];
@@ -180,9 +209,29 @@ const timelineHover = ref<TimelineHover>({
 	y: 0,
 });
 const detailTooltip = ref<DetailTooltip | null>(null);
+const {
+	element: bossCastTooltipElement,
+	tooltipStyle: bossCastTooltipStyle,
+	occurrenceListStyle: bossCastOccurrenceListStyle,
+	occurrenceStyle: getBossCastOccurrenceStyle,
+	prepare: prepareBossCastTooltip,
+	clear: clearBossCastTooltipLayout,
+} = useBossCastTooltipLayout(() => (
+	detailTooltip.value?.kind === 'boss' ? detailTooltip.value : null
+));
 const expandedTimelineAnchor = ref<HTMLElement | null>(null);
+const expandedTimelinePanel = ref<HTMLElement | null>(null);
 const expandedTimelineScroller = ref<HTMLElement | null>(null);
 const customScrollbarTrack = ref<HTMLElement | null>(null);
+const expandedTimelineHeight = ref(Math.min(
+	MAX_DEFAULT_EXPANDED_HEIGHT_PX,
+	Math.max(MIN_EXPANDED_HEIGHT_PX, Math.round((typeof window === 'undefined' ? 980 : window.innerHeight) * EXPANDED_HEIGHT_VIEWPORT_RATIO)),
+));
+const expandedTimelineMaxHeight = ref(Math.max(
+	MIN_EXPANDED_HEIGHT_PX,
+	(typeof window === 'undefined' ? 980 : window.innerHeight) - 16,
+));
+const isExpandedTimelineResizing = ref(false);
 const customScrollbarState = ref<CustomScrollbarState>({
 	visible: false,
 	thumbHeight: 0,
@@ -198,6 +247,8 @@ const groupPreferencesLoaded = ref(false);
 const spellPreferencesLoaded = ref(false);
 const storedGroupPreferences = ref<StoredCooldownGroupPreferences | null>(null);
 const isSpellFiltersExpanded = ref(false);
+const isBossCastFiltersExpanded = ref(false);
+const bossCastSearchQuery = ref('');
 const spellSearchQuery = ref('');
 const activeSpellFilterGroupID = ref<reviewCooldownGroupID | 'all'>('all');
 let initializedGroupSignature = '';
@@ -207,6 +258,17 @@ let timelineHoverAnimationFrame: number | null = null;
 let customScrollbarAnimationFrame: number | null = null;
 let customScrollbarHideTimer: number | null = null;
 let expandedScrollerResizeObserver: ResizeObserver | null = null;
+let expandedTimelineResizeDrag: {
+	pointerID: number;
+	startClientY: number;
+	lastClientY: number;
+	startHeight: number;
+	currentHeight: number;
+	maxHeight: number;
+	handle: HTMLElement;
+} | null = null;
+let expandedTimelineResizeAnimationFrame: number | null = null;
+let resizeBodyStyles: { cursor: string; userSelect: string } | null = null;
 let customScrollbarDrag: {
 	pointerID: number;
 	startClientY: number;
@@ -225,7 +287,6 @@ const enabledGroups = computed(() => {
 });
 const enabledGroupIDs = computed(() => new Set(enabledGroups.value.map(group => group.id)));
 const groupLabels = computed(() => new Map(props.groups.map(group => [group.id, group.label])));
-const enabledGroupSummary = computed(() => enabledGroups.value.map(group => group.label).join(', '));
 const spellOptionSourceEvents = computed(() => (
 	timelineViewMode.value === 'comparison' ? comparisonSpellEvents.value : props.events
 ));
@@ -331,6 +392,97 @@ const spellCountByGroup = computed(() => {
 	return counts;
 });
 const visiblePhases = computed(() => props.phases.filter(phase => phase.percent > 0 && phase.percent < 1));
+const selectedFight = computed(() => reviewsStore.getSelectedFight);
+const selectedBossCastData = computed(() => {
+	const reportCode = reviewsStore.selectedReportCode;
+	const fightID = reviewsStore.selectedFightID;
+	return reportCode && fightID
+		? reviewsStore.getFightBossCastDataFor(reportCode, fightID)
+		: null;
+});
+const bossCastAbilities = computed(() => {
+	const data = selectedBossCastData.value;
+	return data
+		? sortBossCastAbilitiesByFirstOccurrence(data.abilities, data.bossCastEvents)
+		: [];
+});
+const bossCastInterruptsIncomplete = computed(() => (
+	selectedBossCastData.value?.interruptsComplete === false
+));
+const visibleBossCastAbilityCount = computed(() => {
+	const fight = selectedFight.value;
+	if (!fight) return 0;
+	return bossCastAbilities.value.filter(ability => (
+		reviewsStore.isBossCastAbilityEnabled(fight.encounterID, fight.difficulty, ability)
+	)).length;
+});
+const filteredBossCastAbilities = computed(() => {
+	const query = bossCastSearchQuery.value.trim().toLowerCase();
+	if (!query) return bossCastAbilities.value;
+	return bossCastAbilities.value.filter(ability => (
+		ability.name.toLowerCase().includes(query)
+		|| ability.spellID.toString().includes(query)
+		|| ability.sources.some(source => source.name.toLowerCase().includes(query))
+	));
+});
+const bossCastLanes = computed<BossCastLane[]>(() => {
+	const data = selectedBossCastData.value;
+	const fight = selectedFight.value;
+	if (!data || !fight || props.fightDuration <= 0 || !reviewsStore.bossCastPreferencesLoaded) return [];
+
+	const enabledAbilities = bossCastAbilities.value.filter(ability => (
+		reviewsStore.isBossCastAbilityEnabled(fight.encounterID, fight.difficulty, ability)
+	));
+	const eventsBySpellID = new Map<number, BossCastMarker[]>();
+	data.bossCastEvents.forEach((event, index) => {
+		const relativeTime = event.timestamp - props.fightStartTime;
+		if (relativeTime < 0 || relativeTime > props.fightDuration) return;
+		const percent = relativeTime / props.fightDuration;
+		const startRelativeTime = event.bossCast.startTimestamp == null
+			? relativeTime
+			: event.bossCast.startTimestamp - props.fightStartTime;
+		const marker: BossCastMarker = {
+			event,
+			key: `boss:${event.bossCast.spellID}:${event.timestamp}:${event.source?.id || 0}:${index}`,
+			percent,
+			startPercent: Math.max(0, Math.min(percent, startRelativeTime / props.fightDuration)),
+			timestampSeconds: relativeTime / 1000,
+			durationSeconds: Math.max(0, relativeTime - startRelativeTime) / 1000,
+		};
+		const markers = eventsBySpellID.get(event.bossCast.spellID) || [];
+		markers.push(marker);
+		eventsBySpellID.set(event.bossCast.spellID, markers);
+	});
+
+	return enabledAbilities
+		.map(ability => ({
+			ability,
+			markers: eventsBySpellID.get(ability.spellID) || [],
+		}))
+		.filter(lane => lane.markers.length > 0);
+});
+const collapsedBossCastMarkers = computed(() => {
+	return buildCollapsedBossCastMarkers(bossCastLanes.value);
+});
+const collapsedBossCastDurationMarkers = computed(() => (
+	collapsedBossCastMarkers.value.flatMap(item => item.occurrences)
+));
+const fullBossCastLanes = computed(() => bossCastLanes.value.map(lane => ({
+	...lane,
+	markerGroups: buildCollapsedBossCastMarkers([lane]),
+})));
+const isBossCastsLoading = computed(() => {
+	const reportCode = reviewsStore.selectedReportCode;
+	const fightID = reviewsStore.selectedFightID;
+	return Boolean(reportCode && fightID && reviewsStore.isFightBossCastsLoadingFor(reportCode, fightID));
+});
+const bossCastError = computed(() => {
+	const reportCode = reviewsStore.selectedReportCode;
+	const fightID = reviewsStore.selectedFightID;
+	return reportCode && fightID
+		? reviewsStore.getFightBossCastErrorFor(reportCode, fightID)
+		: null;
+});
 const ROLE_SORT_ORDER: Record<PlayerRole, number> = {
 	tank: 0,
 	healer: 1,
@@ -491,6 +643,43 @@ function showAllSpells() {
 	persistSpellPreferences();
 }
 
+function isBossCastAbilityVisible(ability: reviewBossCastAbility) {
+	const fight = selectedFight.value;
+	return Boolean(fight && reviewsStore.isBossCastAbilityEnabled(
+		fight.encounterID,
+		fight.difficulty,
+		ability,
+	));
+}
+
+function toggleBossCastAbility(ability: reviewBossCastAbility) {
+	const fight = selectedFight.value;
+	if (!fight) return;
+	void reviewsStore.setBossCastAbilityEnabled(
+		fight.encounterID,
+		fight.difficulty,
+		ability.spellID,
+		!isBossCastAbilityVisible(ability),
+	);
+}
+
+function restoreDefaultBossCasts() {
+	const fight = selectedFight.value;
+	if (!fight) return;
+	void reviewsStore.resetBossCastAbilityPreferences(fight.encounterID, fight.difficulty);
+}
+
+function retrySelectedBossCasts() {
+	const reportCode = reviewsStore.selectedReportCode;
+	const fightID = reviewsStore.selectedFightID;
+	if (!reportCode || !fightID) return;
+	void reviewsStore.ensureFightBossCasts(reportCode, fightID, true);
+}
+
+function setBossCastDisplayMode(mode: 'full' | 'collapsed') {
+	void reviewsStore.setBossCastDisplayMode(mode);
+}
+
 function finishLegacySpellPreferenceMigration() {
 	if (pendingLegacyExcludedSpellIDs == null) return;
 	if (props.loading && spellOptions.value.length === 0) return;
@@ -510,6 +699,7 @@ function finishLegacySpellPreferenceMigration() {
 
 function getGroupIndicatorColor(groupID: reviewCooldownGroupID) {
 	switch (groupID) {
+		case 'deaths': return 'bg-red-500';
 		case 'raid_cd': return 'bg-cyan-400';
 		case 'personals': return 'bg-violet-400';
 		case 'externals': return 'bg-pink-400';
@@ -523,6 +713,7 @@ function getGroupIndicatorColor(groupID: reviewCooldownGroupID) {
 }
 
 function updateCustomScrollbar() {
+	if (isExpandedTimelineResizing.value) return;
 	const scroller = expandedTimelineScroller.value;
 	const track = customScrollbarTrack.value;
 	if (!scroller || !track) {
@@ -562,6 +753,7 @@ function updateCustomScrollbar() {
 }
 
 function scheduleCustomScrollbarUpdate() {
+	if (isExpandedTimelineResizing.value) return;
 	if (customScrollbarAnimationFrame != null) return;
 	customScrollbarAnimationFrame = window.requestAnimationFrame(() => {
 		customScrollbarAnimationFrame = null;
@@ -665,6 +857,175 @@ function onCustomScrollbarKeydown(event: KeyboardEvent) {
 	revealCustomScrollbar();
 }
 
+function getExpandedTimelineAvailableHeight() {
+	const viewportHeight = window.innerHeight;
+	const panelBottom = expandedTimelinePanel.value?.getBoundingClientRect().bottom;
+	const titleBarBottom = document.querySelector<HTMLElement>('[data-app-title-bar]')
+		?.getBoundingClientRect().bottom ?? APP_TITLE_BAR_FALLBACK_HEIGHT_PX;
+	const minimumPanelTop = Math.max(
+		EXPANDED_TIMELINE_TOP_GAP_PX,
+		titleBarBottom + EXPANDED_TIMELINE_TOP_GAP_PX,
+	);
+	return Math.max(
+		MIN_EXPANDED_HEIGHT_PX,
+		Math.floor(Math.min(
+			viewportHeight - minimumPanelTop,
+			(panelBottom ?? viewportHeight) - minimumPanelTop,
+		)),
+	);
+}
+
+function setExpandedTimelineHeight(height: number) {
+	const maxHeight = getExpandedTimelineAvailableHeight();
+	expandedTimelineMaxHeight.value = maxHeight;
+	expandedTimelineHeight.value = Math.round(Math.max(
+		MIN_EXPANDED_HEIGHT_PX,
+		Math.min(maxHeight, height),
+	));
+	scheduleCustomScrollbarUpdate();
+}
+
+function parseStoredExpandedTimelineHeight(value: unknown): number | null {
+	return typeof value === 'number' && Number.isFinite(value) && value >= MIN_EXPANDED_HEIGHT_PX
+		? Math.round(value)
+		: null;
+}
+
+function persistExpandedTimelineHeight() {
+	store.set(EXPANDED_HEIGHT_STORE_KEY, expandedTimelineHeight.value).catch((error: unknown) => {
+		log.error('Failed to persist review cooldown timeline height', error);
+	});
+}
+
+function restoreResizeBodyStyles() {
+	if (!resizeBodyStyles) return;
+	document.body.style.cursor = resizeBodyStyles.cursor;
+	document.body.style.userSelect = resizeBodyStyles.userSelect;
+	resizeBodyStyles = null;
+}
+
+function applyPendingExpandedTimelineResize() {
+	expandedTimelineResizeAnimationFrame = null;
+	const drag = expandedTimelineResizeDrag;
+	const panel = expandedTimelinePanel.value;
+	if (!drag || !panel) return;
+	panel.style.setProperty('--review-expanded-timeline-drag-height', `${drag.currentHeight}px`);
+}
+
+function scheduleExpandedTimelineResize() {
+	if (expandedTimelineResizeAnimationFrame != null) return;
+	expandedTimelineResizeAnimationFrame = window.requestAnimationFrame(applyPendingExpandedTimelineResize);
+}
+
+function finishExpandedTimelineResize(pointerID?: number) {
+	const drag = expandedTimelineResizeDrag;
+	if (!drag || (pointerID != null && drag.pointerID !== pointerID)) return;
+	if (expandedTimelineResizeAnimationFrame != null) {
+		window.cancelAnimationFrame(expandedTimelineResizeAnimationFrame);
+		expandedTimelineResizeAnimationFrame = null;
+	}
+	const panel = expandedTimelinePanel.value;
+	if (panel) {
+		panel.style.height = `${drag.currentHeight}px`;
+		panel.style.removeProperty('--review-expanded-timeline-drag-height');
+		panel.style.willChange = '';
+	}
+	expandedTimelineResizeDrag = null;
+	if (drag.handle.hasPointerCapture(drag.pointerID)) {
+		drag.handle.releasePointerCapture(drag.pointerID);
+	}
+	isExpandedTimelineResizing.value = false;
+	expandedTimelineMaxHeight.value = drag.maxHeight;
+	expandedTimelineHeight.value = drag.currentHeight;
+	restoreResizeBodyStyles();
+	persistExpandedTimelineHeight();
+	void nextTick(scheduleCustomScrollbarUpdate);
+}
+
+function onExpandedTimelineResizePointerDown(event: PointerEvent) {
+	if (event.button !== 0) return;
+	const panel = expandedTimelinePanel.value;
+	if (!panel) return;
+
+	event.preventDefault();
+	const handle = event.currentTarget as HTMLElement;
+	handle.setPointerCapture(event.pointerId);
+	const maxHeight = getExpandedTimelineAvailableHeight();
+	const startHeight = Math.round(Math.max(
+		MIN_EXPANDED_HEIGHT_PX,
+		Math.min(maxHeight, panel.getBoundingClientRect().height),
+	));
+	expandedTimelineMaxHeight.value = maxHeight;
+	expandedTimelineHeight.value = startHeight;
+	expandedTimelineResizeDrag = {
+		pointerID: event.pointerId,
+		startClientY: event.clientY,
+		lastClientY: event.clientY,
+		startHeight,
+		currentHeight: startHeight,
+		maxHeight,
+		handle,
+	};
+	isExpandedTimelineResizing.value = true;
+	panel.style.setProperty('--review-expanded-timeline-drag-height', `${startHeight}px`);
+	panel.style.height = 'var(--review-expanded-timeline-drag-height)';
+	panel.style.willChange = 'height';
+	resizeBodyStyles = {
+		cursor: document.body.style.cursor,
+		userSelect: document.body.style.userSelect,
+	};
+	document.body.style.cursor = 'ns-resize';
+	document.body.style.userSelect = 'none';
+}
+
+function onExpandedTimelineResizePointerMove(event: PointerEvent) {
+	const drag = expandedTimelineResizeDrag;
+	if (!drag || drag.pointerID !== event.pointerId) return;
+	event.preventDefault();
+	drag.lastClientY = event.clientY;
+	drag.currentHeight = Math.round(Math.max(
+		MIN_EXPANDED_HEIGHT_PX,
+		Math.min(drag.maxHeight, drag.startHeight + drag.startClientY - event.clientY),
+	));
+	scheduleExpandedTimelineResize();
+}
+
+function onExpandedTimelineResizePointerEnd(event: PointerEvent) {
+	finishExpandedTimelineResize(event.pointerId);
+}
+
+function onExpandedTimelineResizeKeydown(event: KeyboardEvent) {
+	let nextHeight = expandedTimelineHeight.value;
+	switch (event.key) {
+		case 'ArrowUp': nextHeight += EXPANDED_HEIGHT_KEYBOARD_STEP_PX; break;
+		case 'ArrowDown': nextHeight -= EXPANDED_HEIGHT_KEYBOARD_STEP_PX; break;
+		case 'Home': nextHeight = MIN_EXPANDED_HEIGHT_PX; break;
+		case 'End': nextHeight = getExpandedTimelineAvailableHeight(); break;
+		default: return;
+	}
+	event.preventDefault();
+	setExpandedTimelineHeight(nextHeight);
+	persistExpandedTimelineHeight();
+}
+
+function onWindowResize() {
+	if (!isExpanded.value) return;
+	const drag = expandedTimelineResizeDrag;
+	if (drag) {
+		drag.maxHeight = getExpandedTimelineAvailableHeight();
+		drag.currentHeight = Math.round(Math.max(
+			MIN_EXPANDED_HEIGHT_PX,
+			Math.min(drag.maxHeight, drag.currentHeight),
+		));
+		drag.startHeight = drag.currentHeight;
+		drag.startClientY = drag.lastClientY;
+		expandedTimelineMaxHeight.value = drag.maxHeight;
+		scheduleExpandedTimelineResize();
+		return;
+	}
+	setExpandedTimelineHeight(expandedTimelineHeight.value);
+}
+
 onMounted(async () => {
 	try {
 		storedGroupPreferences.value = parseStoredGroupPreferences(
@@ -703,8 +1064,40 @@ onMounted(async () => {
 	}
 });
 
+onMounted(async () => {
+	window.addEventListener('resize', onWindowResize);
+	try {
+		const storedHeight = parseStoredExpandedTimelineHeight(
+			await store.get(EXPANDED_HEIGHT_STORE_KEY),
+		);
+		if (storedHeight != null) expandedTimelineHeight.value = storedHeight;
+	} catch (error) {
+		log.error('Failed to load review cooldown timeline height', error);
+	}
+
+	if (isExpanded.value) {
+		await nextTick();
+		setExpandedTimelineHeight(expandedTimelineHeight.value);
+	}
+});
+
 watch(() => props.groups, initializeGroupSelection, { deep: true, immediate: true });
 watch([spellOptions, () => props.loading], finishLegacySpellPreferenceMigration);
+watch(
+	[
+		isExpanded,
+		timelineViewMode,
+		() => reviewsStore.selectedReportCode,
+		() => reviewsStore.selectedFightID,
+		() => reviewsStore.fightBossCastCacheEpoch,
+	],
+	([expanded, viewMode, reportCode, fightID]) => {
+		if (!expanded || viewMode !== 'fight' || !reportCode || !fightID) return;
+		void reviewsStore.ensureBossCastPreferencesLoaded();
+		void reviewsStore.ensureFightBossCasts(reportCode, fightID);
+	},
+	{ immediate: true },
+);
 watch(() => props.groups.map(group => group.id), (groupIDs) => {
 	if (
 		activeSpellFilterGroupID.value !== 'all'
@@ -725,6 +1118,13 @@ watch(expandedTimelineScroller, (scroller) => {
 	expandedScrollerResizeObserver = new ResizeObserver(scheduleCustomScrollbarUpdate);
 	expandedScrollerResizeObserver.observe(scroller);
 	void nextTick(scheduleCustomScrollbarUpdate);
+}, { flush: 'post' });
+watch(isExpanded, (expanded) => {
+	if (!expanded) {
+		finishExpandedTimelineResize();
+		return;
+	}
+	void nextTick(() => setExpandedTimelineHeight(expandedTimelineHeight.value));
 }, { flush: 'post' });
 
 function formatTime(seconds: number) {
@@ -767,6 +1167,28 @@ function formatCooldownTimestamp(timestampSeconds: number) {
 function formatDuration(seconds: number) {
 	if (seconds < 60) return `${Math.max(0, seconds).toFixed(1)}s`;
 	return formatTime(seconds);
+}
+
+function getBossCastOccurrenceSpan(occurrences: BossCastMarker[]) {
+	if (occurrences.length < 2) return 0;
+	return Math.max(0, occurrences.at(-1)!.timestampSeconds - occurrences[0].timestampSeconds);
+}
+
+function getBossCastInterruptCount(occurrences: BossCastMarker[]) {
+	return occurrences.filter(occurrence => occurrence.event.bossCast.interrupt != null).length;
+}
+
+function getBossCastMarkerClass(occurrences: BossCastMarker[]) {
+	const interruptCount = getBossCastInterruptCount(occurrences);
+	if (interruptCount === 0) return 'border-amber-400/70 hover:border-amber-200';
+	if (interruptCount === occurrences.length) return 'border-emerald-400/90 hover:border-emerald-200';
+	return 'border-amber-400/70 ring-1 ring-inset ring-emerald-400/90 hover:border-amber-200';
+}
+
+function getBossCastDurationClass(marker: BossCastMarker) {
+	return marker.event.bossCast.interrupt
+		? 'review-boss-cast-rail--interrupted'
+		: 'review-boss-cast-rail--completed';
 }
 
 function formatClassName(className?: string) {
@@ -830,6 +1252,7 @@ function getRoleHeaderColor(_role: PlayerRole) {
 
 function getGroupBorderColor(groupID: reviewCooldownGroupID) {
 	switch (groupID) {
+		case 'deaths': return 'border-red-500';
 		case 'raid_cd': return 'border-cyan-400';
 		case 'personals': return 'border-violet-400';
 		case 'externals': return 'border-pink-400';
@@ -882,7 +1305,7 @@ function getActorRole(actor?: TimelineActor): PlayerRole {
 }
 
 function getTooltipPoint(event: MouseEvent) {
-	const edgePadding = 150;
+	const edgePadding = Math.min(150, Math.max(8, window.innerWidth / 2));
 	return {
 		x: Math.max(edgePadding, Math.min(window.innerWidth - edgePadding, event.clientX)),
 		y: Math.max(100, event.clientY - 12),
@@ -923,8 +1346,24 @@ function showDeathTooltip(death: DeathPeriod, event: MouseEvent) {
 	detailTooltip.value = { kind: 'death', death, ...point };
 }
 
+function showBossCastTooltip(
+	lane: BossCastLane,
+	marker: BossCastMarker,
+	event: MouseEvent,
+	occurrences: BossCastMarker[] = [marker],
+) {
+	cancelDetailTooltipPositionUpdate();
+	const point = getTooltipPoint(event);
+	const placement = occurrences.length > 1 && event.clientY < window.innerHeight / 2
+		? 'below'
+		: 'above';
+	detailTooltip.value = { kind: 'boss', lane, marker, occurrences, placement, ...point };
+	void prepareBossCastTooltip();
+}
+
 function hideDetailTooltip() {
 	cancelDetailTooltipPositionUpdate();
+	clearBossCastTooltipLayout();
 	detailTooltip.value = null;
 }
 
@@ -962,7 +1401,7 @@ function onTimelineMove(event: MouseEvent, context: HoverContext) {
 			? expandedTimelineAnchor.value?.getBoundingClientRect()
 			: timelineRect;
 		const percent = Math.max(0, Math.min(1, (pendingMove.clientX - timelineRect.left) / timelineRect.width));
-		const edgePadding = 100;
+		const edgePadding = Math.min(100, Math.max(8, window.innerWidth / 2));
 		timelineHover.value = {
 			visible: true,
 			context: pendingMove.context,
@@ -993,6 +1432,9 @@ function onTimelineLeave(context: HoverContext) {
 }
 
 onBeforeUnmount(() => {
+	window.removeEventListener('resize', onWindowResize);
+	finishExpandedTimelineResize();
+	restoreResizeBodyStyles();
 	expandedScrollerResizeObserver?.disconnect();
 	expandedScrollerResizeObserver = null;
 	customScrollbarDrag = null;
@@ -1000,6 +1442,10 @@ onBeforeUnmount(() => {
 	if (customScrollbarAnimationFrame != null) {
 		window.cancelAnimationFrame(customScrollbarAnimationFrame);
 		customScrollbarAnimationFrame = null;
+	}
+	if (expandedTimelineResizeAnimationFrame != null) {
+		window.cancelAnimationFrame(expandedTimelineResizeAnimationFrame);
+		expandedTimelineResizeAnimationFrame = null;
 	}
 	cancelDetailTooltipPositionUpdate();
 	pendingTimelineMove = null;
@@ -1011,33 +1457,6 @@ onBeforeUnmount(() => {
 
 function seekToDeath(death: DeathPeriod) {
 	emit('seek', Math.max(0, death.timestampSeconds - 10));
-}
-
-function getDeadFightFraction(periods: readonly DeathPeriod[]) {
-	const intervals = periods
-		.map(period => ({
-			start: Math.max(0, Math.min(1, period.percent)),
-			end: Math.max(0, Math.min(1, period.endPercent)),
-		}))
-		.filter(interval => interval.end > interval.start)
-		.sort((left, right) => left.start - right.start);
-	if (intervals.length === 0) return 0;
-
-	let coveredFraction = 0;
-	let currentStart = intervals[0].start;
-	let currentEnd = intervals[0].end;
-
-	for (const interval of intervals.slice(1)) {
-		if (interval.start > currentEnd) {
-			coveredFraction += currentEnd - currentStart;
-			currentStart = interval.start;
-			currentEnd = interval.end;
-			continue;
-		}
-		currentEnd = Math.max(currentEnd, interval.end);
-	}
-
-	return Math.min(1, coveredFraction + currentEnd - currentStart);
 }
 
 const deathPeriods = computed<DeathPeriod[]>(() => {
@@ -1109,8 +1528,12 @@ const deathPeriods = computed<DeathPeriod[]>(() => {
 			openDeaths.delete(actorKey);
 		});
 
-	return periods.filter(death => death.percent > 0 && death.percent < 1);
+	return periods;
 });
+
+const visibleDeathPeriods = computed(() => (
+	enabledGroupIDs.value.has('deaths') ? deathPeriods.value : []
+));
 
 const lanes = computed<TimelineLane[]>(() => {
 	if (props.fightDuration <= 0) return [];
@@ -1168,7 +1591,7 @@ const lanes = computed<TimelineLane[]>(() => {
 		eventsBySource.set(sourceKey, sourceEntry);
 	});
 
-	deathPeriods.value.forEach((death) => {
+	visibleDeathPeriods.value.forEach((death) => {
 		const sourceEntry = eventsBySource.get(death.actorKey) || {
 			actorID: death.event.target?.id,
 			name: death.name,
@@ -1225,7 +1648,7 @@ const lanes = computed<TimelineLane[]>(() => {
 		})
 		.filter(lane => (
 			lane.cooldowns.length > 0
-			|| getDeadFightFraction(lane.deathPeriods) < HIDE_INACTIVE_DEAD_LANE_THRESHOLD
+			|| lane.deathPeriods.length > 0
 		))
 		.sort((left, right) => (
 			ROLE_SORT_ORDER[left.role] - ROLE_SORT_ORDER[right.role]
@@ -1269,9 +1692,26 @@ const timelineRows = computed<TimelineRow[]>(() => {
 	return rows;
 });
 
-watch(timelineRows, () => {
+watch([timelineRows, bossCastLanes, () => reviewsStore.bossCastDisplayMode], () => {
 	void nextTick(scheduleCustomScrollbarUpdate);
 }, { flush: 'post' });
+watch(
+	[
+		bossCastLanes,
+		() => reviewsStore.bossCastDisplayMode,
+		isExpanded,
+		timelineViewMode,
+	],
+	() => {
+		if (
+			!isExpanded.value
+			|| timelineViewMode.value !== 'fight'
+			|| reviewsStore.bossCastDisplayMode !== 'full'
+		) return;
+		void nextTick(refreshWowheadTooltips);
+	},
+	{ flush: 'post', immediate: true },
+);
 
 const visibleCooldownCount = computed(() => (
 	lanes.value.reduce((total, lane) => total + lane.cooldowns.length, 0)
@@ -1317,8 +1757,36 @@ function onComparisonPlayerRequestApplied(token: number) {
 		<div
 			v-if="isExpanded"
 			id="review-cooldown-timeline-panel"
-			class="absolute bottom-[calc(100%+0.5rem)] left-0 right-0 z-[120] flex h-[min(62vh,38rem)] min-h-40 flex-col overflow-hidden rounded-lg border border-sky-500/25 bg-light2 shadow-2xl dark:border-sky-400/20 dark:bg-dark2"
+			ref="expandedTimelinePanel"
+			class="absolute bottom-[calc(100%+0.5rem)] left-0 right-0 z-[120] flex min-h-40 flex-col overflow-hidden rounded-lg border border-sky-500/25 bg-light2 shadow-2xl dark:border-sky-400/20 dark:bg-dark2"
+			:style="{
+				height: isExpandedTimelineResizing
+					? 'var(--review-expanded-timeline-drag-height)'
+					: `${expandedTimelineHeight}px`,
+				maxHeight: `${expandedTimelineMaxHeight}px`,
+				contain: 'layout paint',
+			}"
 		>
+			<button
+				type="button"
+				class="group absolute inset-x-0 top-0 z-[60] h-2 touch-none cursor-ns-resize focus:outline-none focus-visible:bg-sky-500/10"
+				:class="{ 'bg-sky-500/10': isExpandedTimelineResizing }"
+				role="separator"
+				aria-label="Resize expanded timeline"
+				aria-orientation="horizontal"
+				aria-controls="review-cooldown-timeline-panel"
+				:aria-valuemin="MIN_EXPANDED_HEIGHT_PX"
+				:aria-valuemax="expandedTimelineMaxHeight"
+				:aria-valuenow="expandedTimelineHeight"
+				title="Drag to resize timeline"
+				@pointerdown="onExpandedTimelineResizePointerDown"
+				@pointermove="onExpandedTimelineResizePointerMove"
+				@pointerup="onExpandedTimelineResizePointerEnd"
+				@pointercancel="onExpandedTimelineResizePointerEnd"
+				@keydown="onExpandedTimelineResizeKeydown"
+			>
+				<span class="pointer-events-none absolute left-1/2 top-px h-[3px] w-16 -translate-x-1/2 border-x border-sky-400/35 bg-neutral-500/45 transition-colors group-hover:bg-sky-400/70 group-focus-visible:bg-sky-400/70"></span>
+			</button>
 			<div class="relative z-30 flex h-10 shrink-0 items-center justify-between gap-3 border-b border-neutral-400/30 bg-light4 px-3 text-sm shadow-sm dark:border-neutral-600/30 dark:bg-dark4">
 				<div class="flex min-w-0 items-center gap-2">
 					<h2 class="shrink-0 font-semibold tracking-tight">Fight timeline</h2>
@@ -1333,18 +1801,26 @@ function onComparisonPlayerRequestApplied(token: number) {
 						{{ visibleCooldownCount }} casts
 					</span>
 					<span class="rounded border border-neutral-500/25 bg-light4/70 px-1.5 py-0.5 tabular-nums text-neutral-600 dark:bg-dark4/70 dark:text-neutral-300">
-						{{ deathPeriods.length }} deaths
+						{{ visibleDeathPeriods.length }} deaths
 					</span>
 					<span class="rounded border border-neutral-500/25 bg-light4/70 px-1.5 py-0.5 tabular-nums text-neutral-600 dark:bg-dark4/70 dark:text-neutral-300">
 						{{ lanes.length }} players
 					</span>
-					<span
-						v-if="groups.length"
-						class="ml-1 max-w-64 truncate rounded border border-neutral-500/20 bg-neutral-500/[0.06] px-1.5 py-0.5 text-neutral-500 dark:text-neutral-400"
-						:aria-label="`Showing cooldown groups: ${enabledGroupSummary || 'None'}`"
+					<button
+						type="button"
+						class="flex h-6 shrink-0 items-center gap-1 border border-neutral-500/30 bg-neutral-500/[0.06] px-2 font-medium text-neutral-600 hover:border-amber-500/60 hover:bg-amber-500/10 hover:text-amber-700 focus:outline-none focus:ring-1 focus:ring-amber-500 disabled:cursor-wait disabled:opacity-50 dark:text-neutral-300 dark:hover:text-amber-300"
+						:class="isBossCastFiltersExpanded ? 'border-amber-500/60 bg-amber-500/10 text-amber-700 dark:text-amber-300' : ''"
+						:disabled="isBossCastsLoading"
+						:aria-expanded="isBossCastFiltersExpanded"
+						@click="isBossCastFiltersExpanded = !isBossCastFiltersExpanded"
 					>
-						Showing: {{ enabledGroupSummary || 'None' }}
-					</span>
+						<span v-if="isBossCastsLoading">Boss casts...</span>
+						<span v-else>Boss {{ visibleBossCastAbilityCount }}/{{ bossCastAbilities.length }}</span>
+						<span v-if="bossCastInterruptsIncomplete" class="font-bold text-amber-500" title="Interrupt details are incomplete" aria-label="Interrupt details are incomplete">!</span>
+						<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" class="size-3 transition-transform" :class="{ 'rotate-180': isBossCastFiltersExpanded }">
+							<path fill-rule="evenodd" d="M5.22 7.47a.75.75 0 0 1 1.06 0L10 11.19l3.72-3.72a.75.75 0 1 1 1.06 1.06l-4.25 4.25a.75.75 0 0 1-1.06 0L5.22 8.53a.75.75 0 0 1 0-1.06Z" clip-rule="evenodd" />
+						</svg>
+					</button>
 					<button
 						type="button"
 						class="ml-1 flex h-6 shrink-0 items-center gap-1 border border-neutral-500/30 bg-neutral-500/[0.06] px-2 text-[10px] font-medium text-neutral-600 hover:border-sky-500/60 hover:bg-sky-500/10 hover:text-sky-600 focus:outline-none focus:ring-1 focus:ring-sky-500 dark:text-neutral-300 dark:hover:text-sky-300"
@@ -1442,6 +1918,15 @@ function onComparisonPlayerRequestApplied(token: number) {
 						@click="restoreDefaultGroups"
 					>
 						Defaults
+					</button>
+					<button
+						v-if="bossCastInterruptsIncomplete"
+						type="button"
+						class="h-7 shrink-0 border border-amber-500/40 bg-amber-500/10 px-2 text-[10px] text-amber-700 hover:border-amber-500/70 hover:bg-amber-500/15 focus:outline-none focus:ring-1 focus:ring-amber-500 dark:text-amber-300"
+						title="Boss casts loaded, but the WCL interrupt request failed"
+						@click="retrySelectedBossCasts"
+					>
+						Interrupts incomplete · Retry
 					</button>
 				</div>
 			</div>
@@ -1577,23 +2062,83 @@ function onComparisonPlayerRequestApplied(token: number) {
 				</div>
 			</div>
 
+			<div
+				v-if="timelineViewMode === 'fight' && isBossCastFiltersExpanded"
+				class="shrink-0 border-b border-neutral-400/30 bg-light4 px-3 py-2 shadow-inner dark:border-neutral-600/30 dark:bg-dark4"
+			>
+				<div class="flex items-center gap-2">
+					<div class="flex shrink-0 items-center gap-1.5 border-r border-neutral-500/25 pr-2">
+						<span class="text-[10px] font-semibold uppercase tracking-wider text-neutral-600 dark:text-neutral-300">Boss casts</span>
+						<span class="rounded bg-neutral-500/10 px-1 py-0.5 text-[9px] tabular-nums text-neutral-500 dark:text-neutral-400">
+							{{ visibleBossCastAbilityCount }}/{{ bossCastAbilities.length }}
+						</span>
+					</div>
+					<input
+						v-model="bossCastSearchQuery"
+						type="search"
+						placeholder="Search boss spell, source, or ID"
+						class="h-7 min-w-32 flex-1 rounded border border-neutral-500/30 bg-light4 px-2 text-[11px] shadow-inner outline-none placeholder:text-neutral-500 focus:border-amber-500 dark:bg-dark4"
+					/>
+					<button
+						type="button"
+						class="h-7 shrink-0 rounded border border-neutral-500/25 bg-light4/50 px-2 text-[10px] text-neutral-500 shadow-sm hover:bg-neutral-500/15 hover:text-inherit focus:outline-none focus:ring-1 focus:ring-amber-500 dark:bg-dark4/50 dark:text-neutral-400"
+						@click="restoreDefaultBossCasts"
+					>
+						Defaults
+					</button>
+				</div>
+				<div
+					v-if="filteredBossCastAbilities.length > 0"
+					class="mt-1.5 grid max-h-32 gap-1 overflow-x-hidden overflow-y-auto pr-1"
+					style="grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));"
+				>
+					<button
+						v-for="ability in filteredBossCastAbilities"
+						:key="`boss-option:${ability.spellID}`"
+						type="button"
+						class="flex min-w-0 items-center gap-2 rounded-sm border px-1.5 py-1 text-left shadow-sm focus:outline-none focus:ring-1 focus:ring-amber-500"
+						:class="isBossCastAbilityVisible(ability)
+							? 'border-amber-500/45 bg-amber-500/[0.08]'
+							: 'border-neutral-500/20 bg-transparent opacity-55 grayscale hover:opacity-80'"
+						:aria-pressed="isBossCastAbilityVisible(ability)"
+						@click="toggleBossCastAbility(ability)"
+					>
+						<img v-if="ability.icon" :src="getSpellIconURL(ability.icon)" alt="" class="size-6 shrink-0 rounded-none border border-neutral-500/40 bg-black" draggable="false" />
+						<span v-else class="flex size-6 shrink-0 items-center justify-center bg-black text-[10px] text-white">{{ ability.name.slice(0, 1) }}</span>
+						<span class="min-w-0 flex-1">
+							<span class="block truncate text-[11px] font-medium">{{ ability.name }}</span>
+							<span class="block truncate text-[9px] text-neutral-500 dark:text-neutral-400">
+								{{ ability.sources.map(source => source.name).join(', ') }} · {{ ability.castCount }} casts
+							</span>
+						</span>
+						<span class="text-[9px] tabular-nums text-neutral-500">#{{ ability.spellID }}</span>
+					</button>
+				</div>
+				<div v-else class="flex items-center justify-center gap-2 py-3 text-center text-[11px] text-neutral-500">
+					<span>{{ bossCastError || (isBossCastsLoading ? 'Loading boss casts...' : 'No boss casts match this filter.') }}</span>
+					<button v-if="bossCastError" type="button" class="border border-red-500/35 px-2 py-0.5 text-red-500 hover:bg-red-500/10" @click="retrySelectedBossCasts">Retry</button>
+				</div>
+			</div>
+
 			<template v-if="timelineViewMode === 'fight'">
 			<div
-				v-if="loading && lanes.length === 0"
+				v-if="(loading || isBossCastsLoading) && lanes.length === 0 && bossCastLanes.length === 0"
 				class="flex min-h-0 flex-1 items-center justify-center text-sm text-neutral-500"
 			>
 				Loading timeline...
 			</div>
 			<div
-				v-else-if="lanes.length === 0"
+				v-else-if="lanes.length === 0 && bossCastLanes.length === 0"
 				class="flex min-h-0 flex-1 items-center justify-center px-3 text-sm text-neutral-500"
 				:class="{ 'text-red-500': error }"
 			>
 				{{
-					error
+						error || bossCastError
 						|| (groups.length > 0 && enabledGroupIDs.size === 0
 							? 'No cooldown groups selected.'
-							: 'No cooldown casts or player deaths found.')
+							: enabledGroupIDs.has('deaths')
+								? 'No cooldown casts or player deaths found.'
+								: 'No cooldown casts found.')
 				}}
 			</div>
 			<div v-else class="flex min-h-0 flex-1 flex-col">
@@ -1632,6 +2177,42 @@ function onComparisonPlayerRequestApplied(token: number) {
 					>
 					<div class="flex min-h-full min-w-0">
 						<div class="relative z-20 shrink-0 border-r border-neutral-400/25 bg-light4 shadow-[3px_0_7px_rgba(0,0,0,0.12)] dark:border-neutral-600/25 dark:bg-dark4" style="width: var(--review-timeline-sidebar-width);">
+							<div
+								v-if="bossCastLanes.length > 0"
+								class="flex items-center justify-between border-y border-amber-700/20 px-2 text-[10px] font-bold uppercase tracking-wider text-neutral-600 dark:text-neutral-300"
+								:class="reviewsStore.bossCastDisplayMode === 'collapsed' ? 'sticky top-0 z-[45] bg-light4 shadow-md dark:bg-dark4' : 'bg-amber-950/[0.08] dark:bg-amber-950/20'"
+								:style="{ height: `${ROLE_HEADER_HEIGHT_PX}px` }"
+							>
+								<span>Boss casts</span>
+								<div class="flex items-center gap-1">
+									<span class="font-medium opacity-70">{{ bossCastLanes.length }}</span>
+									<span class="flex border border-neutral-500/30 bg-black/10 p-px normal-case tracking-normal dark:bg-black/25">
+										<button type="button" class="h-3.5 px-1 text-[8px] leading-none" :class="reviewsStore.bossCastDisplayMode === 'full' ? 'bg-amber-500/25 text-amber-700 dark:text-amber-200' : 'text-neutral-500 hover:text-inherit'" title="Show one row per boss spell" aria-label="Use full boss cast timeline" @click="setBossCastDisplayMode('full')">Full</button>
+										<button type="button" class="h-3.5 px-1 text-[8px] leading-none" :class="reviewsStore.bossCastDisplayMode === 'collapsed' ? 'bg-amber-500/25 text-amber-700 dark:text-amber-200' : 'text-neutral-500 hover:text-inherit'" title="Show all boss casts on one row" aria-label="Use collapsed boss cast timeline" @click="setBossCastDisplayMode('collapsed')">1</button>
+									</span>
+								</div>
+							</div>
+							<template v-if="bossCastLanes.length > 0 && reviewsStore.bossCastDisplayMode === 'full'">
+								<a
+									v-for="(lane, laneIndex) in bossCastLanes"
+									:key="`boss-label:${lane.ability.spellID}`"
+									:href="`https://www.wowhead.com/spell=${lane.ability.spellID}`"
+									target="_blank"
+									rel="noopener noreferrer"
+									:data-wowhead="`spell=${lane.ability.spellID}`"
+									class="relative flex min-w-0 cursor-pointer items-center gap-1.5 border-b border-neutral-500/20 py-0 pl-2 pr-1.5 text-left text-sm font-medium leading-none tracking-tight hover:bg-amber-500/10 focus:outline-none focus:ring-1 focus:ring-inset focus:ring-amber-500/60"
+									:class="laneIndex % 2 === 1 ? 'bg-neutral-500/10' : 'bg-transparent'"
+									:style="{ height: `${BOSS_CAST_LANE_HEIGHT_PX}px` }"
+									:aria-label="`${lane.ability.name} · ${lane.ability.sources.map(source => source.name).join(', ')} · Open on Wowhead`"
+									@click.stop
+								>
+									<span class="absolute inset-y-1 left-0 w-1 bg-amber-700/70"></span>
+									<img v-if="lane.ability.icon" :src="getSpellIconURL(lane.ability.icon)" alt="" class="size-5 shrink-0 rounded-none border border-neutral-500/50 bg-black object-cover shadow-sm" draggable="false" />
+									<span v-else class="flex size-5 shrink-0 items-center justify-center bg-black text-[9px] text-white">{{ lane.ability.name.slice(0, 1) }}</span>
+									<span class="min-w-0 flex-1 truncate">{{ lane.ability.name }}</span>
+									<span class="shrink-0 text-[9px] tabular-nums text-neutral-500">{{ lane.markers.length }}</span>
+								</a>
+							</template>
 							<template v-for="row in timelineRows" :key="`label:${row.key}`">
 								<div
 									v-if="row.kind === 'role'"
@@ -1704,6 +2285,62 @@ function onComparisonPlayerRequestApplied(token: number) {
 								:style="{ left: `${timelineHover.percent * 100}%` }"
 							></div>
 
+							<div
+								v-if="bossCastLanes.length > 0"
+								class="review-boss-cast-lane relative border-y border-amber-700/20"
+								:class="reviewsStore.bossCastDisplayMode === 'collapsed' ? 'sticky top-0 z-[45] cursor-pointer bg-light4 shadow-md dark:bg-dark4' : 'bg-amber-950/[0.08] dark:bg-amber-950/20'"
+								:style="{ height: `${ROLE_HEADER_HEIGHT_PX}px` }"
+							>
+								<template v-if="reviewsStore.bossCastDisplayMode === 'collapsed'">
+									<div v-for="marker in minuteTimeMarkers" :key="`collapsed-head-minute:${marker}`" class="pointer-events-none absolute inset-y-0 z-[1] w-px bg-neutral-500/25" :style="{ left: `${marker * 100}%` }"></div>
+									<div v-for="phase in visiblePhases" :key="`collapsed-head-phase:${phase.name}:${phase.percent}`" class="pointer-events-none absolute inset-y-0 z-10 w-0.5 bg-sky-400/80" :style="{ left: `${phase.percent * 100}%` }"></div>
+									<div v-if="cursorPercent > 0 && cursorPercent < 1" class="pointer-events-none absolute inset-y-0 z-30 w-0.5 bg-amber-400" :style="{ left: `${cursorPercent * 100}%` }"></div>
+									<span v-for="marker in collapsedBossCastDurationMarkers.filter(entry => entry.durationSeconds > 0)" :key="`collapsed-head-duration:${marker.key}`" class="review-boss-cast-rail review-boss-cast-rail--compact pointer-events-none absolute top-[9px] z-[6] h-[3px] min-w-px" :class="getBossCastDurationClass(marker)" :style="{ left: `${marker.startPercent * 100}%`, width: `${Math.max(0, marker.percent - marker.startPercent) * 100}%` }"></span>
+									<button v-for="item in collapsedBossCastMarkers" :key="`collapsed-head:${item.marker.key}`" type="button" class="absolute top-0 z-20 size-5 overflow-visible rounded-none border bg-black shadow-[0_1px_4px_rgba(0,0,0,0.45)] transition-none hover:z-30 hover:scale-110 focus:z-30 focus:outline-none focus:ring-1 focus:ring-amber-200" :class="getBossCastMarkerClass(item.occurrences)" :style="{ left: `clamp(0px, calc(${item.marker.percent * 100}% + ${item.offsetPixels}px), calc(100% - 20px))` }" :aria-label="item.occurrences.length > 1 ? `${item.lane.ability.name}, ${item.occurrences.length} outcomes, first at ${formatCooldownTimestamp(item.marker.timestampSeconds)}` : `${item.lane.ability.name} ${item.marker.event.bossCast.interrupt ? 'interrupted' : 'completed'} for ${item.marker.event.source?.name || 'Unknown enemy'} at ${formatCooldownTimestamp(item.marker.timestampSeconds)}`" @click.stop="emit('seek', item.marker.timestampSeconds)" @mouseenter="showBossCastTooltip(item.lane, item.marker, $event, item.occurrences)" @mousemove="updateDetailTooltipPosition" @mouseleave="hideDetailTooltip">
+										<img v-if="item.lane.ability.icon" :src="getSpellIconURL(item.lane.ability.icon)" :alt="item.lane.ability.name" class="block size-full" draggable="false" /><span v-else class="flex size-full items-center justify-center text-[9px] text-white">{{ item.lane.ability.name.slice(0, 1) }}</span>
+						<span v-if="item.occurrences.length > 1" class="pointer-events-none absolute bottom-0 right-0 z-10 min-w-3 border border-amber-200/80 bg-amber-500 px-0.5 text-center text-[8px] font-bold leading-[11px] text-black shadow">{{ item.occurrences.length }}</span>
+									</button>
+									<div v-if="timelineHover.visible && timelineHover.context === 'expanded'" class="pointer-events-none absolute inset-y-0 z-40 w-0.5 bg-white/60" :style="{ left: `${timelineHover.percent * 100}%` }"></div>
+								</template>
+							</div>
+							<template v-if="bossCastLanes.length > 0 && reviewsStore.bossCastDisplayMode === 'full'">
+							<div
+								v-for="(lane, laneIndex) in fullBossCastLanes"
+								:key="`boss-plot:${lane.ability.spellID}`"
+								class="review-boss-cast-lane relative border-b border-neutral-500/20 transition-none hover:bg-amber-500/[0.035]"
+								:class="laneIndex % 2 === 1 ? 'bg-neutral-500/10' : 'bg-transparent'"
+								:style="{ height: `${BOSS_CAST_LANE_HEIGHT_PX}px` }"
+							>
+								<span
+									v-for="marker in lane.markers.filter(item => item.durationSeconds > 0)"
+									:key="`boss-duration:${marker.key}`"
+									class="review-boss-cast-rail pointer-events-none absolute top-[14px] z-[6] h-[5px] min-w-px"
+									:class="getBossCastDurationClass(marker)"
+									:style="{
+										left: `${marker.startPercent * 100}%`,
+										width: `${Math.max(0, marker.percent - marker.startPercent) * 100}%`,
+									}"
+								></span>
+								<button
+									v-for="item in lane.markerGroups"
+									:key="item.marker.key"
+									type="button"
+									class="absolute top-1 z-20 size-6 overflow-visible rounded-none border bg-black shadow-[0_1px_4px_rgba(0,0,0,0.45)] transition-none hover:z-30 hover:scale-105 focus:z-30 focus:outline-none focus:ring-1 focus:ring-amber-200"
+									:class="getBossCastMarkerClass(item.occurrences)"
+									:style="{ left: `clamp(0px, calc(${item.marker.percent * 100}% + ${item.offsetPixels}px), calc(100% - 24px))` }"
+									:aria-label="item.occurrences.length > 1 ? `${lane.ability.name}, ${item.occurrences.length} outcomes, first at ${formatCooldownTimestamp(item.marker.timestampSeconds)}` : `${lane.ability.name} ${item.marker.event.bossCast.interrupt ? 'interrupted' : 'completed'} for ${item.marker.event.source?.name || 'Unknown enemy'} at ${formatCooldownTimestamp(item.marker.timestampSeconds)}`"
+									@click.stop="emit('seek', item.marker.timestampSeconds)"
+									@mouseenter="showBossCastTooltip(lane, item.marker, $event, item.occurrences)"
+									@mousemove="updateDetailTooltipPosition"
+									@mouseleave="hideDetailTooltip"
+								>
+									<img v-if="lane.ability.icon" :src="getSpellIconURL(lane.ability.icon)" :alt="lane.ability.name" class="size-full" draggable="false" />
+									<span v-else class="flex size-full items-center justify-center text-[10px] text-white">{{ lane.ability.name.slice(0, 1) }}</span>
+									<span v-if="item.occurrences.length > 1" class="pointer-events-none absolute bottom-0 right-0 z-10 min-w-3 border border-amber-200/80 bg-amber-500 px-0.5 text-center text-[8px] font-bold leading-[11px] text-black shadow">{{ item.occurrences.length }}</span>
+								</button>
+							</div>
+							</template>
+
 							<template v-for="row in timelineRows" :key="`plot:${row.key}`">
 								<div
 									v-if="row.kind === 'role'"
@@ -1723,7 +2360,7 @@ function onComparisonPlayerRequestApplied(token: number) {
 									type="button"
 									class="absolute inset-y-0 z-[5] cursor-pointer border-x border-red-400/70 bg-red-800/45 transition-colors hover:z-20 hover:bg-red-700/65 focus:z-20 focus:bg-red-700/65 focus:outline-none"
 									:style="{
-										left: `${death.percent * 100}%`,
+										left: death.percent >= 1 ? 'calc(100% - 3px)' : `${death.percent * 100}%`,
 										width: `${Math.max(0, death.endPercent - death.percent) * 100}%`,
 										minWidth: '3px',
 										backgroundImage: 'repeating-linear-gradient(135deg, rgba(248, 113, 113, 0.22) 0, rgba(248, 113, 113, 0.22) 4px, transparent 4px, transparent 8px)',
@@ -1740,10 +2377,10 @@ function onComparisonPlayerRequestApplied(token: number) {
 									v-for="cooldown in row.lane.cooldowns"
 									:key="cooldown.key"
 									type="button"
-									class="absolute z-20 size-6 -translate-x-1/2 overflow-hidden rounded-none border bg-black shadow-[0_1px_4px_rgba(0,0,0,0.45)] transition-[transform,box-shadow] hover:z-30 hover:scale-110 hover:shadow-lg focus:z-30 focus:scale-110 focus:outline-none focus:ring-2 focus:ring-white/70"
+									class="absolute z-20 size-6 overflow-hidden rounded-none border bg-black shadow-[0_1px_4px_rgba(0,0,0,0.45)] transition-[transform,box-shadow] hover:z-30 hover:scale-110 hover:shadow-lg focus:z-30 focus:scale-110 focus:outline-none focus:ring-2 focus:ring-white/70"
 									:class="getCooldownBorderColor(cooldown.event)"
 									:style="{
-										left: `clamp(12px, ${cooldown.percent * 100}%, calc(100% - 12px))`,
+										left: `clamp(0px, ${cooldown.percent * 100}%, calc(100% - 24px))`,
 										top: `${TRACK_TOP_OFFSET_PX + cooldown.track * TRACK_HEIGHT_PX}px`,
 									}"
 									:aria-label="`${cooldown.event.source?.name || 'Unknown player'} used ${cooldown.event.ability?.name || `Spell ${cooldown.event.cooldown.spellID}`} at ${formatCooldownTimestamp(cooldown.timestampSeconds)}${cooldown.event.cooldown.interruptSuccessful == null ? '' : cooldown.event.cooldown.interruptSuccessful ? ', interrupt successful' : ', no interrupt recorded'}`"
@@ -1781,8 +2418,8 @@ function onComparisonPlayerRequestApplied(token: number) {
 						:class="!customScrollbarState.visible
 							? 'pointer-events-none opacity-0'
 							: isCustomScrollbarActive
-								? 'opacity-100'
-								: 'opacity-0 hover:opacity-100'"
+								? 'pointer-events-auto opacity-100'
+								: 'pointer-events-none opacity-0 focus-within:pointer-events-auto focus-within:opacity-100'"
 						:aria-hidden="!customScrollbarState.visible"
 						@pointerdown="onCustomScrollbarTrackPointerDown"
 					>
@@ -1818,6 +2455,7 @@ function onComparisonPlayerRequestApplied(token: number) {
 				:groups="groups"
 				:enabled-group-ids="selectedGroupIDs"
 				:excluded-spell-ids="excludedSpellIDs"
+				:container-resizing="isExpandedTimelineResizing"
 				:current-fight-cursor-seconds="cursorPercent * fightDuration / 1000"
 				:requested-player-id="comparisonPlayerRequest?.playerID"
 				:requested-player-name="comparisonPlayerRequest?.playerName"
@@ -1855,7 +2493,7 @@ function onComparisonPlayerRequestApplied(token: number) {
 				<span class="min-w-0 leading-tight">
 					<span class="block truncate text-xs font-semibold">Fight timeline</span>
 					<span class="block truncate text-[10px] text-neutral-500 dark:text-neutral-400">
-						{{ loading ? 'Loading...' : `${visibleCooldownCount} casts / ${deathPeriods.length} deaths` }}
+						{{ loading ? 'Loading...' : `${visibleCooldownCount} casts / ${visibleDeathPeriods.length} deaths` }}
 					</span>
 				</span>
 			</button>
@@ -1879,7 +2517,7 @@ function onComparisonPlayerRequestApplied(token: number) {
 					<span class="absolute left-1 top-0 text-xs font-semibold leading-none text-sky-500">{{ phase.name }}</span>
 				</div>
 
-				<template v-for="death in deathPeriods" :key="`compact:${death.key}`">
+				<template v-for="death in visibleDeathPeriods" :key="`compact:${death.key}`">
 					<div
 						class="pointer-events-none absolute inset-y-0 z-10 w-0.5 bg-red-600"
 						:style="{ left: `${death.percent * 100}%` }"
@@ -1973,6 +2611,74 @@ function onComparisonPlayerRequestApplied(token: number) {
 				<div class="mt-1 text-[11px] text-neutral-300">
 					{{ detailTooltip.cooldown.event.cooldown.groups.map(groupID => groupLabels.get(groupID) || groupID).join(', ') }}
 				</div>
+			</div>
+
+			<div
+				v-else-if="detailTooltip?.kind === 'boss'"
+				ref="bossCastTooltipElement"
+				class="pointer-events-none fixed z-[999] w-max max-w-[calc(100vw-1rem)] rounded-md border bg-black/90 px-3 py-2 text-xs text-white shadow-xl"
+				:class="[
+					getBossCastInterruptCount(detailTooltip.occurrences) > 0 ? 'border-emerald-500/60' : 'border-amber-500/55',
+				]"
+				:style="bossCastTooltipStyle"
+			>
+				<div class="flex items-center gap-2">
+					<img
+						v-if="detailTooltip.lane.ability.icon"
+						:src="getSpellIconURL(detailTooltip.lane.ability.icon)"
+						alt=""
+						class="size-8 shrink-0 rounded-none border border-amber-500/50 bg-black"
+					/>
+					<div class="min-w-0">
+						<div class="flex items-center gap-1.5 font-semibold text-amber-200">
+							<span>{{ detailTooltip.lane.ability.name }}</span>
+							<span v-if="detailTooltip.occurrences.length > 1" class="border border-amber-400/45 bg-amber-500/15 px-1 text-[10px] leading-4 text-amber-100">×{{ detailTooltip.occurrences.length }}</span>
+							<span v-else-if="detailTooltip.marker.event.bossCast.interrupt" class="border border-emerald-400/45 bg-emerald-500/15 px-1 text-[10px] leading-4 text-emerald-200">Interrupted</span>
+						</div>
+						<div v-if="detailTooltip.occurrences.length > 1" class="text-neutral-300">
+							{{ detailTooltip.occurrences.length }} casts
+							<template v-if="getBossCastOccurrenceSpan(detailTooltip.occurrences) > 0">over {{ formatDuration(getBossCastOccurrenceSpan(detailTooltip.occurrences)) }}</template>
+							<template v-else>at the same time</template>
+							<span v-if="getBossCastInterruptCount(detailTooltip.occurrences) > 0" class="text-emerald-300"> · {{ getBossCastInterruptCount(detailTooltip.occurrences) }} interrupted</span>
+						</div>
+						<div v-else class="flex flex-wrap items-center gap-x-1">
+							<ReviewRaidMarker :marker="detailTooltip.marker.event.sourceMarker" />
+							<span>{{ detailTooltip.marker.event.source?.name || 'Unknown enemy' }}</span>
+							<span v-if="detailTooltip.marker.event.sourceInstance != null && detailTooltip.marker.event.sourceInstance > 0" class="text-neutral-400">
+								· Spawn #{{ detailTooltip.marker.event.sourceInstance }}
+							</span>
+							{{ detailTooltip.marker.event.bossCast.interrupt ? 'interrupted' : 'finished' }} at {{ formatCooldownTimestamp(detailTooltip.marker.timestampSeconds) }}
+						</div>
+					</div>
+				</div>
+				<template v-if="detailTooltip.occurrences.length > 1">
+					<div class="mt-2 grid gap-x-3 border-t border-neutral-500/35 pt-1" :style="bossCastOccurrenceListStyle">
+						<div v-for="(occurrence, occurrenceIndex) in detailTooltip.occurrences" :key="`tooltip:${occurrence.key}`" class="min-w-0 border-b border-neutral-700/60 py-1 last:border-b-0 last:pb-0" :style="getBossCastOccurrenceStyle(occurrenceIndex, detailTooltip.occurrences.length)">
+							<div class="flex flex-wrap items-center gap-x-1.5">
+								<span class="font-semibold tabular-nums text-neutral-400">#{{ occurrenceIndex + 1 }}</span>
+								<span class="font-medium tabular-nums text-amber-200">{{ formatCooldownTimestamp(occurrence.timestampSeconds) }}</span>
+								<ReviewRaidMarker :marker="occurrence.event.sourceMarker" />
+								<span>{{ occurrence.event.source?.name || 'Unknown enemy' }}</span>
+								<span v-if="occurrence.event.sourceInstance != null && occurrence.event.sourceInstance > 0" class="text-neutral-400">· Spawn #{{ occurrence.event.sourceInstance }}</span>
+								<span v-if="occurrence.durationSeconds > 0" class="text-[11px]" :class="occurrence.event.bossCast.interrupt ? 'text-emerald-300' : 'text-neutral-400'">· Cast time {{ formatDuration(occurrence.durationSeconds) }}</span>
+							</div>
+							<ReviewCooldownTarget v-if="occurrence.event.target" :target="occurrence.event.target" :target-marker="occurrence.event.targetMarker" :target-instance="occurrence.event.targetInstance" />
+							<ReviewBossCastInterrupt v-if="occurrence.event.bossCast.interrupt" :interrupt="occurrence.event.bossCast.interrupt" />
+							<div v-else class="mt-1 flex items-center gap-1 text-[11px]">
+								<svg viewBox="0 0 16 16" fill="none" class="size-4 shrink-0 border border-amber-500/55 bg-amber-500/10 p-0.5 text-amber-200" aria-hidden="true">
+									<path d="m3 8.25 3 3L13 4.5" stroke="currentColor" stroke-width="1.75" stroke-linecap="square" stroke-linejoin="miter" />
+								</svg>
+								<span class="font-medium text-amber-200">Cast finished</span>
+							</div>
+						</div>
+					</div>
+				</template>
+				<template v-else>
+					<ReviewCooldownTarget v-if="detailTooltip.marker.event.target" :target="detailTooltip.marker.event.target" :target-marker="detailTooltip.marker.event.targetMarker" :target-instance="detailTooltip.marker.event.targetInstance" />
+					<div v-if="detailTooltip.marker.durationSeconds > 0" class="mt-1 text-[11px]" :class="detailTooltip.marker.event.bossCast.interrupt ? 'text-emerald-300' : 'text-neutral-300'">Cast time {{ formatDuration(detailTooltip.marker.durationSeconds) }}</div>
+					<ReviewBossCastInterrupt v-if="detailTooltip.marker.event.bossCast.interrupt" :interrupt="detailTooltip.marker.event.bossCast.interrupt" />
+				</template>
+				<div class="mt-1 text-[10px] text-neutral-400">Spell #{{ detailTooltip.lane.ability.spellID }} · Click to seek<span v-if="detailTooltip.occurrences.length > 1"> to first outcome</span></div>
 			</div>
 
 			<div

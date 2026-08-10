@@ -142,6 +142,7 @@ declare type reviewPhaseMarker = {
 }
 
 declare type reviewCooldownGroupID =
+	| 'deaths'
 	| 'raid_cd'
 	| 'personals'
 	| 'externals'
@@ -215,6 +216,97 @@ declare type reviewFightCooldownResponse = {
 	catalogVersion?: number;
 	cooldownGroups?: reviewCooldownGroup[];
 	fightCooldownEvents?: reviewCooldownEvent[];
+	error?: string;
+}
+
+declare type reviewBossCastEvent = {
+	timestamp: number;
+	duration?: number;
+	type: string;
+	source?: {
+		gameID?: number;
+		guid?: number;
+		icon?: string;
+		id?: number;
+		name?: string;
+		subType?: string;
+		type?: string;
+	};
+	sourceInstance?: number;
+	sourceMarker?: number;
+	target?: {
+		guid?: number;
+		icon?: string;
+		id?: number;
+		name?: string;
+		type?: string;
+	};
+	targetInstance?: number;
+	targetMarker?: number;
+	ability?: {
+		abilityIcon?: string;
+		guid?: number;
+		name?: string;
+		type?: number;
+	};
+	fight?: number;
+	bossCast: {
+		spellID: number;
+		startTimestamp?: number;
+		sourceGameID?: number;
+		sourceSubType?: string;
+		interrupt?: {
+			timestamp: number;
+			source?: {
+				gameID?: number;
+				guid?: number;
+				icon?: string;
+				id?: number;
+				name?: string;
+				subType?: string;
+				type?: string;
+			};
+			sourcePet?: {
+				gameID?: number;
+				guid?: number;
+				icon?: string;
+				id?: number;
+				name?: string;
+				subType?: string;
+				type?: string;
+			};
+			ability?: {
+				abilityIcon?: string;
+				guid?: number;
+				name?: string;
+				type?: number;
+			};
+		};
+	};
+}
+
+declare type reviewBossCastAbility = {
+	spellID: number;
+	name: string;
+	icon: string;
+	castCount: number;
+	defaultEnabled: boolean;
+	sources: Array<{
+		gameID?: number;
+		name: string;
+		subType: string;
+	}>;
+}
+
+declare type reviewFightBossCastData = {
+	fightID: number;
+	abilities: reviewBossCastAbility[];
+	bossCastEvents: reviewBossCastEvent[];
+	interruptsComplete?: boolean;
+}
+
+declare type reviewFightBossCastResponse = {
+	bossCastData?: reviewFightBossCastData;
 	error?: string;
 }
 
