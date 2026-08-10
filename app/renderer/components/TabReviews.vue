@@ -3,7 +3,7 @@ import log from 'electron-log/renderer';
 import { IPC_EVENTS } from '@/events';
 
 import { ref, computed, watch, onMounted, onBeforeUnmount, useTemplateRef, nextTick } from 'vue';
-import { useIpcRendererOn } from '@vueuse/electron';
+import { useIpcOn } from '@/renderer/composables/useIpcOn';
 
 import TabContent from '@/renderer/components/TabContent.vue';
 import UIButton from '@/renderer/components/Button.vue';
@@ -12,7 +12,6 @@ import Input from '@/renderer/components/Input.vue';
 import ScrollFrame from '@/renderer/components/ScrollFrame.vue';
 import ReviewCooldownTimeline from '@/renderer/components/ReviewCooldownTimeline.vue';
 
-import { getElectronStoreRef } from '@/renderer/store/ElectronRefStore';
 import { useReviewsStore } from '@/renderer/store/ReviewsStore';
 import { useLoginStore } from '@/renderer/store/LoginStore';
 
@@ -34,7 +33,25 @@ function formatTime(t) {
 const reviewsStore = useReviewsStore();
 const loginStore = useLoginStore();
 
-const refreshToken = getElectronStoreRef<string | null>('WCL_REFRESH_TOKEN', null);
+const isWclAuthorized = ref(false);
+let initialReportsRequested = false;
+let wclAuthorizationStatusRevision = 0;
+
+function applyWclAuthorizationStatus(authorized: unknown) {
+	isWclAuthorized.value = authorized === true;
+	if (!isWclAuthorized.value) {
+		initialReportsRequested = false;
+		return;
+	}
+	if (initialReportsRequested) return;
+	initialReportsRequested = true;
+	void reviewsStore.requestReports();
+}
+
+useIpcOn(IPC_EVENTS.WCL_AUTH_STATUS_UPDATED, (_event, authorized: boolean) => {
+	wclAuthorizationStatusRevision++;
+	applyWclAuthorizationStatus(authorized);
+});
 
 const youtubeLink = ref('')
 const youtubeLinkStatus = ref('')
@@ -274,12 +291,12 @@ function onPlayerKeyDown(event: KeyboardEvent) {
 	handlePlayerHotkey(event);
 }
 
-useIpcRendererOn(ipc, IPC_EVENTS.YOUTUBE_PLAYER_HOTKEY_CALLBACK, (event, input: PlayerHotkeyPayload) => {
+useIpcOn(IPC_EVENTS.YOUTUBE_PLAYER_HOTKEY_CALLBACK, (event, input: PlayerHotkeyPayload) => {
 	if (!isPlayerHotkeyContext()) return;
 	handlePlayerHotkey(input);
 });
 
-useIpcRendererOn(ipc, IPC_EVENTS.YOUTUBE_PLAYER_DOUBLE_CLICK_CALLBACK, (event, input: PlayerMouseDownPayload) => {
+useIpcOn(IPC_EVENTS.YOUTUBE_PLAYER_DOUBLE_CLICK_CALLBACK, (event, input: PlayerMouseDownPayload) => {
 	onPlayerMouseDown(input);
 });
 
@@ -420,10 +437,16 @@ watch(playerIframe, (el) => {
 	}
 });
 
-onMounted(() => {
+onMounted(async () => {
 	window.addEventListener('keydown', onPlayerKeyDown);
-	if (refreshToken.value) {
-		reviewsStore.requestReports();
+	const requestedAtRevision = wclAuthorizationStatusRevision;
+	try {
+		const authorized = await ipc.invoke(IPC_EVENTS.WCL_AUTH_STATUS_GET);
+		if (wclAuthorizationStatusRevision === requestedAtRevision) {
+			applyWclAuthorizationStatus(authorized);
+		}
+	} catch (error) {
+		log.error('Failed to load WCL authorization status', error);
 	}
 });
 
@@ -699,7 +722,7 @@ function deleteYoutubeVideo(videoId: string) {
 		<div class="w-full h-full min-h-0 flex flex-col">
 			<div class="flex flex-row gap-0 h-9/10 flex-14">
 				<div class="flex flex-1 flex-col max-w-[calc(100vw-350px)]">
-					<template v-if="refreshToken">
+					<template v-if="isWclAuthorized">
 						<Dropdown :options="reportOptions" class="min-w-[34rem]"
 							:placeholder="$t('reviews.select_report')"
 							v-model="reviewsStore.selectedReportCode"

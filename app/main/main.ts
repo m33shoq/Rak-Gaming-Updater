@@ -180,7 +180,7 @@ if (notificationIcon.startsWith('data:')) {
 	notificationIconImage = nativeImage.createFromPath(iconOnDisk);
 }
 
-const preload = path.join(__dirname, 'preload.mjs');
+const preload = path.join(__dirname, 'preload.cjs');
 const html = path.join(__dirname, 'index.html');
 
 protocol.registerSchemesAsPrivileged([{ scheme: 'app', privileges: { secure: true, standard: true } }]);
@@ -489,10 +489,12 @@ async function createWindow() {
 		titleBarStyle: 'hidden',
 		webPreferences: {
 			preload: preload,
-			nodeIntegration: true,
+			nodeIntegration: false,
 			contextIsolation: true,
+			sandbox: true,
 			webSecurity: true,
 			allowRunningInsecureContent: false,
+			webviewTag: false,
 			partition: 'persist:youtube', // keeps cookies / sessions stable
 		},
 		skipTaskbar: startMinimized,
@@ -933,7 +935,7 @@ async function onFilePathSelected(folderPath: string) {
 
 ipcMain.handle(IPC_EVENTS.LOGIN_CHECK, async () => {
 	const token = store.get('authToken');
-	log.info('Checking for login:', token);
+	log.info('Checking for login:', token ? 'token present' : 'no token');
 	if (token) {
 		try {
 			const decoded = jwtDecode(token) as { username: string; role: string };
@@ -1526,9 +1528,14 @@ ipcMain.handle(IPC_EVENTS.WCL_REQUEST_AUTH_LINK, async () => {
 	}
 });
 
+ipcMain.handle(IPC_EVENTS.WCL_AUTH_STATUS_GET, () => {
+	return Boolean(store.get('WCL_REFRESH_TOKEN'));
+});
+
 socket.on(SOCKET_EVENTS.WCL_REFRESH_TOKEN_UPDATE, (data) => {
 	// log.info('Received WCL refresh token:', data);
 	store.set('WCL_REFRESH_TOKEN', data);
+	mainWindow?.webContents.send(IPC_EVENTS.WCL_AUTH_STATUS_UPDATED, Boolean(data));
 });
 
 ipcMain.handle(IPC_EVENTS.WCL_REQUEST_REPORTS_LIST, async (event, { endTime }) => {

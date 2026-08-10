@@ -310,9 +310,17 @@ declare type reviewFightBossCastResponse = {
 	error?: string;
 }
 
-declare const ipc: typeof Electron.ipcRenderer;
+declare type RgIpcRendererEvent = Readonly<Record<string, never>>;
+declare type RgIpcRendererListener = (event: RgIpcRendererEvent, ...args: any[]) => void;
+declare interface RgIpcRenderer {
+	invoke(channel: string, ...args: any[]): Promise<any>;
+	send(channel: string, ...args: any[]): void;
+	on(channel: string, listener: RgIpcRendererListener): string;
+	off(subscriptionID: string): void;
+}
+declare const ipc: RgIpcRenderer;
 declare namespace store {
 	const set:(key: string, value: any) => Promise<void>;
 	const get:(key: string) => Promise<any>;
-	const onSync: (key: string, callback: (key, newValue) => void) => void;
+	const onSync: (key: string, callback: (newValue: any) => void) => void;
 }

@@ -25,7 +25,7 @@ import { useConnectedClientsStore } from '@/renderer/store/ConnectedClientsStore
 import { useBackupStatusStore } from '@/renderer/store/BackupStatusStore';
 import { getElectronStoreRef } from '@/renderer/store/ElectronRefStore';
 
-import { useIpcRendererOn } from '@vueuse/electron';
+import { useIpcOn } from '@/renderer/composables/useIpcOn';
 import { useAppVersion } from '@/renderer/composables/useAppVersion';
 
 // initialize all stores
@@ -42,7 +42,7 @@ const selectedTab = ref('main');
 const appUpdateDownloadState = ref<AppUpdateDownloadState | null>(null);
 
 let receivedAppUpdateStateCallback = false;
-useIpcRendererOn(ipc, IPC_EVENTS.APP_UPDATE_DOWNLOAD_STATE_CALLBACK, (event, state: AppUpdateDownloadState) => {
+useIpcOn(IPC_EVENTS.APP_UPDATE_DOWNLOAD_STATE_CALLBACK, (event, state: AppUpdateDownloadState) => {
 	receivedAppUpdateStateCallback = true;
 	appUpdateDownloadState.value = state;
 });
@@ -120,19 +120,19 @@ async function handleDeepLink(payload: AppDeepLinkPayload) {
 	log.info('Handled deep link', payload);
 }
 
-useIpcRendererOn(ipc, IPC_EVENTS.APP_UNCAUGHT_EXCEPTION_CALLBACK, (event, error) => {
+useIpcOn(IPC_EVENTS.APP_UNCAUGHT_EXCEPTION_CALLBACK, (event, error) => {
 	showError(`Uncaught Exception: ${error.message}`);
 });
 
-useIpcRendererOn(ipc, IPC_EVENTS.APP_UNHANDLED_REJECTION_CALLBACK, (event, error) => {
+useIpcOn(IPC_EVENTS.APP_UNHANDLED_REJECTION_CALLBACK, (event, error) => {
 	showError(`Unhandled Rejection: ${error.message}`);
 });
 
-useIpcRendererOn(ipc, IPC_EVENTS.SOCKET_NOT_ENOUGH_PERMISSIONS_CALLBACK, (event, error) => {
+useIpcOn(IPC_EVENTS.SOCKET_NOT_ENOUGH_PERMISSIONS_CALLBACK, (event, error) => {
 	showError(`Error: Not enough permissions to perform this action.`);
 });
 
-useIpcRendererOn(ipc, IPC_EVENTS.APP_DEEP_LINK_CALLBACK, (event, payload: AppDeepLinkPayload) => {
+useIpcOn(IPC_EVENTS.APP_DEEP_LINK_CALLBACK, (event, payload: AppDeepLinkPayload) => {
 	void handleDeepLink(payload);
 });
 

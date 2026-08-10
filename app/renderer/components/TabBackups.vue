@@ -13,7 +13,7 @@ import PathSelector from '@/renderer/components/PathSelector.vue';
 import { getElectronStoreRef } from '@/renderer/store/ElectronRefStore';
 import { useBackupStatusStore } from '@/renderer/store/BackupStatusStore';
 
-import { useIpcRendererOn } from '@vueuse/electron'
+import { useIpcOn } from '@/renderer/composables/useIpcOn'
 
 import { BACKUP_INTERVAL_ONE_WEK } from '@/constants'
 
@@ -63,7 +63,7 @@ function updateBackupsTexts() {
 	});
 }
 
-useIpcRendererOn(ipc, IPC_EVENTS.BACKUPS_CREATED_CALLBACK, (event, data) => {
+useIpcOn(IPC_EVENTS.BACKUPS_CREATED_CALLBACK, (event, data) => {
 	updateBackupsTexts();
 });
 
@@ -75,7 +75,7 @@ async function selectBackupsPath() {
 	const path = await ipc.invoke(IPC_EVENTS.BACKUPS_SELECT_BACKUP_FOLDER);
 	if (path.success) {
 		backupsPath.value = path.path;
-		ipc.invoke(IPC_EVENTS.BACKUPS_INITIATE, false);
+		ipc.send(IPC_EVENTS.BACKUPS_INITIATE, false);
 	} else {
 		backupsPath.value = '';
 	}

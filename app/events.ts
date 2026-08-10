@@ -82,6 +82,8 @@ export const IPC_EVENTS = {
 	OBS_RECONNECT: 'obs-reconnect',
 	OBS_STATUS_UPDATED: 'obs-status-updated',
 
+	WCL_AUTH_STATUS_GET: 'wcl-auth-status-get',
+	WCL_AUTH_STATUS_UPDATED: 'wcl-auth-status-updated',
 	WCL_REQUEST_AUTH_LINK: 'wcl-request-auth-link',
 	WCL_REQUEST_REPORTS_LIST: 'wcl-request-reports',
 	WCL_REQUEST_REPORT_DATA: 'wcl-request-report-data',

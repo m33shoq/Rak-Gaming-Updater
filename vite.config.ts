@@ -33,7 +33,7 @@ export default defineConfig(({ command }) => {
 					entry: 'main/main.ts',
 					onstart(options) {
 						console.log('Starting main process...');
-						options.startup();
+						options.startup(['.']);
 					},
 					vite: {
 						resolve: {
@@ -81,8 +81,8 @@ export default defineConfig(({ command }) => {
 									"dependencies" in pkg ? pkg.dependencies : {},
 								),
 								output: {
-									format: "esm",
-									entryFileNames: "[name].mjs",
+									format: "cjs",
+									entryFileNames: "[name].cjs",
 								},
 							},
 						},
