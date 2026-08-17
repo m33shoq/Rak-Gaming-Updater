@@ -2,6 +2,12 @@ import { defineStore } from 'pinia';
 import { ref, computed, watch, shallowRef, nextTick } from 'vue';
 import log from 'electron-log/renderer';
 import { IPC_EVENTS } from '@/events';
+import type {
+	ReviewTimelineViewMode,
+	ReviewTimelineWindowAction,
+	ReviewTimelineWindowContext,
+	ReviewTimelineWindowDataSnapshot,
+} from '@/timelineWindow';
 
 import { useYoutubeVideoInfo } from '@/renderer/composables/useYoutubeVideoInfo';
 
@@ -11,10 +17,19 @@ const BOSS_CAST_PREFERENCES_STORE_KEY = 'reviewBossCastVisibilityOverrides';
 const BOSS_CAST_DISPLAY_MODE_STORE_KEY = 'reviewBossCastDisplayMode';
 type BossCastVisibilityOverrides = Record<string, Record<string, boolean>>;
 type BossCastDisplayMode = 'full' | 'collapsed';
+type TimelineWindowActionHandler = (action: ReviewTimelineWindowAction) => boolean;
 
 export const useReviewsStore = defineStore('Reviews', () => {
 	const { youtubeVideoInfo, refreshYoutubeVideoInfo } = useYoutubeVideoInfo();
 	const selectedVideoInfo = ref<YouTubeVideo | null>(null);
+	const timelineWindowDetached = ref(false);
+	const timelineExpanded = ref(false);
+	const timelineViewMode = ref<ReviewTimelineViewMode>('fight');
+	const timelineWindowReturnToReviewsRevision = ref(0);
+	const pendingTimelineWindowActions = shallowRef<ReviewTimelineWindowAction[]>([]);
+	const timelineWindowDataRevision = ref(0);
+	const timelineWindowUpdatedFight = shallowRef<{ reportCode: string; fightID: number } | null>(null);
+	let timelineWindowActionHandler: TimelineWindowActionHandler | null = null;
 
 	function setSelectedVideoInfo(video: YouTubeVideo | null) {
 		selectedVideoInfo.value = video;
@@ -53,7 +68,11 @@ export const useReviewsStore = defineStore('Reviews', () => {
 	const fightBossCastPromises = new Map<string, Promise<reviewFightBossCastData>>();
 	let fightCooldownRequestEpoch = 0;
 	let fightBossCastRequestEpoch = 0;
+	let fightCooldownInvalidatedAt = 0;
+	let fightBossCastInvalidatedAt = 0;
 	let bossCastPreferencesPromise: Promise<void> | null = null;
+	let timelineContextHydrationGeneration = 0;
+	let timelineContextHydrating = false;
 
 	const getSelectedVideoId = computed(() => selectedVideoInfo.value?.id || null);
 
@@ -72,6 +91,208 @@ export const useReviewsStore = defineStore('Reviews', () => {
 
 	function getFightCooldownCacheKey(reportCode: string, fightID: number) {
 		return `${reportCode}:${fightID}`;
+	}
+
+	function markTimelineWindowFightDataUpdated(reportCode: string, fightID: number) {
+		timelineWindowUpdatedFight.value = { reportCode, fightID };
+		timelineWindowDataRevision.value++;
+	}
+
+	const hasPendingTimelineWindowActions = computed(() => pendingTimelineWindowActions.value.length > 0);
+
+	function flushPendingTimelineWindowActions() {
+		if (!timelineWindowActionHandler || pendingTimelineWindowActions.value.length === 0) return;
+		const queuedActions = pendingTimelineWindowActions.value;
+		pendingTimelineWindowActions.value = [];
+		const deferredActions: ReviewTimelineWindowAction[] = [];
+		queuedActions.forEach(action => {
+			try {
+				if (!timelineWindowActionHandler?.(action)) deferredActions.push(action);
+			} catch (error) {
+				log.error('Failed to handle detached timeline action', { action, error });
+				deferredActions.push(action);
+			}
+		});
+		if (deferredActions.length > 0) {
+			pendingTimelineWindowActions.value = [
+				...deferredActions,
+				...pendingTimelineWindowActions.value,
+			];
+		}
+	}
+
+	function registerTimelineWindowActionHandler(handler: TimelineWindowActionHandler) {
+		timelineWindowActionHandler = handler;
+		flushPendingTimelineWindowActions();
+		return () => {
+			if (timelineWindowActionHandler === handler) timelineWindowActionHandler = null;
+		};
+	}
+
+	function receiveTimelineWindowAction(action: ReviewTimelineWindowAction) {
+		if (!action?.type) return;
+		if (timelineWindowActionHandler) {
+			try {
+				if (timelineWindowActionHandler(action)) return;
+			} catch (error) {
+				log.error('Failed to handle detached timeline action', { action, error });
+			}
+		}
+		pendingTimelineWindowActions.value = [
+			...pendingTimelineWindowActions.value,
+			action,
+		].slice(-50);
+	}
+
+	function createTimelineWindowDataSnapshot(
+		reportCode: string,
+		requestedFightIDs?: number[],
+	): ReviewTimelineWindowDataSnapshot {
+		const cachePrefix = `${reportCode}:`;
+		const fightIDs = new Set<number>(
+			(requestedFightIDs || []).filter(fightID => Number.isInteger(fightID) && fightID > 0),
+		);
+		if (!requestedFightIDs) {
+			[savedFightEvents.value, savedFightCooldowns.value, savedFightBossCasts.value].forEach(cache => {
+				Object.keys(cache).forEach(cacheKey => {
+					if (!cacheKey.startsWith(cachePrefix)) return;
+					const fightID = Number(cacheKey.slice(cachePrefix.length));
+					if (Number.isInteger(fightID) && fightID > 0) fightIDs.add(fightID);
+				});
+			});
+		}
+
+		return {
+			reportCode,
+			cooldownDataInvalidatedAt: fightCooldownInvalidatedAt || undefined,
+			bossCastDataInvalidatedAt: fightBossCastInvalidatedAt || undefined,
+			fights: [...fightIDs].map(fightID => {
+				const cacheKey = getFightCooldownCacheKey(reportCode, fightID);
+				return {
+					fightID,
+					...(cacheKey in savedFightEvents.value
+						? {
+							fightEvents: savedFightEvents.value[cacheKey],
+							fightEventsCachedAt: fightEventCachedAt.value[cacheKey],
+						}
+						: {}),
+					...(cacheKey in savedFightCooldowns.value
+						? {
+							cooldownData: savedFightCooldowns.value[cacheKey],
+							cooldownDataCachedAt: fightCooldownCachedAt.value[cacheKey],
+						}
+						: {}),
+					...(cacheKey in savedFightBossCasts.value
+						? {
+							bossCastData: savedFightBossCasts.value[cacheKey],
+							bossCastDataCachedAt: fightBossCastCachedAt.value[cacheKey],
+						}
+						: {}),
+				};
+			}),
+		};
+	}
+
+	function getSnapshotCachedAt(value: unknown) {
+		return typeof value === 'number' && Number.isFinite(value) && value > 0
+			? value
+			: 0;
+	}
+
+	function mergeTimelineWindowCacheEntry<T>(input: {
+		cache: Record<string, T>;
+		cachedAt: Record<string, number>;
+		cacheKey: string;
+		data: T;
+		incomingCachedAt: unknown;
+		invalidatedAt?: number;
+	}) {
+		const incomingCachedAt = getSnapshotCachedAt(input.incomingCachedAt);
+		const invalidatedAt = input.invalidatedAt || 0;
+		const incomingIsFresh = incomingCachedAt > 0 && incomingCachedAt >= invalidatedAt;
+		const hasLocalData = Object.prototype.hasOwnProperty.call(input.cache, input.cacheKey);
+		const localCachedAt = input.cachedAt[input.cacheKey] || 0;
+
+		// Missing local data may still use an older snapshot as a visible stale value,
+		// but it must remain eligible for a network refresh. Existing data is only
+		// replaced by a strictly newer snapshot that survived local invalidation.
+		if (hasLocalData && (!incomingIsFresh || incomingCachedAt <= localCachedAt)) return false;
+
+		input.cache[input.cacheKey] = input.data;
+		if (incomingIsFresh) input.cachedAt[input.cacheKey] = incomingCachedAt;
+		else delete input.cachedAt[input.cacheKey];
+		return true;
+	}
+
+	function mergeTimelineWindowDataSnapshot(snapshot: ReviewTimelineWindowDataSnapshot) {
+		if (!snapshot?.reportCode || !Array.isArray(snapshot.fights)) return;
+		const incomingCooldownInvalidatedAt = getSnapshotCachedAt(snapshot.cooldownDataInvalidatedAt);
+		if (incomingCooldownInvalidatedAt > fightCooldownInvalidatedAt) {
+			fightCooldownInvalidatedAt = incomingCooldownInvalidatedAt;
+			Object.keys(fightCooldownCachedAt.value).forEach(cacheKey => {
+				if (fightCooldownCachedAt.value[cacheKey] < fightCooldownInvalidatedAt) {
+					delete fightCooldownCachedAt.value[cacheKey];
+				}
+			});
+		}
+		const incomingBossCastInvalidatedAt = getSnapshotCachedAt(snapshot.bossCastDataInvalidatedAt);
+		if (incomingBossCastInvalidatedAt > fightBossCastInvalidatedAt) {
+			fightBossCastInvalidatedAt = incomingBossCastInvalidatedAt;
+			Object.keys(fightBossCastCachedAt.value).forEach(cacheKey => {
+				if (fightBossCastCachedAt.value[cacheKey] < fightBossCastInvalidatedAt) {
+					delete fightBossCastCachedAt.value[cacheKey];
+				}
+			});
+		}
+		snapshot.fights.forEach(fightData => {
+			if (!Number.isInteger(fightData?.fightID) || fightData.fightID <= 0) return;
+			const cacheKey = getFightCooldownCacheKey(snapshot.reportCode, fightData.fightID);
+			if (Array.isArray(fightData.fightEvents)) {
+				if (mergeTimelineWindowCacheEntry({
+					cache: savedFightEvents.value,
+					cachedAt: fightEventCachedAt.value,
+					cacheKey,
+					data: fightData.fightEvents,
+					incomingCachedAt: fightData.fightEventsCachedAt,
+				})) fightEventErrors.value[cacheKey] = null;
+			}
+			if (fightData.cooldownData) {
+				if (mergeTimelineWindowCacheEntry({
+					cache: savedFightCooldowns.value,
+					cachedAt: fightCooldownCachedAt.value,
+					cacheKey,
+					data: fightData.cooldownData,
+					incomingCachedAt: fightData.cooldownDataCachedAt,
+					invalidatedAt: fightCooldownInvalidatedAt,
+				})) fightCooldownErrors.value[cacheKey] = null;
+			}
+			if (fightData.bossCastData) {
+				const bossCastCachedAt = fightData.bossCastData.interruptsComplete === false
+					? 0
+					: fightData.bossCastDataCachedAt;
+				if (mergeTimelineWindowCacheEntry({
+					cache: savedFightBossCasts.value,
+					cachedAt: fightBossCastCachedAt.value,
+					cacheKey,
+					data: fightData.bossCastData,
+					incomingCachedAt: bossCastCachedAt,
+					invalidatedAt: fightBossCastInvalidatedAt,
+				})) fightBossCastErrors.value[cacheKey] = null;
+			}
+		});
+	}
+
+	async function hydrateTimelineWindowContext(context: ReviewTimelineWindowContext) {
+		const generation = ++timelineContextHydrationGeneration;
+		timelineContextHydrating = true;
+		selectedReportCode.value = context.reportCode;
+		reportDetails.value = context.reportDetails;
+		selectedFightID.value = context.fightID;
+		if (context.dataSnapshot?.reportCode === context.reportCode) {
+			mergeTimelineWindowDataSnapshot(context.dataSnapshot);
+		}
+		await nextTick();
+		if (generation === timelineContextHydrationGeneration) timelineContextHydrating = false;
 	}
 
 	function getFightEventsFor(reportCode: string, fightID: number) {
@@ -206,6 +427,13 @@ export const useReviewsStore = defineStore('Reviews', () => {
 		return bossCastPreferencesPromise;
 	}
 
+	async function reloadBossCastPreferences() {
+		if (bossCastPreferencesPromise) await bossCastPreferencesPromise;
+		bossCastPreferencesLoaded.value = false;
+		bossCastPreferencesPromise = null;
+		await ensureBossCastPreferencesLoaded();
+	}
+
 	async function setBossCastDisplayMode(mode: BossCastDisplayMode) {
 		await ensureBossCastPreferencesLoaded();
 		bossCastDisplayMode.value = mode;
@@ -334,6 +562,7 @@ export const useReviewsStore = defineStore('Reviews', () => {
 				if (response.error) throw new Error(response.error);
 				savedFightEvents.value[cacheKey] = response.fightEvents || [];
 				fightEventCachedAt.value[cacheKey] = Date.now();
+				markTimelineWindowFightDataUpdated(reportCode, fightID);
 				return savedFightEvents.value[cacheKey];
 			} catch (error) {
 				const message = error instanceof Error ? error.message : 'Failed to request fight events';
@@ -379,6 +608,7 @@ export const useReviewsStore = defineStore('Reviews', () => {
 				}
 				savedFightCooldowns.value[cacheKey] = data;
 				fightCooldownCachedAt.value[cacheKey] = Date.now();
+				markTimelineWindowFightDataUpdated(reportCode, fightID);
 				return data;
 			} catch (error) {
 				const message = error instanceof Error ? error.message : 'Failed to request fight cooldowns';
@@ -428,10 +658,12 @@ export const useReviewsStore = defineStore('Reviews', () => {
 					if (cached && cached.interruptsComplete !== false) return cached;
 					savedFightBossCasts.value[cacheKey] = response.bossCastData;
 					delete fightBossCastCachedAt.value[cacheKey];
+					markTimelineWindowFightDataUpdated(reportCode, fightID);
 					return response.bossCastData;
 				}
 				savedFightBossCasts.value[cacheKey] = response.bossCastData;
 				fightBossCastCachedAt.value[cacheKey] = Date.now();
+				markTimelineWindowFightDataUpdated(reportCode, fightID);
 				return response.bossCastData;
 			} catch (error) {
 				const message = error instanceof Error ? error.message : 'Failed to request fight boss casts';
@@ -534,6 +766,7 @@ export const useReviewsStore = defineStore('Reviews', () => {
 	}
 
 	watch(selectedReportCode, async (newVal, oldVal) => {
+		if (timelineContextHydrating) return;
 		if (newVal !== oldVal) {
 			selectedFightID.value = null; // reset selected fight
 			await nextTick(); // wait for videoList to update based on new report selection
@@ -546,6 +779,7 @@ export const useReviewsStore = defineStore('Reviews', () => {
 	});
 
 	watch(selectedFightID, (newVal, oldVal) => {
+		if (timelineContextHydrating) return;
 		if (newVal !== oldVal) {
 			void requestFightEvents();
 			void requestFightCooldowns();
@@ -556,6 +790,9 @@ export const useReviewsStore = defineStore('Reviews', () => {
 		// A reconnect can mean the server was deployed with a new cooldown
 		// catalog. Keep current data visible, but make every entry stale so
 		// active comparison pulls and the selected pull refresh immediately.
+		const invalidatedAt = Date.now();
+		fightCooldownInvalidatedAt = invalidatedAt;
+		fightBossCastInvalidatedAt = invalidatedAt;
 		fightCooldownCachedAt.value = {};
 		fightCooldownRequests.value = {};
 		fightCooldownErrors.value = {};
@@ -576,10 +813,38 @@ export const useReviewsStore = defineStore('Reviews', () => {
 		void ensureFightCooldowns(reportCode, fightID, true);
 	});
 
+	ipc.on(IPC_EVENTS.TIMELINE_WINDOW_ACTION, (_event, action: ReviewTimelineWindowAction) => {
+		receiveTimelineWindowAction(action);
+	});
+
+	ipc.on(
+		IPC_EVENTS.TIMELINE_WINDOW_REATTACHED,
+		(_event, input?: { returnToReviews?: boolean }) => {
+			timelineWindowDetached.value = false;
+			timelineExpanded.value = true;
+			void reloadBossCastPreferences();
+			if (input?.returnToReviews) timelineWindowReturnToReviewsRevision.value++;
+		},
+	);
+
+	ipc.on(
+		IPC_EVENTS.TIMELINE_WINDOW_DATA_UPDATED,
+		(_event, snapshot: ReviewTimelineWindowDataSnapshot) => {
+			mergeTimelineWindowDataSnapshot(snapshot);
+		},
+	);
+
 	return {
 		youtubeVideoInfo,
 		selectedVideoInfo,
 		pendingDirectVideoSeekSeconds,
+		timelineWindowDetached,
+		timelineExpanded,
+		timelineViewMode,
+		timelineWindowReturnToReviewsRevision,
+		timelineWindowDataRevision,
+		timelineWindowUpdatedFight,
+		hasPendingTimelineWindowActions,
 		reports,
 		selectedReportCode,
 		reportDetails,
@@ -627,6 +892,10 @@ export const useReviewsStore = defineStore('Reviews', () => {
 		getFightStartTime,
 		getFightStartRelativeToVideo,
 		getFightDuration,
+		hydrateTimelineWindowContext,
+		createTimelineWindowDataSnapshot,
+		registerTimelineWindowActionHandler,
+		flushPendingTimelineWindowActions,
 
 		requestReports,
 		requestReportData,
@@ -637,6 +906,7 @@ export const useReviewsStore = defineStore('Reviews', () => {
 		ensureFightCooldowns,
 		ensureFightBossCasts,
 		ensureBossCastPreferencesLoaded,
+		reloadBossCastPreferences,
 		setBossCastDisplayMode,
 		isBossCastAbilityEnabled,
 		setBossCastAbilityEnabled,

@@ -1,6 +1,6 @@
 import Store from "electron-store";
 
-interface StoreSchema {
+export interface StoreSchema {
   authToken: string | null;
   updatePath: string | null;
   relativePath: string | null;
@@ -25,6 +25,12 @@ interface StoreSchema {
 	maximized: boolean;
 	x?: number;
 	y?: number;
+  };
+  timelineWindowBounds?: {
+	width: number;
+	height: number;
+	x: number;
+	y: number;
   };
 }
 

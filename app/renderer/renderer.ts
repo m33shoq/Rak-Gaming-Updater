@@ -4,12 +4,15 @@ import { createPinia } from 'pinia'
 import { createI18n } from 'vue-i18n'
 import log from 'electron-log/renderer';
 
-import App from '@/renderer/App.vue';
 import { installWowheadTooltipEnhancements } from '@/renderer/utils/wowheadTooltips';
 
 import "tailwindcss";
 
-const app = createApp(App);
+const isTimelineWindow = new URLSearchParams(window.location.search).get('window') === 'timeline';
+const RootComponent = isTimelineWindow
+	? (await import('@/renderer/TimelineWindowApp.vue')).default
+	: (await import('@/renderer/App.vue')).default;
+const app = createApp(RootComponent);
 
 installWowheadTooltipEnhancements();
 
@@ -36,5 +39,5 @@ app.use(i18n);
 app.use(createPinia());
 app.mount('#app')
 
-log.info('Renderer process initialized');
+log.info(isTimelineWindow ? 'Timeline renderer process initialized' : 'Renderer process initialized');
 console.log('Renderer process initialized');

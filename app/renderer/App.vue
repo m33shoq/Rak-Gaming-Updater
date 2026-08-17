@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import log from 'electron-log/renderer'
 import { IPC_EVENTS, type AppUpdateDownloadState } from '@/events';
-import { ref } from 'vue';
+import { ref, watch } from 'vue';
 
 import icon from '@/assets/icon.png';
 
@@ -71,6 +71,17 @@ function selectTab(tabName: string) {
 	selectedTab.value = tabName;
 	log.debug(`Selected tab: ${tabName}`);
 }
+
+watch(
+	[() => reviewsStore.hasPendingTimelineWindowActions, () => loginStore.isConnected],
+	([hasPendingActions, isConnected]) => {
+		if (hasPendingActions && isConnected && selectedTab.value !== 'reviews') selectTab('reviews');
+	},
+);
+
+watch(() => reviewsStore.timelineWindowReturnToReviewsRevision, () => {
+	if (loginStore.isConnected && selectedTab.value !== 'reviews') selectTab('reviews');
+});
 
 const errorMessage = ref<string | null>(null);
 

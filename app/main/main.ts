@@ -20,6 +20,8 @@ import { RegisterSVCallback } from '@/main/svWatcher';
 import BackupService from '@/main/backupService';
 import { getSafeInitialWindowBounds, getWindowSettingsFromWindow, type StoredWindowSettings } from '@/main/windowBounds';
 import ObsWebsocketService, { type ObsSettings as ObsServiceSettings } from '@/main/obsWebsocketService';
+import { registerRendererStoreSync } from '@/main/rendererStoreSync';
+import TimelineWindowController from '@/main/timelineWindowController';
 
 
 // @ts-ignore
@@ -57,6 +59,7 @@ const __dirname = path.dirname(__filename);
 
 log.transports.file.level = 'info';
 log.initialize({ preload: true });
+registerRendererStoreSync();
 
 process.on("uncaughtException", (error) => {
   log.error("uncaughtException", error);
@@ -205,6 +208,15 @@ function queueDialog(dialogOptions: Electron.MessageBoxOptions, onSuccessCallbac
 
 let mainWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
+
+const timelineWindowController = new TimelineWindowController({
+	getMainWindow: () => mainWindow,
+	preloadPath: preload,
+	htmlPath: html,
+	devUrl: isDev ? 'http://localhost:5173/?window=timeline' : undefined,
+	icon: taskBarIconImage,
+	isAppClosing: () => isQuiting || isSystemShutdown,
+});
 
 let appUpdateDownloadState: AppUpdateDownloadState | null = null;
 
@@ -662,6 +674,8 @@ async function createWindow() {
 	mainWindow?.on('session-end', () => {
 		beginSystemShutdown('session-end');
 	});
+
+	timelineWindowController.bindMainWindowLifecycle(mainWindow);
 }
 
 if (!app.requestSingleInstanceLock()) {
@@ -703,6 +717,7 @@ app.on('window-all-closed', () => {
 
 app.on('before-quit', () => {
 	isQuiting = true;
+	timelineWindowController.destroyForQuit();
 	if (isSystemShutdown) {
 		forceClose = true;
 	}
@@ -948,15 +963,6 @@ ipcMain.handle(IPC_EVENTS.LOGIN_CHECK, async () => {
 	return null;
 });
 
-ipcMain.handle('store-set', async (event, key, value) => store.set(key, value));
-ipcMain.handle('store-get', async (event, key) => store.get(key));
-ipcMain.on('store-sync-request', (event, key) => {
-	store.onDidChange(key, (newValue) => {
-		log.debug(`Main: Store value changed for key "${key}":`, newValue);
-		mainWindow?.webContents.send('store-sync', key, newValue);
-	});
-});
-
 ipcMain.handle(IPC_EVENTS.OBS_SETTINGS_GET, async () => {
 	return {
 		settings: getObsSettingsFromStore(),
@@ -1023,21 +1029,24 @@ ipcMain.handle(IPC_EVENTS.APP_GET_LANGUAGE, async () => {
 });
 
 ipcMain.on(IPC_EVENTS.WINDOW_MINIMIZE, (event) => {
-	mainWindow?.minimize();
+	BrowserWindow.fromWebContents(event.sender)?.minimize();
 });
 
 ipcMain.on(IPC_EVENTS.WINDOW_CLOSE, (event) => {
-	mainWindow.setSkipTaskbar(true);
-	mainWindow?.close();
+	const targetWindow = BrowserWindow.fromWebContents(event.sender);
+	if (!targetWindow) return;
+	if (targetWindow === mainWindow) targetWindow.setSkipTaskbar(true);
+	targetWindow.close();
 });
 
 ipcMain.on(IPC_EVENTS.WINDOW_MAXIMIZE_TOGGLE, (event) => {
-	if (!mainWindow) return;
+	const targetWindow = BrowserWindow.fromWebContents(event.sender);
+	if (!targetWindow) return;
 
-	if (mainWindow.isMaximized()) {
-		mainWindow.unmaximize();
+	if (targetWindow.isMaximized()) {
+		targetWindow.unmaximize();
 	} else {
-		mainWindow.maximize();
+		targetWindow.maximize();
 	}
 });
 
@@ -1161,7 +1170,11 @@ socket.on(SOCKET_EVENTS.SOCKET_CONNECTED, () => {
 		log.info('Update check results:', UpdateCheckResults);
 	});
 	log.info('Connected to server');
-	mainWindow?.webContents.send(IPC_EVENTS.SOCKET_CONNECTED_CALLBACK);
+	BrowserWindow.getAllWindows().forEach(window => {
+		if (!window.isDestroyed() && !window.webContents.isDestroyed()) {
+			window.webContents.send(IPC_EVENTS.SOCKET_CONNECTED_CALLBACK);
+		}
+	});
 
 	void obsService.updateSettings(getObsSettingsFromStore());
 

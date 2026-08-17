@@ -322,5 +322,5 @@ declare const ipc: RgIpcRenderer;
 declare namespace store {
 	const set:(key: string, value: any) => Promise<void>;
 	const get:(key: string) => Promise<any>;
-	const onSync: (key: string, callback: (newValue: any) => void) => void;
+	const onSync: (key: string, callback: (newValue: any) => void) => () => void;
 }

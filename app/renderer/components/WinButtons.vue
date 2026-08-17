@@ -3,6 +3,12 @@
 import { IPC_EVENTS } from '@/events';
 import { ref } from 'vue';
 
+withDefaults(defineProps<{
+	hideMinimize?: boolean;
+}>(), {
+	hideMinimize: false,
+});
+
 const isMaximized = ref(false);
 
 function onCloseClick() {
@@ -26,7 +32,7 @@ ipc.on(IPC_EVENTS.WINDOW_MAXIMIZE_TOGGLE_CALLBACK, (event, maximized: boolean) =
 <template>
 	<div>
 		<div id="button-container" class="absolute top-0 right-0 flex flex-row">
-			<button id="minimize-btn" @click="onMinimizeClick">
+			<button v-if="!hideMinimize" id="minimize-btn" @click="onMinimizeClick">
 				<img src="@/assets/chrome-minimize.svg" alt="-" class="w-4 h-4"/>
 			</button>
 			<button id="maximize-btn" @click="onMaximizeClick" v-show="!isMaximized">

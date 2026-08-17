@@ -22,6 +22,9 @@ const ALLOWED_INVOKE_CHANNELS = new Set<string>([
 	IPC_EVENTS.PUSHER_SELECT_RELATIVE_PATH,
 	IPC_EVENTS.BACKUPS_SELECT_BACKUP_FOLDER,
 	IPC_EVENTS.BACKUPS_GET_BACKUPS_SIZE,
+	IPC_EVENTS.TIMELINE_WINDOW_OPEN,
+	IPC_EVENTS.TIMELINE_WINDOW_STATUS_GET,
+	IPC_EVENTS.TIMELINE_WINDOW_CONTEXT_GET,
 	IPC_EVENTS.YOUTUBE_VIDEO_INFO_GET,
 	IPC_EVENTS.YOUTUBE_VIDEO_INFO_ADD,
 	IPC_EVENTS.OBS_SETTINGS_GET,
@@ -49,6 +52,12 @@ const ALLOWED_SEND_CHANNELS = new Set<string>([
 	IPC_EVENTS.WINDOW_CLOSE,
 	IPC_EVENTS.WINDOW_MINIMIZE,
 	IPC_EVENTS.WINDOW_MAXIMIZE_TOGGLE,
+	IPC_EVENTS.TIMELINE_WINDOW_CONTEXT_SET,
+	IPC_EVENTS.TIMELINE_WINDOW_CONTEXT_READY,
+	IPC_EVENTS.TIMELINE_WINDOW_CURSOR_SET,
+	IPC_EVENTS.TIMELINE_WINDOW_DATA_SET,
+	IPC_EVENTS.TIMELINE_WINDOW_ACTION,
+	IPC_EVENTS.TIMELINE_WINDOW_REATTACH,
 	IPC_EVENTS.YOUTUBE_OPEN_LINK,
 	IPC_EVENTS.YOUTUBE_VIDEO_REFRESH,
 	IPC_EVENTS.YOUTUBE_VIDEO_DELETE,
@@ -75,6 +84,11 @@ const ALLOWED_RECEIVE_CHANNELS = new Set<string>([
 	IPC_EVENTS.BACKUPS_STATUS_CALLBACK,
 	IPC_EVENTS.STATUS_CONNECTED_CLIENTS_CALLBACK,
 	IPC_EVENTS.WINDOW_MAXIMIZE_TOGGLE_CALLBACK,
+	IPC_EVENTS.TIMELINE_WINDOW_CONTEXT_UPDATED,
+	IPC_EVENTS.TIMELINE_WINDOW_CURSOR_UPDATED,
+	IPC_EVENTS.TIMELINE_WINDOW_DATA_UPDATED,
+	IPC_EVENTS.TIMELINE_WINDOW_ACTION,
+	IPC_EVENTS.TIMELINE_WINDOW_REATTACHED,
 	IPC_EVENTS.YOUTUBE_PLAYER_HOTKEY_CALLBACK,
 	IPC_EVENTS.YOUTUBE_PLAYER_DOUBLE_CLICK_CALLBACK,
 	IPC_EVENTS.YOUTUBE_VIDEO_INFO_UPDATED,
@@ -179,10 +193,21 @@ contextBridge.exposeInMainWorld('store', {
 	onSync: (key: unknown, callback: unknown) => {
 		const allowedKey = requireAllowedStoreKey(key);
 		if (typeof callback !== 'function') throw new TypeError('Store sync listener must be a function');
-		ipcRenderer.send('store-sync-request', allowedKey);
-		ipcRenderer.on('store-sync', (_, changedKey, value) => {
-			if (changedKey === allowedKey) (callback as (value: unknown) => void)(value);
-		});
+		const subscriptionID = createSubscriptionID();
+		let active = true;
+		const listener = (_event: Electron.IpcRendererEvent, changedSubscriptionID: unknown, changedKey: unknown, value: unknown) => {
+			if (changedSubscriptionID === subscriptionID && changedKey === allowedKey) {
+				(callback as (nextValue: unknown) => void)(value);
+			}
+		};
+		ipcRenderer.on('store-sync', listener);
+		ipcRenderer.send('store-sync-request', allowedKey, subscriptionID);
+		return () => {
+			if (!active) return;
+			active = false;
+			ipcRenderer.removeListener('store-sync', listener);
+			ipcRenderer.send('store-sync-cancel', subscriptionID);
+		};
 	},
 });
 

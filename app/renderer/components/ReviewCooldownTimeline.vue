@@ -10,6 +10,7 @@ import { useReviewsStore } from '@/renderer/store/ReviewsStore';
 import { buildCollapsedBossCastMarkers, sortBossCastAbilitiesByFirstOccurrence } from '@/renderer/utils/bossCastAggregation';
 import { useBossCastTooltipLayout } from '@/renderer/utils/bossCastTooltipLayout';
 import { refreshWowheadTooltips } from '@/renderer/utils/wowheadTooltips';
+import type { ReviewTimelineViewMode } from '@/timelineWindow';
 
 const props = withDefaults(defineProps<{
 	events?: reviewCooldownEvent[];
@@ -21,6 +22,9 @@ const props = withDefaults(defineProps<{
 	cursorPercent?: number;
 	loading?: boolean;
 	error?: string | null;
+	detached?: boolean;
+	expanded?: boolean;
+	viewMode?: ReviewTimelineViewMode;
 }>(), {
 	events: () => [],
 	fightEvents: () => [],
@@ -29,6 +33,9 @@ const props = withDefaults(defineProps<{
 	cursorPercent: 0,
 	loading: false,
 	error: null,
+	detached: false,
+	expanded: false,
+	viewMode: 'fight',
 });
 
 const emit = defineEmits<{
@@ -37,11 +44,14 @@ const emit = defineEmits<{
 	openDeath: [deathID: number];
 	seekPull: [fightID: number, timestampSeconds: number];
 	openPullDeath: [fightID: number, deathID: number];
+	detach: [];
+	'update:expanded': [expanded: boolean];
+	'update:viewMode': [viewMode: ReviewTimelineViewMode];
 }>();
 
 const reviewsStore = useReviewsStore();
-const isExpanded = ref(false);
-const timelineViewMode = ref<'fight' | 'comparison'>('fight');
+const isExpanded = ref(props.detached || props.expanded);
+const timelineViewMode = ref<ReviewTimelineViewMode>(props.viewMode);
 const comparisonSpellEvents = ref<reviewCooldownEvent[]>([]);
 const comparisonPlayerRequest = ref<{
 	token: number;
@@ -49,6 +59,22 @@ const comparisonPlayerRequest = ref<{
 	playerName: string;
 } | null>(null);
 let nextComparisonPlayerRequestToken = 1;
+
+watch(() => props.detached, (detached) => {
+	if (detached) isExpanded.value = true;
+});
+watch(() => props.expanded, (expanded) => {
+	if (!props.detached && isExpanded.value !== expanded) isExpanded.value = expanded;
+});
+watch(isExpanded, (expanded) => {
+	if (!props.detached && expanded !== props.expanded) emit('update:expanded', expanded);
+});
+watch(() => props.viewMode, (viewMode) => {
+	if (timelineViewMode.value !== viewMode) timelineViewMode.value = viewMode;
+});
+watch(timelineViewMode, (viewMode) => {
+	if (viewMode !== props.viewMode) emit('update:viewMode', viewMode);
+});
 
 const MIN_EVENT_GAP_PERCENT = 0.026;
 const TRACK_HEIGHT_PX = 27;
@@ -876,6 +902,10 @@ function getExpandedTimelineAvailableHeight() {
 }
 
 function setExpandedTimelineHeight(height: number) {
+	if (props.detached) {
+		scheduleCustomScrollbarUpdate();
+		return;
+	}
 	const maxHeight = getExpandedTimelineAvailableHeight();
 	expandedTimelineMaxHeight.value = maxHeight;
 	expandedTimelineHeight.value = Math.round(Math.max(
@@ -1009,6 +1039,10 @@ function onExpandedTimelineResizeKeydown(event: KeyboardEvent) {
 }
 
 function onWindowResize() {
+	if (props.detached) {
+		scheduleCustomScrollbarUpdate();
+		return;
+	}
 	if (!isExpanded.value) return;
 	const drag = expandedTimelineResizeDrag;
 	if (drag) {
@@ -1075,7 +1109,7 @@ onMounted(async () => {
 		log.error('Failed to load review cooldown timeline height', error);
 	}
 
-	if (isExpanded.value) {
+	if (isExpanded.value && !props.detached) {
 		await nextTick();
 		setExpandedTimelineHeight(expandedTimelineHeight.value);
 	}
@@ -1124,7 +1158,7 @@ watch(isExpanded, (expanded) => {
 		finishExpandedTimelineResize();
 		return;
 	}
-	void nextTick(() => setExpandedTimelineHeight(expandedTimelineHeight.value));
+	if (!props.detached) void nextTick(() => setExpandedTimelineHeight(expandedTimelineHeight.value));
 }, { flush: 'post' });
 
 function formatTime(seconds: number) {
@@ -1753,21 +1787,27 @@ function onComparisonPlayerRequestApplied(token: number) {
 </script>
 
 <template>
-	<section class="relative shrink-0" style="--review-timeline-sidebar-width: 9rem;">
+	<section class="relative" :class="detached ? 'h-full min-h-0' : 'shrink-0'" style="--review-timeline-sidebar-width: 9rem;">
 		<div
 			v-if="isExpanded"
 			id="review-cooldown-timeline-panel"
 			ref="expandedTimelinePanel"
-			class="absolute bottom-[calc(100%+0.5rem)] left-0 right-0 z-[120] flex min-h-40 flex-col overflow-hidden rounded-lg border border-sky-500/25 bg-light2 shadow-2xl dark:border-sky-400/20 dark:bg-dark2"
+			class="z-[120] flex min-h-40 flex-col overflow-hidden border border-sky-500/25 bg-light2 dark:border-sky-400/20 dark:bg-dark2"
+			:class="detached
+				? 'relative h-full min-h-0 w-full rounded-none shadow-none'
+				: 'absolute bottom-[calc(100%+0.5rem)] left-0 right-0 rounded-lg shadow-2xl'"
 			:style="{
-				height: isExpandedTimelineResizing
+				height: detached
+					? '100%'
+					: isExpandedTimelineResizing
 					? 'var(--review-expanded-timeline-drag-height)'
 					: `${expandedTimelineHeight}px`,
-				maxHeight: `${expandedTimelineMaxHeight}px`,
+				maxHeight: detached ? 'none' : `${expandedTimelineMaxHeight}px`,
 				contain: 'layout paint',
 			}"
 		>
 			<button
+				v-if="!detached"
 				type="button"
 				class="group absolute inset-x-0 top-0 z-[60] h-2 touch-none cursor-ns-resize focus:outline-none focus-visible:bg-sky-500/10"
 				:class="{ 'bg-sky-500/10': isExpandedTimelineResizing }"
@@ -1794,6 +1834,16 @@ function onComparisonPlayerRequestApplied(token: number) {
 						<button type="button" class="h-5 rounded-sm px-2" :class="timelineViewMode === 'fight' ? 'bg-sky-500/20 text-sky-600 dark:text-sky-300' : 'text-neutral-500 hover:text-inherit'" @click="timelineViewMode = 'fight'">Raid</button>
 						<button type="button" class="h-5 rounded-sm px-2" :class="timelineViewMode === 'comparison' ? 'bg-sky-500/20 text-sky-600 dark:text-sky-300' : 'text-neutral-500 hover:text-inherit'" @click="timelineViewMode = 'comparison'">Pull comparison</button>
 					</div>
+					<button
+						v-if="!detached"
+						type="button"
+						class="flex h-6 shrink-0 items-center gap-1 border border-neutral-500/30 bg-neutral-500/[0.06] px-2 text-[10px] font-medium text-neutral-600 hover:border-sky-500/60 hover:bg-sky-500/10 hover:text-sky-600 focus:outline-none focus:ring-1 focus:ring-sky-500 dark:text-neutral-300 dark:hover:text-sky-300"
+						title="Open timeline in a separate window"
+						@click="emit('detach')"
+					>
+						<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" class="size-3.5" aria-hidden="true"><path d="M4.75 3A1.75 1.75 0 0 0 3 4.75v7.5C3 13.216 3.784 14 4.75 14H7v-1.5H4.75a.25.25 0 0 1-.25-.25v-7.5a.25.25 0 0 1 .25-.25h7.5a.25.25 0 0 1 .25.25V7H14V4.75A1.75 1.75 0 0 0 12.25 3h-7.5Z"/><path d="M9.75 7A1.75 1.75 0 0 0 8 8.75v6.5c0 .966.784 1.75 1.75 1.75h5.5A1.75 1.75 0 0 0 17 15.25v-6.5A1.75 1.75 0 0 0 15.25 7h-5.5Zm-.25 1.75a.25.25 0 0 1 .25-.25h5.5a.25.25 0 0 1 .25.25v6.5a.25.25 0 0 1-.25.25h-5.5a.25.25 0 0 1-.25-.25v-6.5Z"/></svg>
+						Detach
+					</button>
 					<template v-if="timelineViewMode === 'fight'"><span v-if="loading" class="shrink-0 text-xs text-neutral-500">Loading cooldowns...</span><span v-else-if="error" class="shrink-0 text-xs text-red-500">Cooldowns unavailable</span></template>
 				</div>
 				<div v-if="timelineViewMode === 'fight'" class="flex min-w-0 items-center gap-1.5 text-[10px]">
@@ -2468,7 +2518,7 @@ function onComparisonPlayerRequestApplied(token: number) {
 			/>
 		</div>
 
-		<div class="relative flex h-8 w-full overflow-visible rounded-md border border-neutral-500/30 bg-light4 dark:bg-dark4">
+		<div v-if="!detached" class="relative flex h-8 w-full overflow-visible rounded-md border border-neutral-500/30 bg-light4 dark:bg-dark4">
 			<button
 				type="button"
 				class="flex shrink-0 items-center gap-2 rounded-l-md border-r border-neutral-500/30 px-2 text-left transition-colors hover:bg-light3 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-sky-500 dark:hover:bg-dark3"
