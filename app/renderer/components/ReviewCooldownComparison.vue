@@ -1098,7 +1098,7 @@ function getClassColor(className?: string) {
 }
 function getBorderColor(event: reviewCooldownEvent) {
 	const group = event.cooldown.groups.find(groupID => enabledGroupIDSet.value.has(groupID)) || event.cooldown.primaryGroup;
-	return { deaths: 'border-red-500', raid_cd: 'border-cyan-400', personals: 'border-violet-400', externals: 'border-pink-400', utility: 'border-blue-400', movement: 'border-emerald-400', dps_cd: 'border-amber-400', interrupts: 'border-lime-400', aoe_cc: 'border-orange-400', single_cc: 'border-red-400' }[group];
+	return { deaths: 'border-red-500', raid_cd: 'border-cyan-400', personals: 'border-violet-400', externals: 'border-pink-400', utility: 'border-blue-400', movement: 'border-emerald-400', dps_cd: 'border-amber-400', interrupts: 'border-lime-400', taunts: 'border-yellow-300', aoe_cc: 'border-orange-400', single_cc: 'border-red-400' }[group];
 }
 
 let tooltipFrame: number | null = null;

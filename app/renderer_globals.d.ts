@@ -150,6 +150,7 @@ declare type reviewCooldownGroupID =
 	| 'movement'
 	| 'dps_cd'
 	| 'interrupts'
+	| 'taunts'
 	| 'aoe_cc'
 	| 'single_cc';
 
