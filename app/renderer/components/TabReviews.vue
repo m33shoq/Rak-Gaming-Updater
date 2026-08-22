@@ -31,6 +31,21 @@ function formatTime(t) {
 	return `${minutes}:${seconds.toString().padStart(2, '0')}`;
 }
 
+const WCL_DIFFICULTY_NAMES: Readonly<Record<number, string>> = {
+	1: 'LFR',
+	2: 'Flex',
+	3: 'Normal',
+	4: 'Heroic',
+	5: 'Mythic',
+	10: 'Mythic+',
+};
+
+function formatWclDifficultyLabel(difficulty: number | null | undefined) {
+	if (typeof difficulty !== 'number' || !Number.isFinite(difficulty)) return '';
+	const difficultyName = WCL_DIFFICULTY_NAMES[difficulty];
+	return difficultyName ? difficultyName.charAt(0) : `[${difficulty}]`;
+}
+
 const reviewsStore = useReviewsStore();
 const loginStore = useLoginStore();
 
@@ -84,6 +99,14 @@ async function requestVideoInfo() {
 const player = ref<YTPlayer | null>(null);
 const playerIframe = useTemplateRef<HTMLIFrameElement | null>('playerIframe');
 const videoContainer = useTemplateRef<HTMLElement | null>('videoContainer');
+const hotkeyGuide = useTemplateRef<HTMLElement | null>('hotkeyGuide');
+const hotkeyGuideButton = useTemplateRef<HTMLButtonElement | null>('hotkeyGuideButton');
+const isPlayerFullscreen = ref(false);
+const isHotkeyGuideOpen = ref(false);
+const arePlayerControlsVisible = ref(true);
+const isPlayerPlaying = ref(false);
+const isPlayerControlDockHovered = ref(false);
+const isPlayerControlDockFocused = ref(false);
 
 const DEFAULT_SEEK_SECONDS = 5;
 const SHIFT_SEEK_SECONDS = 3;
@@ -91,6 +114,20 @@ const ALT_SEEK_SECONDS = 1;
 const CTRL_SEEK_SECONDS = 60;
 const TEN_SECOND_SEEK_SECONDS = 10;
 const FRAME_SEEK_SECONDS = 1 / 30;
+const PLAYER_CONTROLS_IDLE_MS = 2200;
+
+const PLAYER_SHORTCUTS = [
+	{ keys: 'Space / K', action: 'Play or pause' },
+	{ keys: 'M', action: 'Mute or unmute' },
+	{ keys: 'F', action: 'Enter or exit fullscreen' },
+	{ keys: '← / →', action: 'Seek 5 seconds' },
+	{ keys: 'Alt + ← / →', action: 'Seek 1 second' },
+	{ keys: 'Shift + ← / →', action: 'Seek 3 seconds' },
+	{ keys: 'Ctrl/Cmd + ← / →', action: 'Seek 60 seconds' },
+	{ keys: 'J / L', action: 'Seek 10 seconds' },
+	{ keys: ', / .', action: 'Previous or next frame' },
+	{ keys: 'Double-click', action: 'Enter or exit fullscreen' },
+];
 
 type PlayerHotkeyPayload = {
 	key: string;
@@ -98,6 +135,7 @@ type PlayerHotkeyPayload = {
 	altKey: boolean;
 	ctrlKey: boolean;
 	metaKey: boolean;
+	repeat: boolean;
 	shiftKey: boolean;
 };
 
@@ -105,10 +143,83 @@ type PlayerMouseDownPayload = {
 	clickCount: number;
 };
 
-const PLAYER_DOUBLE_CLICK_THRESHOLD_MS = 300;
-const PLAYER_FULLSCREEN_TOGGLE_COOLDOWN_MS = 400;
-let lastPlayerMouseDownAt = 0;
-let lastFullscreenToggleAt = 0;
+let fullscreenToggleInProgress = false;
+let playerControlsHideTimeout: number | null = null;
+let playerBoundsResizeObserver: ResizeObserver | null = null;
+
+function publishPlayerPointerBounds() {
+	const rect = videoContainer.value?.getBoundingClientRect();
+	if (!rect || rect.width <= 0 || rect.height <= 0) {
+		ipc.send(IPC_EVENTS.YOUTUBE_PLAYER_POINTER_BOUNDS_SET, null);
+		return;
+	}
+
+	ipc.send(IPC_EVENTS.YOUTUBE_PLAYER_POINTER_BOUNDS_SET, {
+		left: rect.left,
+		top: rect.top,
+		right: rect.right,
+		bottom: rect.bottom,
+	});
+}
+
+function onPlayerPointerEnter() {
+	publishPlayerPointerBounds();
+	revealPlayerControls();
+}
+
+function clearPlayerControlsHideTimeout() {
+	if (playerControlsHideTimeout === null) return;
+	window.clearTimeout(playerControlsHideTimeout);
+	playerControlsHideTimeout = null;
+}
+
+function revealPlayerControls() {
+	clearPlayerControlsHideTimeout();
+	arePlayerControlsVisible.value = true;
+	if (
+		!isPlayerPlaying.value
+		|| isHotkeyGuideOpen.value
+		|| isPlayerControlDockHovered.value
+		|| isPlayerControlDockFocused.value
+	) return;
+
+	playerControlsHideTimeout = window.setTimeout(() => {
+		playerControlsHideTimeout = null;
+		if (
+			!isHotkeyGuideOpen.value
+			&& !isPlayerControlDockHovered.value
+			&& !isPlayerControlDockFocused.value
+		) arePlayerControlsVisible.value = false;
+	}, PLAYER_CONTROLS_IDLE_MS);
+}
+
+function keepPlayerControlsVisible() {
+	clearPlayerControlsHideTimeout();
+	arePlayerControlsVisible.value = true;
+}
+
+function onPlayerControlDockPointerEnter() {
+	isPlayerControlDockHovered.value = true;
+	keepPlayerControlsVisible();
+}
+
+function onPlayerControlDockPointerLeave() {
+	isPlayerControlDockHovered.value = false;
+	revealPlayerControls();
+}
+
+function onPlayerControlDockFocusIn() {
+	isPlayerControlDockFocused.value = true;
+	keepPlayerControlsVisible();
+}
+
+function onPlayerControlDockFocusOut(event: FocusEvent) {
+	const nextTarget = event.relatedTarget;
+	if (nextTarget instanceof Node && (event.currentTarget as HTMLElement).contains(nextTarget)) return;
+
+	isPlayerControlDockFocused.value = false;
+	revealPlayerControls();
+}
 
 function playVideo() {
 	if (player.value) {
@@ -131,7 +242,8 @@ function seekTo(seconds: number) {
 function togglePlayPause() {
 	if (!player.value) return;
 
-	if (player.value.getState() === 'playing') {
+	const state = player.value.getState();
+	if (state === 'playing' || state === 'buffering') {
 		pauseVideo();
 		return;
 	}
@@ -152,21 +264,43 @@ function toggleMute() {
 
 async function toggleFullscreen() {
 	const fullscreenTarget = videoContainer.value;
-	if (!fullscreenTarget) return;
+	const enteringFullscreen = !isPlayerFullscreen.value;
+	if (
+		!fullscreenTarget?.isConnected
+		|| fullscreenToggleInProgress
+		|| (enteringFullscreen && (!playerLoaded || !reviewsStore.getSelectedVideoId))
+	) return;
 
-	if (document.fullscreenElement === fullscreenTarget) {
-		await document.exitFullscreen();
-		return;
+	fullscreenToggleInProgress = true;
+	try {
+		isPlayerFullscreen.value = await ipc.invoke(
+			IPC_EVENTS.YOUTUBE_PLAYER_FULLSCREEN_SET,
+			!isPlayerFullscreen.value,
+		) === true;
+	} catch (error) {
+		log.warn('Failed to toggle YouTube player fullscreen', error);
+	} finally {
+		fullscreenToggleInProgress = false;
 	}
-
-	await fullscreenTarget.requestFullscreen();
 }
 
-function isEditableTarget(target: EventTarget | null) {
+function isPlayerHotkeyExcludedTarget(target: EventTarget | null) {
 	if (!(target instanceof HTMLElement)) return false;
 	if (target.isContentEditable) return true;
 
-	return Boolean(target.closest('input, textarea, select, [contenteditable="true"]'));
+	return Boolean(target.closest([
+		'input',
+		'textarea',
+		'select',
+		'button',
+		'a[href]',
+		'summary',
+		'[contenteditable="true"]',
+		'[role="button"]',
+		'[role="menuitem"]',
+		'[role="option"]',
+		'[role="slider"]',
+	].join(', ')));
 }
 
 function getArrowSeekDelta(input: Pick<PlayerHotkeyPayload, 'ctrlKey' | 'metaKey' | 'shiftKey' | 'altKey'>) {
@@ -198,30 +332,50 @@ function isPlayerHotkeyContext() {
 	return document.activeElement === getPlayerIframeElement();
 }
 
-function onPlayerDoubleClick() {
-	const now = Date.now();
-	if (now - lastFullscreenToggleAt < PLAYER_FULLSCREEN_TOGGLE_COOLDOWN_MS) return;
-	lastFullscreenToggleAt = now;
-	lastPlayerMouseDownAt = 0;
+function requestFullscreenToggle() {
+	if (fullscreenToggleInProgress) return;
+	isHotkeyGuideOpen.value = false;
 	void toggleFullscreen();
+}
+
+function toggleHotkeyGuide(event: MouseEvent) {
+	if (event.detail > 1) return;
+	isHotkeyGuideOpen.value = !isHotkeyGuideOpen.value;
+}
+
+function closeHotkeyGuide() {
+	isHotkeyGuideOpen.value = false;
+}
+
+function closeHotkeyGuideOnOutsidePointer(event: PointerEvent) {
+	if (!isHotkeyGuideOpen.value || !(event.target instanceof Node)) return;
+	if (hotkeyGuide.value?.contains(event.target) || hotkeyGuideButton.value?.contains(event.target)) return;
+	isHotkeyGuideOpen.value = false;
+}
+
+function onFullscreenButtonClick(event: MouseEvent) {
+	// A double-click emits two click events; only the first should toggle the window.
+	if (event.detail > 1) return;
+	requestFullscreenToggle();
+}
+
+function onPlayerDoubleClick() {
+	requestFullscreenToggle();
 }
 
 function onPlayerMouseDown(input: PlayerMouseDownPayload) {
 	if (!isPlayerHotkeyContext()) return;
-
-	const now = Date.now();
-	const isRapidSecondClick = lastPlayerMouseDownAt > 0
-		&& now - lastPlayerMouseDownAt <= PLAYER_DOUBLE_CLICK_THRESHOLD_MS;
-
-	lastPlayerMouseDownAt = now;
-
-	if (input.clickCount >= 2 || isRapidSecondClick) {
+	if (input.clickCount === 2) {
+		// YouTube handles the first click as play/pause before the app recognizes the
+		// double-click. Reverse that action so fullscreen does not change playback.
+		togglePlayPause();
 		onPlayerDoubleClick();
 	}
 }
 
 function handlePlayerHotkey(input: PlayerHotkeyPayload | KeyboardEvent) {
 	if (!player.value || !reviewsStore.getSelectedVideoId) return false;
+	revealPlayerControls();
 
 	if (input.key === 'ArrowLeft' || input.key === 'ArrowRight') {
 		const delta = getArrowSeekDelta(input);
@@ -261,7 +415,7 @@ function handlePlayerHotkey(input: PlayerHotkeyPayload | KeyboardEvent) {
 			input.preventDefault();
 			input.stopPropagation();
 		}
-		togglePlayPause();
+		if (!input.repeat) togglePlayPause();
 		return true;
 	}
 
@@ -270,7 +424,7 @@ function handlePlayerHotkey(input: PlayerHotkeyPayload | KeyboardEvent) {
 			input.preventDefault();
 			input.stopPropagation();
 		}
-		toggleMute();
+		if (!input.repeat) toggleMute();
 		return true;
 	}
 
@@ -279,7 +433,7 @@ function handlePlayerHotkey(input: PlayerHotkeyPayload | KeyboardEvent) {
 			input.preventDefault();
 			input.stopPropagation();
 		}
-		void toggleFullscreen();
+		if (!input.repeat) requestFullscreenToggle();
 		return true;
 	}
 
@@ -288,7 +442,13 @@ function handlePlayerHotkey(input: PlayerHotkeyPayload | KeyboardEvent) {
 
 function onPlayerKeyDown(event: KeyboardEvent) {
 	if (event.defaultPrevented) return;
-	if (isEditableTarget(event.target)) return;
+	if (event.code === 'Escape' && isHotkeyGuideOpen.value) {
+		event.preventDefault();
+		event.stopPropagation();
+		isHotkeyGuideOpen.value = false;
+		return;
+	}
+	if (isPlayerHotkeyExcludedTarget(event.target)) return;
 	handlePlayerHotkey(event);
 }
 
@@ -299,6 +459,38 @@ useIpcOn(IPC_EVENTS.YOUTUBE_PLAYER_HOTKEY_CALLBACK, (event, input: PlayerHotkeyP
 
 useIpcOn(IPC_EVENTS.YOUTUBE_PLAYER_DOUBLE_CLICK_CALLBACK, (event, input: PlayerMouseDownPayload) => {
 	onPlayerMouseDown(input);
+});
+
+useIpcOn(IPC_EVENTS.YOUTUBE_PLAYER_POINTER_ACTIVITY_CALLBACK, () => {
+	revealPlayerControls();
+});
+
+useIpcOn(IPC_EVENTS.YOUTUBE_PLAYER_FULLSCREEN_CHANGED, (_event, fullscreen: boolean) => {
+	isPlayerFullscreen.value = fullscreen === true;
+	isHotkeyGuideOpen.value = false;
+	revealPlayerControls();
+	void nextTick(publishPlayerPointerBounds);
+});
+
+watch(isHotkeyGuideOpen, (isOpen) => {
+	if (isOpen) {
+		keepPlayerControlsVisible();
+	} else {
+		revealPlayerControls();
+	}
+});
+
+watch(videoContainer, (container) => {
+	playerBoundsResizeObserver?.disconnect();
+	playerBoundsResizeObserver = null;
+	if (!container) {
+		publishPlayerPointerBounds();
+		return;
+	}
+
+	playerBoundsResizeObserver = new ResizeObserver(publishPlayerPointerBounds);
+	playerBoundsResizeObserver.observe(container);
+	void nextTick(publishPlayerPointerBounds);
 });
 
 let lastFightRelativeTime = 0;
@@ -330,6 +522,12 @@ function onVideoIdChanged() {
 }
 
 watch(() => reviewsStore.getSelectedVideoId, (newId) => {
+	if (!newId) {
+		isPlayerControlDockHovered.value = false;
+		isPlayerControlDockFocused.value = false;
+		isHotkeyGuideOpen.value = false;
+		keepPlayerControlsVisible();
+	}
 	onVideoIdChanged();
 });
 
@@ -383,6 +581,8 @@ function reloadPlayer() {
 const currentVideoTime = ref(0);
 
 watch(playerIframe, (el) => {
+	isPlayerPlaying.value = false;
+	keepPlayerControlsVisible();
 	if (player.value) {
 		log.info("Destroying existing YouTube player instance");
 		player.value.destroy();
@@ -393,9 +593,15 @@ watch(playerIframe, (el) => {
 		log.info("Creating new YouTube player instance");
 		player.value = new YTPlayer(el, {
 			autoplay: true,
+			// Keep YouTube's quality, captions, and settings controls available.
+			controls: true,
+			// Fullscreen is app-owned so YouTube cannot create a competing state.
+			fullscreen: false,
+			height: '100%',
 			host: "https://www.youtube-nocookie.com",
 			keyboard: false,
 			timeupdateFrequency: 200, // ms
+			width: '100%',
 		});
 
 		player.value.on('unplayable', ({ videoId, errorCode, data }) => {
@@ -436,11 +642,32 @@ watch(playerIframe, (el) => {
 			onVideoIdChanged();
 			reviewsStore.flushPendingTimelineWindowActions();
 		});
+
+		player.value.on('playing', () => {
+			isPlayerPlaying.value = true;
+			revealPlayerControls();
+		});
+
+		const keepControlsVisibleWhileStopped = () => {
+			isPlayerPlaying.value = false;
+			keepPlayerControlsVisible();
+		};
+		player.value.on('paused', keepControlsVisibleWhileStopped);
+		player.value.on('buffering', keepControlsVisibleWhileStopped);
+		player.value.on('ended', keepControlsVisibleWhileStopped);
 	}
 });
 
 onMounted(async () => {
 	window.addEventListener('keydown', onPlayerKeyDown);
+	window.addEventListener('blur', closeHotkeyGuide);
+	window.addEventListener('resize', publishPlayerPointerBounds);
+	document.addEventListener('pointerdown', closeHotkeyGuideOnOutsidePointer);
+	try {
+		isPlayerFullscreen.value = await ipc.invoke(IPC_EVENTS.YOUTUBE_PLAYER_FULLSCREEN_STATUS_GET) === true;
+	} catch (error) {
+		log.warn('Failed to load YouTube player fullscreen state', error);
+	}
 	const requestedAtRevision = wclAuthorizationStatusRevision;
 	try {
 		const authorized = await ipc.invoke(IPC_EVENTS.WCL_AUTH_STATUS_GET);
@@ -467,6 +694,17 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
 	window.removeEventListener('keydown', onPlayerKeyDown);
+	window.removeEventListener('blur', closeHotkeyGuide);
+	window.removeEventListener('resize', publishPlayerPointerBounds);
+	document.removeEventListener('pointerdown', closeHotkeyGuideOnOutsidePointer);
+	playerBoundsResizeObserver?.disconnect();
+	playerBoundsResizeObserver = null;
+	ipc.send(IPC_EVENTS.YOUTUBE_PLAYER_POINTER_BOUNDS_SET, null);
+	clearPlayerControlsHideTimeout();
+	isPlayerFullscreen.value = false;
+	void ipc.invoke(IPC_EVENTS.YOUTUBE_PLAYER_FULLSCREEN_SET, false).catch((error) => {
+		log.warn('Failed to leave YouTube player fullscreen while closing Reviews', error);
+	});
 	resetCopyReviewLinkStatus();
 });
 
@@ -517,21 +755,23 @@ const fightOptions = computed(() => {
 	const fights = reviewsStore.getReportDetails.fights;
 
 	const idToCount = new Map<number, number>();
-	const encounterToCount = new Map<number, number>();
-	for (let i = fights.length - 1; i >= 0; i--) {
-		const f = fights[i];
-		const encounterID = f.encounterID;
-		const currentCount = encounterToCount.get(encounterID) || 0;
-		encounterToCount.set(encounterID, currentCount + 1);
+	const encounterDifficultyToCount = new Map<string, number>();
+	const fightsByStartTime = [...fights].sort((left, right) => left.startTime - right.startTime);
+	for (const f of fightsByStartTime) {
+		const pullScope = `${f.encounterID}:${f.difficulty ?? 'unknown'}`;
+		const currentCount = encounterDifficultyToCount.get(pullScope) || 0;
+		encounterDifficultyToCount.set(pullScope, currentCount + 1);
 
 		idToCount.set(f.id, currentCount + 1);
 	}
 
-	list.push(...fights.map(f => {
+	list.push(...fightsByStartTime.map(f => {
 		const count = idToCount.get(f.id) || 0;
+		const formattedDifficulty = formatWclDifficultyLabel(f.difficulty);
+		const difficultyLabel = formattedDifficulty ? ` ${formattedDifficulty}` : '';
 
 		return {
-			label: `#${count} ${f.name} ${f.kill ? 'KILL' : (f.bossPercentage).toFixed(1) + '%'} ${formatTime((f.endTime - f.startTime) / 1000)} (${new Date(timeOffset + f.startTime).toLocaleTimeString()})`,
+			label: `#${count}${difficultyLabel} ${f.name} ${f.kill ? 'KILL' : (f.bossPercentage).toFixed(1) + '%'} ${formatTime((f.endTime - f.startTime) / 1000)} (${new Date(timeOffset + f.startTime).toLocaleTimeString()})`,
 			value: f.id,
 			color: f.kill ? 'green' : undefined,
 		}
@@ -824,8 +1064,14 @@ watch(currentFightCursor, (cursorPercent) => {
 	if (reviewsStore.timelineWindowDetached) ipc.send(IPC_EVENTS.TIMELINE_WINDOW_CURSOR_SET, cursorPercent);
 });
 
-function openYoutubeLink(videoId: string) {
-	ipc.send(IPC_EVENTS.YOUTUBE_OPEN_LINK, videoId);
+function openYoutubeLink(videoId: string, timestampSeconds?: number) {
+	ipc.send(IPC_EVENTS.YOUTUBE_OPEN_LINK, videoId, timestampSeconds);
+}
+
+function openSelectedYoutubeVideo(event: MouseEvent) {
+	if (event.detail > 1) return;
+	const videoId = reviewsStore.getSelectedVideoId;
+	if (videoId) openYoutubeLink(videoId, player.value?.getCurrentTime());
 }
 
 function refreshYoutubeVideo(videoId: string) {
@@ -867,10 +1113,16 @@ function deleteYoutubeVideo(videoId: string) {
 					</div>
 					<div
 						ref="videoContainer"
-						class="bg-gray-200 aspect-video max-w-[min(100%,80vw)] h-[calc(100%-85px)] rounded-md mt-2"
+						class="youtube-player-container relative bg-gray-200 aspect-video max-w-[min(100%,80vw)] h-[calc(100%-85px)] rounded-md mt-2"
+						:class="{
+							'youtube-player-container--fullscreen': isPlayerFullscreen,
+							'youtube-player-controls--hidden': !arePlayerControlsVisible,
+						}"
+						@pointerenter="onPlayerPointerEnter"
+						@pointermove="revealPlayerControls"
 						@dblclick="onPlayerDoubleClick"
 					>
-						<div :key="playerReloads" v-show="reviewsStore.selectedVideoInfo" class="w-full h-full relative">
+						<div :key="playerReloads" v-show="reviewsStore.selectedVideoInfo" class="youtube-player-frame w-full h-full relative">
 							<div
 								allow="autoplay; encrypted-media; fullscreen"
 								referrerpolicy="strict-origin-when-cross-origin"
@@ -878,6 +1130,80 @@ function deleteYoutubeVideo(videoId: string) {
 								class="rounded-md w-full h-full z-50"
 							></div>
 						</div>
+						<div
+							v-if="reviewsStore.selectedVideoInfo"
+							class="youtube-player-control-dock"
+							@pointerenter="onPlayerControlDockPointerEnter"
+							@pointerleave="onPlayerControlDockPointerLeave"
+							@focusin="onPlayerControlDockFocusIn"
+							@focusout="onPlayerControlDockFocusOut"
+							@dblclick.stop
+						>
+							<button
+								type="button"
+								class="youtube-player-control-button"
+								title="Open video on YouTube"
+								aria-label="Open current video on YouTube"
+								@click.stop="openSelectedYoutubeVideo"
+							>
+								<svg viewBox="0 0 24 24" aria-hidden="true">
+									<path d="M14 4h6v6M20 4l-9 9M18 13v5a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h5" />
+								</svg>
+							</button>
+							<button
+								ref="hotkeyGuideButton"
+								type="button"
+								class="youtube-player-control-button"
+								title="Video keyboard shortcuts"
+								aria-label="Show video keyboard shortcuts"
+								aria-controls="youtube-player-hotkey-guide"
+								:aria-expanded="isHotkeyGuideOpen"
+								@click.stop="toggleHotkeyGuide"
+								@dblclick.stop
+							>
+								<svg viewBox="0 0 24 24" aria-hidden="true">
+									<rect x="2.5" y="5" width="19" height="14" rx="1" />
+									<path d="M6 9h.01M9 9h.01M12 9h.01M15 9h.01M18 9h.01M6 12h.01M9 12h.01M12 12h.01M15 12h3M6 15h12" />
+								</svg>
+							</button>
+							<button
+								type="button"
+								class="youtube-player-control-button"
+								:title="isPlayerFullscreen ? 'Exit fullscreen (F)' : 'Fullscreen (F)'"
+								:aria-label="isPlayerFullscreen ? 'Exit video fullscreen' : 'Enter video fullscreen'"
+								@click.stop="onFullscreenButtonClick"
+								@dblclick.stop
+							>
+								<svg v-if="isPlayerFullscreen" viewBox="0 0 24 24" aria-hidden="true">
+									<path d="M8 3v5H3M16 3v5h5M8 21v-5H3M16 21v-5h5" />
+								</svg>
+								<svg v-else viewBox="0 0 24 24" aria-hidden="true">
+									<path d="M8 3H3v5M16 3h5v5M8 21H3v-5M16 21h5v-5" />
+								</svg>
+							</button>
+						</div>
+						<section
+							v-if="isHotkeyGuideOpen"
+							id="youtube-player-hotkey-guide"
+							ref="hotkeyGuide"
+							class="youtube-player-hotkey-guide"
+							aria-label="Video keyboard shortcuts"
+							@dblclick.stop
+						>
+							<div class="youtube-player-hotkey-guide__header">
+								<div>
+									<div class="youtube-player-hotkey-guide__title">Video shortcuts</div>
+									<div class="youtube-player-hotkey-guide__hint">Available while reviewing a video</div>
+								</div>
+								<button type="button" aria-label="Close video shortcuts" @click="isHotkeyGuideOpen = false">×</button>
+							</div>
+							<div class="youtube-player-hotkey-guide__grid">
+								<div v-for="shortcut in PLAYER_SHORTCUTS" :key="shortcut.keys" class="youtube-player-hotkey-guide__item">
+									<kbd>{{ shortcut.keys }}</kbd>
+									<span>{{ shortcut.action }}</span>
+								</div>
+							</div>
+						</section>
 					</div>
 				</div>
 				<div class="max-w-full w-full">
@@ -1007,3 +1333,190 @@ function deleteYoutubeVideo(videoId: string) {
 		</div>
 	</TabContent>
 </template>
+
+<style>
+.youtube-player-container iframe {
+	display: block;
+	width: 100%;
+	height: 100%;
+	border: 0;
+	border-radius: 0.375rem;
+}
+
+.youtube-player-control-dock {
+	position: absolute;
+	right: 0.65rem;
+	bottom: 3.35rem;
+	z-index: 2;
+	display: flex;
+	align-items: center;
+	border: 1px solid rgb(148 163 184 / 45%);
+	border-radius: 0.2rem;
+	background: rgb(8 13 22 / 88%);
+	color: rgb(241 245 249);
+	box-shadow: 0 2px 8px rgb(0 0 0 / 55%);
+	opacity: 0.86;
+	overflow: hidden;
+	transition: border-color 80ms linear, opacity 220ms ease-out;
+}
+
+.youtube-player-controls--hidden .youtube-player-control-dock {
+	opacity: 0;
+	pointer-events: none;
+}
+
+.youtube-player-control-dock:hover,
+.youtube-player-control-dock:focus-within {
+	border-color: rgb(165 180 252 / 72%);
+	opacity: 1;
+}
+
+.youtube-player-control-button {
+	display: flex;
+	width: 2.2rem;
+	height: 2.1rem;
+	align-items: center;
+	justify-content: center;
+	border-left: 1px solid rgb(100 116 139 / 42%);
+	background: transparent;
+	color: inherit;
+	cursor: pointer;
+	transition: background-color 80ms linear, color 80ms linear;
+}
+
+.youtube-player-control-button:first-child {
+	border-left: 0;
+}
+
+.youtube-player-control-button:hover,
+.youtube-player-control-button:focus-visible {
+	background: rgb(30 41 59 / 96%);
+	color: white;
+}
+
+.youtube-player-control-button:focus-visible {
+	outline: 2px solid rgb(129 140 248 / 85%);
+	outline-offset: -2px;
+}
+
+.youtube-player-control-button svg {
+	width: 1.25rem;
+	height: 1.25rem;
+	fill: none;
+	stroke: currentColor;
+	stroke-width: 1.8;
+	stroke-linecap: square;
+	stroke-linejoin: miter;
+}
+
+.youtube-player-control-button svg rect {
+	fill: none;
+}
+
+.youtube-player-control-button svg path {
+	stroke-linecap: round;
+	stroke-linejoin: round;
+}
+
+.youtube-player-hotkey-guide {
+	position: absolute;
+	right: 0.65rem;
+	bottom: 5.9rem;
+	z-index: 3;
+	width: min(38rem, calc(100% - 1.3rem));
+	max-height: calc(100% - 4rem);
+	overflow: auto;
+	border: 1px solid rgb(100 116 139 / 58%);
+	border-radius: 0.25rem;
+	background: rgb(7 12 20 / 96%);
+	color: rgb(226 232 240);
+	box-shadow: 0 12px 32px rgb(0 0 0 / 62%);
+	backdrop-filter: blur(5px);
+}
+
+.youtube-player-hotkey-guide__header {
+	display: flex;
+	align-items: flex-start;
+	justify-content: space-between;
+	gap: 1rem;
+	padding: 0.7rem 0.8rem 0.6rem;
+	border-bottom: 1px solid rgb(71 85 105 / 50%);
+}
+
+.youtube-player-hotkey-guide__title {
+	font-size: 0.9rem;
+	font-weight: 700;
+	letter-spacing: 0.02em;
+}
+
+.youtube-player-hotkey-guide__hint {
+	margin-top: 0.1rem;
+	font-size: 0.7rem;
+	color: rgb(148 163 184);
+}
+
+.youtube-player-hotkey-guide__header button {
+	font-size: 1.25rem;
+	line-height: 1;
+	color: rgb(148 163 184);
+	cursor: pointer;
+}
+
+.youtube-player-hotkey-guide__header button:hover,
+.youtube-player-hotkey-guide__header button:focus-visible {
+	color: white;
+}
+
+.youtube-player-hotkey-guide__grid {
+	display: grid;
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+	gap: 0.4rem 0.8rem;
+	padding: 0.7rem 0.8rem 0.8rem;
+}
+
+.youtube-player-hotkey-guide__item {
+	display: flex;
+	min-width: 0;
+	align-items: center;
+	justify-content: space-between;
+	gap: 0.6rem;
+	font-size: 0.75rem;
+	color: rgb(203 213 225);
+}
+
+.youtube-player-hotkey-guide__item kbd {
+	flex: none;
+	min-width: 3rem;
+	padding: 0.18rem 0.35rem;
+	border: 1px solid rgb(100 116 139 / 60%);
+	border-bottom-color: rgb(148 163 184 / 75%);
+	border-radius: 0.18rem;
+	background: rgb(30 41 59 / 82%);
+	color: rgb(241 245 249);
+	font-family: inherit;
+	font-size: 0.68rem;
+	font-weight: 650;
+	line-height: 1.2;
+	text-align: center;
+	white-space: nowrap;
+}
+
+.youtube-player-container--fullscreen {
+	position: fixed !important;
+	inset: 0 !important;
+	z-index: 2147483647;
+	width: 100vw !important;
+	height: 100vh !important;
+	max-width: none !important;
+	margin: 0 !important;
+	border-radius: 0 !important;
+	background: rgb(229 231 235);
+}
+
+.youtube-player-container--fullscreen > .youtube-player-frame,
+.youtube-player-container--fullscreen iframe {
+	width: 100% !important;
+	height: 100% !important;
+	border-radius: 0 !important;
+}
+</style>

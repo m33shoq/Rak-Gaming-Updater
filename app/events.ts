@@ -78,6 +78,11 @@ export const IPC_EVENTS = {
 	TIMELINE_WINDOW_REATTACHED: 'timeline-window-reattached',
 	YOUTUBE_PLAYER_HOTKEY_CALLBACK: 'youtube-player-hotkey',
 	YOUTUBE_PLAYER_DOUBLE_CLICK_CALLBACK: 'youtube-player-double-click',
+	YOUTUBE_PLAYER_POINTER_BOUNDS_SET: 'youtube-player-pointer-bounds-set',
+	YOUTUBE_PLAYER_POINTER_ACTIVITY_CALLBACK: 'youtube-player-pointer-activity',
+	YOUTUBE_PLAYER_FULLSCREEN_SET: 'youtube-player-fullscreen-set',
+	YOUTUBE_PLAYER_FULLSCREEN_STATUS_GET: 'youtube-player-fullscreen-status-get',
+	YOUTUBE_PLAYER_FULLSCREEN_CHANGED: 'youtube-player-fullscreen-changed',
 
 
 

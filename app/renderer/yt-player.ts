@@ -434,11 +434,23 @@ export default class YouTubePlayer extends EventEmitter {
 			log.info('YTPlayer:onReady');
 
 			const iframe = this._player.getIframe();
+			const allowFeatures = [
+				'autoplay',
+				'clipboard-write',
+				'encrypted-media',
+				'picture-in-picture',
+				'web-share',
+			];
+			if (this._opts.fullscreen) allowFeatures.push('fullscreen');
 			iframe.setAttribute(
 				"allow",
-				"autoplay; clipboard-write; encrypted-media; picture-in-picture; web-share"
+				allowFeatures.join('; ')
 			);
-			iframe.setAttribute("allowfullscreen", "true");
+			if (this._opts.fullscreen) {
+				iframe.setAttribute("allowfullscreen", "true");
+			} else {
+				iframe.removeAttribute("allowfullscreen");
+			}
 			iframe.setAttribute("referrerpolicy", "strict-origin-when-cross-origin");
 			// iframe.setAttribute("tabindex", "-1");
 

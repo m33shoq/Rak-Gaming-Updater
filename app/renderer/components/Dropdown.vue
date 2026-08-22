@@ -20,6 +20,7 @@ const props = defineProps<{
 const model = defineModel()
 const toggled = ref(false);
 const showScrollbar = ref(false);
+const dropdownRoot = ref<HTMLElement | null>(null);
 
 watch(toggled, (newVal) => {
 	if (newVal && props.onOpen) {
@@ -64,8 +65,8 @@ function hideDropdown() {
 	toggled.value = false;
 }
 
-function onClickOutside(event) {
-	if (!event.target.closest('.dropdown')) {
+function onClickOutside(event: MouseEvent) {
+	if (!(event.target instanceof Node) || !dropdownRoot.value?.contains(event.target)) {
 		hideDropdown();
 	}
 }
@@ -99,8 +100,7 @@ const colorMap = {
 </script>
 
 <template>
-	<!-- class dropdown is required here for global mouse click tracking -->
-	<div class="dropdown flex flex-col mt-2 min-w-60 max-w-fit relative" :class="toggled ? 'z-[120]' : 'z-0'">
+	<div ref="dropdownRoot" class="dropdown flex flex-col mt-2 min-w-60 max-w-fit relative" :class="toggled ? 'z-[120]' : 'z-0'">
 		<label v-if="label">{{ label }}:</label>
 		<button
 			:class="[

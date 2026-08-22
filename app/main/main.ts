@@ -208,6 +208,113 @@ function queueDialog(dialogOptions: Electron.MessageBoxOptions, onSuccessCallbac
 
 let mainWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
+let isYouTubePlayerFullscreen = false;
+let desiredYouTubePlayerFullscreen = false;
+let lastYouTubePlayerPointerActivityAt = 0;
+let pendingYouTubePlayerDoubleClick = false;
+let youtubePlayerPointerBounds: { left: number; top: number; right: number; bottom: number } | null = null;
+type YouTubeFullscreenTransition = {
+	targetWindow: BrowserWindow;
+	fullscreen: boolean;
+	promise: Promise<boolean>;
+	resolve: (fullscreen: boolean) => void;
+	timeout: ReturnType<typeof setTimeout>;
+};
+let youtubeFullscreenTransition: YouTubeFullscreenTransition | null = null;
+const YOUTUBE_FULLSCREEN_TRANSITION_TIMEOUT_MS = 3000;
+
+function publishYouTubePlayerFullscreenState() {
+	if (!mainWindow || mainWindow.isDestroyed()) return;
+	mainWindow.webContents.send(IPC_EVENTS.YOUTUBE_PLAYER_FULLSCREEN_CHANGED, isYouTubePlayerFullscreen);
+}
+
+function finishYouTubeFullscreenTransition(transition: YouTubeFullscreenTransition, actualFullscreen: boolean) {
+	if (youtubeFullscreenTransition !== transition) return;
+
+	clearTimeout(transition.timeout);
+	youtubeFullscreenTransition = null;
+	if (actualFullscreen === transition.fullscreen) {
+		isYouTubePlayerFullscreen = actualFullscreen;
+	} else if (desiredYouTubePlayerFullscreen === transition.fullscreen) {
+		// Stop retrying a transition that Electron did not complete.
+		desiredYouTubePlayerFullscreen = isYouTubePlayerFullscreen;
+	}
+	publishYouTubePlayerFullscreenState();
+	transition.resolve(isYouTubePlayerFullscreen);
+}
+
+async function reconcileYouTubePlayerFullscreen(targetWindow: BrowserWindow): Promise<boolean> {
+	if (targetWindow !== mainWindow || targetWindow.isDestroyed()) return false;
+
+	if (youtubeFullscreenTransition) {
+		await youtubeFullscreenTransition.promise;
+		return reconcileYouTubePlayerFullscreen(targetWindow);
+	}
+
+	const requestedFullscreen = desiredYouTubePlayerFullscreen;
+	if (targetWindow.isFullScreen() === requestedFullscreen) {
+		if (isYouTubePlayerFullscreen !== requestedFullscreen) {
+			isYouTubePlayerFullscreen = requestedFullscreen;
+			publishYouTubePlayerFullscreenState();
+		}
+		return isYouTubePlayerFullscreen;
+	}
+
+	let resolveTransition!: (fullscreen: boolean) => void;
+	const promise = new Promise<boolean>((resolve) => {
+		resolveTransition = resolve;
+	});
+	const transition = {
+		targetWindow,
+		fullscreen: requestedFullscreen,
+		promise,
+		resolve: resolveTransition,
+		timeout: undefined as unknown as ReturnType<typeof setTimeout>,
+	};
+	transition.timeout = setTimeout(() => {
+		finishYouTubeFullscreenTransition(transition, !targetWindow.isDestroyed() && targetWindow.isFullScreen());
+	}, YOUTUBE_FULLSCREEN_TRANSITION_TIMEOUT_MS);
+	youtubeFullscreenTransition = transition;
+
+	try {
+		targetWindow.setFullScreen(requestedFullscreen);
+	} catch (error) {
+		log.warn('Failed to transition YouTube player fullscreen state', error);
+		finishYouTubeFullscreenTransition(transition, !targetWindow.isDestroyed() && targetWindow.isFullScreen());
+	}
+
+	await promise;
+	return reconcileYouTubePlayerFullscreen(targetWindow);
+}
+
+function setYouTubePlayerFullscreen(targetWindow: BrowserWindow, fullscreen: boolean): Promise<boolean> {
+	if (targetWindow !== mainWindow || targetWindow.isDestroyed()) return Promise.resolve(false);
+	desiredYouTubePlayerFullscreen = fullscreen;
+	return reconcileYouTubePlayerFullscreen(targetWindow);
+}
+
+function onYouTubePlayerFullscreenChanged(targetWindow: BrowserWindow, fullscreen: boolean) {
+	const transition = youtubeFullscreenTransition;
+	if (transition?.targetWindow === targetWindow && transition.fullscreen === fullscreen) {
+		finishYouTubeFullscreenTransition(transition, fullscreen);
+		return;
+	}
+
+	if (targetWindow !== mainWindow) return;
+	if (!fullscreen && isYouTubePlayerFullscreen) {
+		desiredYouTubePlayerFullscreen = false;
+		isYouTubePlayerFullscreen = false;
+		publishYouTubePlayerFullscreenState();
+		return;
+	}
+	if (fullscreen === desiredYouTubePlayerFullscreen) {
+		isYouTubePlayerFullscreen = fullscreen;
+		publishYouTubePlayerFullscreenState();
+		return;
+	}
+
+	void reconcileYouTubePlayerFullscreen(targetWindow);
+}
 
 const timelineWindowController = new TimelineWindowController({
 	getMainWindow: () => mainWindow,
@@ -513,6 +620,23 @@ async function createWindow() {
 		show: !startMinimized,
 	});
 
+	mainWindow.on('enter-full-screen', () => {
+		if (mainWindow) onYouTubePlayerFullscreenChanged(mainWindow, true);
+	});
+	mainWindow.on('leave-full-screen', () => {
+		if (mainWindow) onYouTubePlayerFullscreenChanged(mainWindow, false);
+	});
+	mainWindow.on('minimize', () => {
+		if ((desiredYouTubePlayerFullscreen || isYouTubePlayerFullscreen) && mainWindow) {
+			void setYouTubePlayerFullscreen(mainWindow, false);
+		}
+	});
+	mainWindow.on('hide', () => {
+		if ((desiredYouTubePlayerFullscreen || isYouTubePlayerFullscreen) && mainWindow) {
+			void setYouTubePlayerFullscreen(mainWindow, false);
+		}
+	});
+
 	const sess = mainWindow.webContents.session;
 
 	// fix no referer for youtube embeds
@@ -564,7 +688,15 @@ async function createWindow() {
 	}
 
 	mainWindow?.on('closed', () => {
+		if (youtubeFullscreenTransition) {
+			clearTimeout(youtubeFullscreenTransition.timeout);
+			youtubeFullscreenTransition.resolve(false);
+			youtubeFullscreenTransition = null;
+		}
 		mainWindow = null;
+		isYouTubePlayerFullscreen = false;
+		desiredYouTubePlayerFullscreen = false;
+		youtubePlayerPointerBounds = null;
 		isMainWindowReadyForDeepLinks = false;
 	});
 
@@ -744,6 +876,20 @@ app.on('activate', () => {
 app.setAppUserModelId('com.rak-gaming-updater');
 registerDeepLinkProtocolClient();
 
+function isYouTubePlayerFrameUrl(frameUrl?: string): boolean {
+	if (!frameUrl) return false;
+
+	try {
+		const hostname = new URL(frameUrl).hostname.toLowerCase();
+		return hostname === 'youtube.com'
+			|| hostname.endsWith('.youtube.com')
+			|| hostname === 'youtube-nocookie.com'
+			|| hostname.endsWith('.youtube-nocookie.com');
+	} catch {
+		return false;
+	}
+}
+
 // Protocol handler for macOS
 app.on('open-url', (event, url) => {
 	event.preventDefault();
@@ -754,7 +900,7 @@ app.on('open-url', (event, url) => {
 // Ctrl+Shift+I to open devTools, Ctrl+Shift+R to reload
 app.on('web-contents-created', (webContentsCreatedEvent, webContents) => {
 	webContents.on('before-input-event', (beforeInputEvent, input) => {
-		const { code, key, alt, control, shift, meta, type } = input;
+		const { code, key, alt, control, shift, meta, type, isAutoRepeat } = input;
 
 		// Shortcut: toggle devTools
 		if (shift && control && !alt && !meta && code === 'KeyI') {
@@ -763,24 +909,38 @@ app.on('web-contents-created', (webContentsCreatedEvent, webContents) => {
 
 		if (webContents !== mainWindow?.webContents || type !== 'keyDown') return;
 
-		const isPlayerHotkey = code === 'Space'
-			|| code === 'ArrowLeft'
-			|| code === 'ArrowRight'
+		if (code === 'Escape' && (desiredYouTubePlayerFullscreen || isYouTubePlayerFullscreen)) {
+			beforeInputEvent.preventDefault();
+			void setYouTubePlayerFullscreen(mainWindow, false);
+			return;
+		}
+
+		const isArrowSeekHotkey = code === 'ArrowLeft' || code === 'ArrowRight';
+		const hasModifier = alt || control || shift || meta;
+		const isUnmodifiedPlayerHotkey = !hasModifier && (
+			code === 'Space'
 			|| code === 'KeyK'
 			|| code === 'KeyJ'
 			|| code === 'KeyL'
 			|| code === 'KeyM'
 			|| code === 'KeyF'
 			|| code === 'Comma'
-			|| code === 'Period';
+			|| code === 'Period'
+		);
+		const isPlayerHotkey = isArrowSeekHotkey || isUnmodifiedPlayerHotkey;
 
-		if (isPlayerHotkey) {
+		const isYouTubePlayerFocused = isYouTubePlayerFrameUrl(webContents.focusedFrame?.url);
+		if (isPlayerHotkey && isYouTubePlayerFocused) {
+			// The focused cross-origin iframe does not bubble its keyboard event to the
+			// renderer. Cancel YouTube's copy and forward exactly one app-owned shortcut.
+			beforeInputEvent.preventDefault();
 			mainWindow?.webContents.send(IPC_EVENTS.YOUTUBE_PLAYER_HOTKEY_CALLBACK, {
 				key,
 				code,
 				altKey: alt,
 				ctrlKey: control,
 				metaKey: meta,
+				repeat: isAutoRepeat,
 				shiftKey: shift,
 			});
 		}
@@ -793,11 +953,40 @@ app.on('web-contents-created', (webContentsCreatedEvent, webContents) => {
 
 	webContents.on('before-mouse-event', (beforeMouseEvent, mouse) => {
 		if (webContents !== mainWindow?.webContents) return;
-		if (mouse.type !== 'mouseDown') return;
+		if (mouse.type === 'mouseMove') {
+			const bounds = youtubePlayerPointerBounds;
+			if (!bounds
+				|| mouse.x < bounds.left
+				|| mouse.x > bounds.right
+				|| mouse.y < bounds.top
+				|| mouse.y > bounds.bottom) return;
+			const now = Date.now();
+			if (now - lastYouTubePlayerPointerActivityAt >= 50) {
+				lastYouTubePlayerPointerActivityAt = now;
+				mainWindow.webContents.send(IPC_EVENTS.YOUTUBE_PLAYER_POINTER_ACTIVITY_CALLBACK);
+			}
+			return;
+		}
+		if (mouse.type === 'mouseDown') {
+			pendingYouTubePlayerDoubleClick = false;
+			if (mouse.button !== 'left' || mouse.clickCount !== 2) return;
+			if (!isYouTubePlayerFrameUrl(webContents.focusedFrame?.url)) return;
+
+			// Suppress YouTube's second press, but wait for its matching release before
+			// resizing the BrowserWindow. Resizing mid-click can retarget the release to
+			// one of the app controls after they move into their fullscreen positions.
+			pendingYouTubePlayerDoubleClick = true;
+			beforeMouseEvent.preventDefault();
+			return;
+		}
+
+		if (mouse.type !== 'mouseUp' || !pendingYouTubePlayerDoubleClick) return;
+		pendingYouTubePlayerDoubleClick = false;
 		if (mouse.button !== 'left') return;
 
-		mainWindow?.webContents.send(IPC_EVENTS.YOUTUBE_PLAYER_DOUBLE_CLICK_CALLBACK, {
-			clickCount: mouse.clickCount ?? 0,
+		beforeMouseEvent.preventDefault();
+		mainWindow.webContents.send(IPC_EVENTS.YOUTUBE_PLAYER_DOUBLE_CLICK_CALLBACK, {
+			clickCount: 2,
 		});
 	});
 });
@@ -1048,6 +1237,34 @@ ipcMain.on(IPC_EVENTS.WINDOW_MAXIMIZE_TOGGLE, (event) => {
 	} else {
 		targetWindow.maximize();
 	}
+});
+
+ipcMain.handle(IPC_EVENTS.YOUTUBE_PLAYER_FULLSCREEN_SET, (event, fullscreen: unknown) => {
+	const targetWindow = BrowserWindow.fromWebContents(event.sender);
+	if (!targetWindow || typeof fullscreen !== 'boolean') return false;
+	return setYouTubePlayerFullscreen(targetWindow, fullscreen);
+});
+
+ipcMain.handle(IPC_EVENTS.YOUTUBE_PLAYER_FULLSCREEN_STATUS_GET, (event) => {
+	return event.sender === mainWindow?.webContents && isYouTubePlayerFullscreen;
+});
+
+ipcMain.on(IPC_EVENTS.YOUTUBE_PLAYER_POINTER_BOUNDS_SET, (event, bounds: unknown) => {
+	if (event.sender !== mainWindow?.webContents) return;
+	if (bounds === null) {
+		youtubePlayerPointerBounds = null;
+		return;
+	}
+	if (!bounds || typeof bounds !== 'object') return;
+
+	const candidate = bounds as Record<string, unknown>;
+	if (!['left', 'top', 'right', 'bottom'].every(key => typeof candidate[key] === 'number' && Number.isFinite(candidate[key]))) return;
+	const left = candidate.left as number;
+	const top = candidate.top as number;
+	const right = candidate.right as number;
+	const bottom = candidate.bottom as number;
+	if (right <= left || bottom <= top) return;
+	youtubePlayerPointerBounds = { left, top, right, bottom };
 });
 
 ipcMain.handle(IPC_EVENTS.UPDATER_SELECT_WOW_PATH, async () => {
@@ -1734,10 +1951,15 @@ ipcMain.on(IPC_EVENTS.WCL_OPEN_DEATH, async (event, { reportCode, fightID, death
 	void shell.openExternal(url);
 });
 
-ipcMain.on(IPC_EVENTS.YOUTUBE_OPEN_LINK, async (event, videoId) => {
-	const url = `https://www.youtube.com/watch?v=${videoId}`;
-	log.info('Opening YouTube link:', url);
-	void shell.openExternal(url);
+ipcMain.on(IPC_EVENTS.YOUTUBE_OPEN_LINK, async (event, videoId: unknown, timestampSeconds?: unknown) => {
+	if (typeof videoId !== 'string' || !videoId) return;
+	const url = new URL('https://www.youtube.com/watch');
+	url.searchParams.set('v', videoId);
+	if (typeof timestampSeconds === 'number' && Number.isFinite(timestampSeconds) && timestampSeconds > 0) {
+		url.searchParams.set('t', `${Math.floor(timestampSeconds)}s`);
+	}
+	log.info('Opening YouTube link:', url.toString());
+	void shell.openExternal(url.toString());
 });
 
 socket.on(SOCKET_EVENTS.YOUTUBE_VIDEO_INFO_UPDATED, () => {
