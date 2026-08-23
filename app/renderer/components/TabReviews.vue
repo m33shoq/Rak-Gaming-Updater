@@ -756,8 +756,8 @@ const fightOptions = computed(() => {
 
 	const idToCount = new Map<number, number>();
 	const encounterDifficultyToCount = new Map<string, number>();
-	const fightsByStartTime = [...fights].sort((left, right) => left.startTime - right.startTime);
-	for (const f of fightsByStartTime) {
+	const chronologicalFights = [...fights].sort((left, right) => left.startTime - right.startTime);
+	for (const f of chronologicalFights) {
 		const pullScope = `${f.encounterID}:${f.difficulty ?? 'unknown'}`;
 		const currentCount = encounterDifficultyToCount.get(pullScope) || 0;
 		encounterDifficultyToCount.set(pullScope, currentCount + 1);
@@ -765,7 +765,7 @@ const fightOptions = computed(() => {
 		idToCount.set(f.id, currentCount + 1);
 	}
 
-	list.push(...fightsByStartTime.map(f => {
+	list.push(...[...chronologicalFights].reverse().map(f => {
 		const count = idToCount.get(f.id) || 0;
 		const formattedDifficulty = formatWclDifficultyLabel(f.difficulty);
 		const difficultyLabel = formattedDifficulty ? ` ${formattedDifficulty}` : '';
