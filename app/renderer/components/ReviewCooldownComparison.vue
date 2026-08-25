@@ -4,10 +4,20 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
 import ReviewBossCastInterrupt from '@/renderer/components/ReviewBossCastInterrupt.vue';
 import ReviewCooldownTarget from '@/renderer/components/ReviewCooldownTarget.vue';
+import ReviewEncounterAlertTooltip from '@/renderer/components/ReviewEncounterAlertTooltip.vue';
 import ReviewRaidMarker from '@/renderer/components/ReviewRaidMarker.vue';
 import { useReviewsStore } from '@/renderer/store/ReviewsStore';
 import { buildCollapsedBossCastMarkers, sortBossCastAbilitiesByFirstOccurrence } from '@/renderer/utils/bossCastAggregation';
 import { useBossCastTooltipLayout } from '@/renderer/utils/bossCastTooltipLayout';
+import {
+	aggregateEncounterAlertMarkers,
+	type AggregatedEncounterAlertMarker,
+} from '@/renderer/utils/encounterAlertAggregation';
+import {
+	getReviewCooldownDisplayActors,
+	getReviewCooldownGroups,
+	getReviewCooldownPrimaryGroup,
+} from '@/renderer/utils/reviewCooldownEvents';
 import { refreshWowheadTooltips } from '@/renderer/utils/wowheadTooltips';
 
 const props = defineProps<{
@@ -56,6 +66,8 @@ type PhaseMarker = PhaseTime & {
 	percent: number;
 };
 type CooldownMarker = { event: reviewCooldownEvent; timestampSeconds: number; percent: number; track: number; key: string };
+type EncounterAlertOccurrence = { event: fightEvent; timestampSeconds: number; percent: number; key: string };
+type EncounterAlertMarker = AggregatedEncounterAlertMarker<EncounterAlertOccurrence>;
 type BossCastMarker = { event: reviewBossCastEvent; timestampSeconds: number; durationSeconds: number; percent: number; startPercent: number; key: string };
 type BossCastLane = { ability: reviewBossCastAbility; markers: BossCastMarker[] };
 type DeathPeriod = {
@@ -81,11 +93,13 @@ type PullRow = {
 	endPercent: number;
 	actorIcon: string;
 	phases: PhaseMarker[];
+	alerts: EncounterAlertMarker[];
 	cooldowns: CooldownMarker[];
 	deaths: DeathPeriod[];
 	height: number;
 };
 type DetailTooltip =
+	| { kind: 'alert'; row: PullRow; marker: EncounterAlertMarker; placement: 'above' | 'below'; x: number; y: number }
 	| { kind: 'cooldown'; row: PullRow; marker: CooldownMarker; x: number; y: number }
 	| { kind: 'death'; row: PullRow; death: DeathPeriod; x: number; y: number }
 	| { kind: 'phase'; row: PullRow; phase: PhaseMarker; deltaSeconds: number | null; x: number; y: number }
@@ -834,7 +848,7 @@ function getPlayerEvents(fightID: number) {
 	const playerID = selectedPlayerID.value;
 	if (!reportCode || !playerID) return [];
 	return (reviewsStore.getFightCooldownDataFor(reportCode, fightID)?.fightCooldownEvents || [])
-		.filter(event => event.source?.id === playerID);
+		.filter(event => getReviewCooldownDisplayActors(event).some(actor => isSelectedActor(actor)));
 }
 
 const comparisonSpellEvents = computed(() => selectedPulls.value.flatMap(fight => getPlayerEvents(fight.id)));
@@ -851,7 +865,7 @@ async function loadPulls(pulls: fightDetails[]) {
 			const fight = pulls[nextIndex++];
 			await Promise.allSettled([
 				reviewsStore.ensureFightCooldowns(reportCode, fight.id),
-				reviewsStore.ensureFightEvents(reportCode, fight.id),
+				reviewsStore.ensureFightEvents(reportCode, fight.id, false, fight.encounterID),
 			]);
 		}
 	}
@@ -873,7 +887,12 @@ async function retryPull(fightID: number) {
 	if (!reportCode) return;
 	await Promise.allSettled([
 		reviewsStore.ensureFightCooldowns(reportCode, fightID, true),
-		reviewsStore.ensureFightEvents(reportCode, fightID, true),
+		reviewsStore.ensureFightEvents(
+			reportCode,
+			fightID,
+			true,
+			reportDetails.value?.fights.find(fight => fight.id === fightID)?.encounterID,
+		),
 	]);
 }
 
@@ -942,6 +961,26 @@ function buildDeathPeriods(fight: fightDetails): DeathPeriod[] {
 	return periods;
 }
 
+function buildEncounterAlerts(fight: fightDetails): EncounterAlertMarker[] {
+	const reportCode = anchorReportCode.value;
+	if (!reportCode) return [];
+	const durationSeconds = (fight.endTime - fight.startTime) / 1000;
+	const occurrences = reviewsStore.getFightEventsFor(reportCode, fight.id).flatMap((event, index): EncounterAlertOccurrence[] => {
+		if (!event.encounterAlert) return [];
+		const timestampSeconds = (event.timestamp - fight.startTime) / 1000;
+		if (timestampSeconds < 0 || timestampSeconds > durationSeconds) return [];
+		const percent = toTimelinePercent(fight, timestampSeconds);
+		if (percent == null) return [];
+		return [{
+			event,
+			timestampSeconds,
+			percent,
+			key: `${fight.id}:alert:${event.encounterAlert.id}:${event.timestamp}:${index}`,
+		}];
+	});
+	return aggregateEncounterAlertMarkers(occurrences);
+}
+
 function buildPhases(fight: fightDetails): PhaseMarker[] {
 	return getFightPhaseTimes(fight).map(phase => ({
 		...phase,
@@ -957,7 +996,7 @@ const rows = computed<PullRow[]>(() => {
 		const isAligned = getAlignmentOriginSeconds(fight) != null;
 		const allPlayerEvents = getPlayerEvents(fight.id);
 		const visibleEvents = isAligned ? allPlayerEvents.filter(event => (
-			event.cooldown.groups.some(groupID => enabledGroupIDSet.value.has(groupID))
+			getReviewCooldownGroups(event).some(groupID => enabledGroupIDSet.value.has(groupID))
 			&& !excludedSpellIDSet.value.has(event.cooldown.spellID)
 		)) : [];
 		const trackEnds: number[] = [];
@@ -978,7 +1017,10 @@ const rows = computed<PullRow[]>(() => {
 		const className = playerActor?.subType || playerActor?.type || '';
 		const actorIcon = className && spec
 			? `${className}-${spec.replace(/\s+/g, '')}`
-			: allPlayerEvents.find(event => event.source?.icon)?.source?.icon || '';
+			: allPlayerEvents
+				.flatMap(event => getReviewCooldownDisplayActors(event))
+				.find(actor => isSelectedActor(actor) && actor.icon)
+				?.icon || '';
 		return {
 			fight,
 			pullNumber: pullNumberByFightID.value.get(fight.id) || fight.id,
@@ -988,6 +1030,7 @@ const rows = computed<PullRow[]>(() => {
 			endPercent: toTimelinePercent(fight, durationSeconds) ?? 0,
 			actorIcon,
 			phases: isAligned ? buildPhases(fight) : [],
+			alerts: isAligned ? buildEncounterAlerts(fight) : [],
 			cooldowns,
 			deaths: isAligned && deathsEnabled.value ? buildDeathPeriods(fight) : [],
 			height: Math.max(50, 23 + Math.max(1, trackEnds.length) * 27),
@@ -1013,6 +1056,10 @@ const newestPhaseTimes = computed(() => {
 });
 const visibleCooldownCount = computed(() => rows.value.reduce((total, row) => total + row.cooldowns.length, 0));
 const visibleDeathCount = computed(() => rows.value.reduce((total, row) => total + row.deaths.length, 0));
+const visibleAlertCount = computed(() => rows.value.reduce(
+	(total, row) => total + row.alerts.reduce((rowTotal, marker) => rowTotal + marker.occurrences.length, 0),
+	0,
+));
 const alignedPullCount = computed(() => rows.value.filter(row => row.isAligned).length);
 
 function formatTime(seconds: number, decimals = false) {
@@ -1097,7 +1144,8 @@ function getClassColor(className?: string) {
 	return colors[className?.toLowerCase() || ''] || 'text-inherit';
 }
 function getBorderColor(event: reviewCooldownEvent) {
-	const group = event.cooldown.groups.find(groupID => enabledGroupIDSet.value.has(groupID)) || event.cooldown.primaryGroup;
+	const group = getReviewCooldownGroups(event).find(groupID => enabledGroupIDSet.value.has(groupID))
+		|| getReviewCooldownPrimaryGroup(event);
 	return { deaths: 'border-red-500', raid_cd: 'border-cyan-400', personals: 'border-violet-400', externals: 'border-pink-400', utility: 'border-blue-400', movement: 'border-emerald-400', dps_cd: 'border-amber-400', interrupts: 'border-lime-400', taunts: 'border-yellow-300', aoe_cc: 'border-orange-400', single_cc: 'border-red-400' }[group];
 }
 
@@ -1112,6 +1160,9 @@ function tooltipPoint(event: MouseEvent) {
 function updateTooltip(event: MouseEvent) {
 	if (!detailTooltip.value) return;
 	pendingTooltipPoint = tooltipPoint(event);
+	if (detailTooltip.value.kind === 'alert') {
+		pendingTooltipPoint = { x: event.clientX, y: event.clientY };
+	}
 	if (tooltipFrame != null) return;
 	tooltipFrame = requestAnimationFrame(() => {
 		tooltipFrame = null;
@@ -1121,6 +1172,24 @@ function updateTooltip(event: MouseEvent) {
 }
 function showCooldown(row: PullRow, marker: CooldownMarker, event: MouseEvent) {
 	detailTooltip.value = { kind: 'cooldown', row, marker, ...tooltipPoint(event) };
+}
+function showEncounterAlert(row: PullRow, marker: EncounterAlertMarker, event: MouseEvent) {
+	const placement = event.clientY < window.innerHeight / 2 ? 'below' : 'above';
+	detailTooltip.value = {
+		kind: 'alert',
+		row,
+		marker,
+		placement,
+		x: event.clientX,
+		y: event.clientY,
+	};
+}
+
+function getEncounterAlertTooltipOccurrences(row: PullRow, marker: EncounterAlertMarker) {
+	return marker.occurrences.map(occurrence => ({
+		event: occurrence.event,
+		timestampLabel: formatCooldownTime(row, occurrence.timestampSeconds),
+	}));
 }
 function showDeath(row: PullRow, death: DeathPeriod, event: MouseEvent) {
 	detailTooltip.value = { kind: 'death', row, death, ...tooltipPoint(event) };
@@ -1496,7 +1565,7 @@ onBeforeUnmount(() => {
 					<span v-if="bossCastInterruptsIncomplete" class="font-bold text-amber-500" title="Interrupt details are incomplete" aria-label="Interrupt details are incomplete">!</span>
 					<span aria-hidden="true">▾</span>
 				</button>
-				<span class="hidden rounded-sm border border-neutral-500/25 bg-neutral-500/[0.07] px-2 py-1 tabular-nums text-neutral-500 2xl:inline-flex">{{ selectedPulls.length }}/{{ eligiblePulls.length }} pulls · {{ visibleCooldownCount }} casts · {{ visibleDeathCount }} deaths</span>
+				<span class="hidden rounded-sm border border-neutral-500/25 bg-neutral-500/[0.07] px-2 py-1 tabular-nums text-neutral-500 2xl:inline-flex">{{ selectedPulls.length }}/{{ eligiblePulls.length }} pulls · {{ visibleCooldownCount }} casts · {{ visibleDeathCount }} deaths<span v-if="visibleAlertCount"> · {{ visibleAlertCount }} alerts</span></span>
 				<span class="rounded-sm border border-neutral-500/25 bg-neutral-500/[0.07] px-2 py-1 tabular-nums text-neutral-500 2xl:hidden">{{ selectedPulls.length }}/{{ eligiblePulls.length }}</span>
 				<button v-if="hasMorePulls" type="button" class="h-7 rounded-sm px-2 text-neutral-500 hover:bg-neutral-500/10 hover:text-inherit" @click="visiblePullLimit = eligiblePulls.length">Load all</button>
 			</div>
@@ -1661,6 +1730,13 @@ onBeforeUnmount(() => {
 								<span class="pointer-events-none absolute inset-y-0 left-1/2 w-0.5 -translate-x-1/2 bg-sky-400/75 group-focus-visible:bg-white" :class="phase.key === alignmentPhaseKey ? 'bg-sky-300 shadow-[0_0_5px_rgba(125,211,252,0.65)]' : hoveredPhaseKey === phase.key ? 'bg-white shadow-[0_0_6px_rgba(125,211,252,0.9)]' : ''"></span>
 								<span class="pointer-events-none absolute left-[calc(50%+3px)] top-0 whitespace-nowrap bg-slate-950/75 px-1 text-[9px] font-semibold text-sky-300">{{ formatPhaseLabel(phase) }}</span>
 							</button>
+							<template v-for="marker in row.alerts" :key="marker.key">
+								<div class="pointer-events-none absolute inset-y-0 z-[11] w-0.5 bg-amber-400/80 shadow-[0_0_5px_rgba(245,158,11,0.25)]" :style="{ left: `${marker.percent * 100}%` }"></div>
+								<button type="button" class="absolute top-1 z-30 flex size-4 items-center justify-center overflow-visible border border-amber-200/90 bg-amber-500 text-xs font-black leading-none text-black shadow-[0_0_7px_rgba(245,158,11,0.4)] hover:z-40 hover:bg-amber-300 focus:z-40 focus:outline-none focus:ring-1 focus:ring-white" :style="{ left: `clamp(0px, ${marker.percent * 100}%, calc(100% - 16px))` }" :aria-label="marker.occurrences.length > 1 ? `${marker.event.encounterAlert?.label || 'Encounter alert'}, ${marker.occurrences.length} occurrences, first at ${formatCooldownTime(row, marker.timestampSeconds)}` : `${marker.event.encounterAlert?.label || 'Encounter alert'} at ${formatCooldownTime(row, marker.timestampSeconds)}`" @click.stop="emit('seekPull', row.fight.id, marker.timestampSeconds)" @mouseenter="showEncounterAlert(row, marker, $event)" @mousemove="updateTooltip" @mouseleave="hideDetail">
+									!
+									<span v-if="marker.occurrences.length > 1" class="pointer-events-none absolute -bottom-1 -right-1 z-10 min-w-3 border border-amber-200/80 bg-amber-600 px-0.5 text-center text-[8px] font-bold leading-[11px] text-white shadow">{{ marker.occurrences.length }}</span>
+								</button>
+							</template>
 							<button v-for="death in row.deaths" :key="death.key" type="button" class="absolute inset-y-0 z-[6] min-w-[3px] border-x border-red-400/70 bg-red-800/45 hover:z-20 hover:bg-red-700/65 focus:outline-none" :style="{ left: death.percent >= 1 ? 'calc(100% - 3px)' : `${death.percent * 100}%`, width: `${Math.max(0, death.endPercent - death.percent) * 100}%`, backgroundImage: 'repeating-linear-gradient(135deg, rgba(248,113,113,.22) 0, rgba(248,113,113,.22) 4px, transparent 4px, transparent 8px)' }" @click.stop="emit('seekPull', row.fight.id, Math.max(0, death.timestampSeconds - 10))" @contextmenu.prevent.stop="emit('openDeath', row.fight.id, death.id)" @mouseenter="showDeath(row, death, $event)" @mousemove="updateTooltip" @mouseleave="hideDetail"></button>
 							<button v-for="cooldown in row.cooldowns" :key="cooldown.key" type="button" class="absolute z-20 size-6 overflow-hidden rounded-none border bg-black shadow-[0_1px_4px_rgba(0,0,0,.45)] transition-none hover:z-30 hover:scale-105 focus:z-30 focus:outline-none focus:ring-1 focus:ring-white/70" :class="getBorderColor(cooldown.event)" :style="{ left: `clamp(0px, ${cooldown.percent * 100}%, calc(100% - 24px))`, top: `${18 + cooldown.track * 27}px` }" :aria-label="`${cooldown.event.source?.name || 'Unknown player'} used ${cooldown.event.ability?.name || `Spell ${cooldown.event.cooldown.spellID}`}${cooldown.event.cooldown.interruptSuccessful == null ? '' : cooldown.event.cooldown.interruptSuccessful ? ', interrupt successful' : ', no interrupt recorded'}`" @click.stop="emit('seekPull', row.fight.id, cooldown.timestampSeconds)" @mouseenter="showCooldown(row, cooldown, $event)" @mousemove="updateTooltip" @mouseleave="hideDetail">
 								<img v-if="cooldown.event.ability?.abilityIcon" :src="getSpellIconURL(cooldown.event.ability.abilityIcon)" alt="" class="size-full" draggable="false" /><span v-else class="flex size-full items-center justify-center text-[10px] text-white">?</span>
@@ -1668,7 +1744,7 @@ onBeforeUnmount(() => {
 							</button>
 							<div v-if="row.isAligned && timelineHover.visible" class="pointer-events-none absolute inset-y-0 z-40 w-px bg-white/55" :style="{ left: `${timelineHover.percent * 100}%` }"></div>
 							<div v-if="!row.isAligned" class="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/15 text-[10px] font-medium text-neutral-500">{{ alignmentPhaseName }} not reached</div>
-							<div v-else-if="hasPullData(row.fight.id) && row.cooldowns.length === 0 && row.deaths.length === 0" class="pointer-events-none absolute inset-0 flex items-center justify-center text-[10px] text-neutral-500">{{ deathsEnabled ? 'No matching cooldowns or deaths' : 'No matching cooldowns' }}</div>
+							<div v-else-if="hasPullData(row.fight.id) && row.cooldowns.length === 0 && row.deaths.length === 0 && row.alerts.length === 0" class="pointer-events-none absolute inset-0 flex items-center justify-center text-[10px] text-neutral-500">{{ deathsEnabled ? 'No matching cooldowns, deaths, or alerts' : 'No matching cooldowns or alerts' }}</div>
 						</div>
 					</div>
 				</div>
@@ -1695,7 +1771,17 @@ onBeforeUnmount(() => {
 			</div>
 		</div>
 		<Teleport to="body">
-			<div v-if="detailTooltip?.kind === 'cooldown'" class="pointer-events-none fixed z-[999] w-max max-w-80 -translate-x-1/2 -translate-y-full rounded-md border border-neutral-500/60 bg-black/90 px-3 py-2 text-xs text-white shadow-xl" :style="{ left: `${detailTooltip.x}px`, top: `${detailTooltip.y}px` }">
+			<ReviewEncounterAlertTooltip
+				v-if="detailTooltip?.kind === 'alert'"
+				:event="detailTooltip.marker.event"
+				:timestamp-label="formatCooldownTime(detailTooltip.row, detailTooltip.marker.timestampSeconds)"
+				:occurrences="getEncounterAlertTooltipOccurrences(detailTooltip.row, detailTooltip.marker)"
+				:x="detailTooltip.x"
+				:y="detailTooltip.y"
+				:context-label="`Pull #${detailTooltip.row.pullNumber}`"
+				:placement="detailTooltip.placement"
+			/>
+			<div v-else-if="detailTooltip?.kind === 'cooldown'" class="pointer-events-none fixed z-[999] w-max max-w-80 -translate-x-1/2 -translate-y-full rounded-md border border-neutral-500/60 bg-black/90 px-3 py-2 text-xs text-white shadow-xl" :style="{ left: `${detailTooltip.x}px`, top: `${detailTooltip.y}px` }">
 				<div class="flex items-center gap-2"><img v-if="detailTooltip.marker.event.ability?.abilityIcon" :src="getSpellIconURL(detailTooltip.marker.event.ability.abilityIcon)" alt="" class="size-8 rounded-none" />
 					<div><div class="font-semibold">{{ detailTooltip.marker.event.ability?.name || `Spell ${detailTooltip.marker.event.cooldown.spellID}` }}</div><div><span :class="getClassColor(detailTooltip.marker.event.source?.type)">{{ detailTooltip.marker.event.source?.name }}</span><span v-if="detailTooltip.marker.event.sourcePet?.name" class="text-neutral-400"> via {{ detailTooltip.marker.event.sourcePet.name }}</span> at {{ formatCooldownTime(detailTooltip.row, detailTooltip.marker.timestampSeconds) }}</div></div>
 				</div>

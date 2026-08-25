@@ -5,10 +5,20 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import ReviewBossCastInterrupt from '@/renderer/components/ReviewBossCastInterrupt.vue';
 import ReviewCooldownComparison from '@/renderer/components/ReviewCooldownComparison.vue';
 import ReviewCooldownTarget from '@/renderer/components/ReviewCooldownTarget.vue';
+import ReviewEncounterAlertTooltip from '@/renderer/components/ReviewEncounterAlertTooltip.vue';
 import ReviewRaidMarker from '@/renderer/components/ReviewRaidMarker.vue';
 import { useReviewsStore } from '@/renderer/store/ReviewsStore';
 import { buildCollapsedBossCastMarkers, sortBossCastAbilitiesByFirstOccurrence } from '@/renderer/utils/bossCastAggregation';
 import { useBossCastTooltipLayout } from '@/renderer/utils/bossCastTooltipLayout';
+import {
+	aggregateEncounterAlertMarkers,
+	type AggregatedEncounterAlertMarker,
+} from '@/renderer/utils/encounterAlertAggregation';
+import {
+	getReviewCooldownDisplayActors,
+	getReviewCooldownGroups,
+	getReviewCooldownPrimaryGroup,
+} from '@/renderer/utils/reviewCooldownEvents';
 import { refreshWowheadTooltips } from '@/renderer/utils/wowheadTooltips';
 import type { ReviewTimelineViewMode } from '@/timelineWindow';
 
@@ -84,6 +94,7 @@ const BOSS_CAST_LANE_HEIGHT_PX = 34;
 const REINCARNATION_CAST_SPELL_ID = 21169;
 const GROUP_FILTER_STORE_KEY = 'reviewCooldownTimelineGroupFilters';
 const SPELL_FILTER_STORE_KEY = 'reviewCooldownTimelineSpellFilters';
+const SPELL_FILTER_POLICY_VERSION = 1;
 const LEGACY_SPELL_FILTER_STORE_KEY = 'reviewCooldownTimelineExcludedSpells';
 const EXPANDED_HEIGHT_STORE_KEY = 'reviewCooldownTimelineExpandedHeight';
 const CUSTOM_SCROLLBAR_HIDE_DELAY_MS = 900;
@@ -115,6 +126,14 @@ type TimelineCooldown = {
 	timestampSeconds: number;
 	track: number;
 };
+
+type EncounterAlertOccurrence = {
+	event: fightEvent;
+	key: string;
+	percent: number;
+	timestampSeconds: number;
+};
+type EncounterAlertMarker = AggregatedEncounterAlertMarker<EncounterAlertOccurrence>;
 
 type BossCastMarker = {
 	event: reviewBossCastEvent;
@@ -183,6 +202,7 @@ type TimelineSpellOption = {
 	groups: reviewCooldownGroupID[];
 	classNames: string[];
 	castCount: number;
+	defaultEnabled: boolean;
 };
 
 type TimelineSpellClassGroup = {
@@ -204,6 +224,7 @@ type TimelineHover = {
 };
 
 type DetailTooltip =
+	| { kind: 'alert'; marker: EncounterAlertMarker; placement: 'above' | 'below'; x: number; y: number }
 	| { kind: 'cooldown'; cooldown: TimelineCooldown; x: number; y: number }
 	| { kind: 'death'; death: DeathPeriod; x: number; y: number }
 	| { kind: 'boss'; lane: BossCastLane; marker: BossCastMarker; occurrences: BossCastMarker[]; placement: 'above' | 'below'; x: number; y: number };
@@ -213,9 +234,13 @@ type StoredCooldownGroupPreferences = {
 	enabledGroupIDs: string[];
 };
 
+type SpellFilterMode = 'default' | 'default-custom' | 'all' | 'custom';
+
 type StoredSpellFilterPreferences = {
-	mode: 'all' | 'custom';
+	policyVersion: number;
+	mode: SpellFilterMode;
 	enabledSpellIDs: number[];
+	disabledSpellIDs: number[];
 };
 
 type CustomScrollbarState = {
@@ -267,8 +292,9 @@ const customScrollbarState = ref<CustomScrollbarState>({
 });
 const isCustomScrollbarActive = ref(false);
 const selectedGroupIDs = ref<reviewCooldownGroupID[]>([]);
-const spellFilterMode = ref<'all' | 'custom'>('all');
+const spellFilterMode = ref<SpellFilterMode>('default');
 const enabledSpellIDs = ref<number[]>([]);
+const disabledSpellIDs = ref<number[]>([]);
 const groupPreferencesLoaded = ref(false);
 const spellPreferencesLoaded = ref(false);
 const storedGroupPreferences = ref<StoredCooldownGroupPreferences | null>(null);
@@ -325,7 +351,8 @@ const spellOptions = computed<TimelineSpellOption[]>(() => {
 		const existingOption = optionsBySpellID.get(spellID);
 		if (existingOption) {
 			existingOption.castCount++;
-			event.cooldown.groups.forEach((groupID) => {
+			existingOption.defaultEnabled = existingOption.defaultEnabled && event.cooldown.defaultEnabled !== false;
+			getReviewCooldownGroups(event).forEach((groupID) => {
 				if (!existingOption.groups.includes(groupID)) existingOption.groups.push(groupID);
 			});
 			if (className && !existingOption.classNames.includes(className)) {
@@ -341,9 +368,10 @@ const spellOptions = computed<TimelineSpellOption[]>(() => {
 			spellID,
 			name: event.ability?.name || `Spell ${spellID}`,
 			icon: event.ability?.abilityIcon || '',
-			groups: [...event.cooldown.groups],
+			groups: [...getReviewCooldownGroups(event)],
 			classNames: className ? [className] : [],
 			castCount: 1,
+			defaultEnabled: event.cooldown.defaultEnabled !== false,
 		});
 	});
 
@@ -359,11 +387,20 @@ const spellOptions = computed<TimelineSpellOption[]>(() => {
 		));
 });
 const enabledSpellIDSet = computed(() => new Set(enabledSpellIDs.value));
+const disabledSpellIDSet = computed(() => new Set(disabledSpellIDs.value));
 const excludedSpellIDs = computed(() => (
 	spellFilterMode.value === 'all'
 		? []
 		: spellOptions.value
-			.filter(option => !enabledSpellIDSet.value.has(option.spellID))
+			.filter(option => (
+				spellFilterMode.value === 'default'
+					? !option.defaultEnabled
+					: spellFilterMode.value === 'default-custom'
+						? option.defaultEnabled
+							? disabledSpellIDSet.value.has(option.spellID)
+							: !enabledSpellIDSet.value.has(option.spellID)
+					: !enabledSpellIDSet.value.has(option.spellID)
+			))
 			.map(option => option.spellID)
 ));
 const excludedSpellIDSet = computed(() => new Set(excludedSpellIDs.value));
@@ -548,12 +585,20 @@ function parseStoredSpellPreferences(value: unknown): StoredSpellFilterPreferenc
 	if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
 	const candidate = value as Partial<StoredSpellFilterPreferences>;
 	if (
-		(candidate.mode !== 'all' && candidate.mode !== 'custom')
+		(candidate.mode !== 'default' && candidate.mode !== 'default-custom' && candidate.mode !== 'all' && candidate.mode !== 'custom')
 		|| !Array.isArray(candidate.enabledSpellIDs)
 	) return null;
+	// Older builds persisted `all` as their implicit default. Treat that old
+	// state as the new catalog default once so newly added opt-in spells do not
+	// unexpectedly appear. A user choosing Show all now persists this version.
+	const mode = candidate.mode === 'all' && candidate.policyVersion !== SPELL_FILTER_POLICY_VERSION
+		? 'default'
+		: candidate.mode;
 	return {
-		mode: candidate.mode,
+		policyVersion: SPELL_FILTER_POLICY_VERSION,
+		mode,
 		enabledSpellIDs: parseStoredSpellIDs(candidate.enabledSpellIDs),
+		disabledSpellIDs: parseStoredSpellIDs(candidate.disabledSpellIDs),
 	};
 }
 
@@ -637,8 +682,10 @@ function restoreDefaultGroups() {
 
 function persistSpellPreferences() {
 	const preferences: StoredSpellFilterPreferences = {
+		policyVersion: SPELL_FILTER_POLICY_VERSION,
 		mode: spellFilterMode.value,
 		enabledSpellIDs: [...enabledSpellIDs.value],
+		disabledSpellIDs: [...disabledSpellIDs.value],
 	};
 	store.set(SPELL_FILTER_STORE_KEY, preferences).catch((error: unknown) => {
 		log.error('Failed to persist review cooldown spell filters', error);
@@ -647,10 +694,30 @@ function persistSpellPreferences() {
 
 function toggleSpell(spellID: number) {
 	let nextEnabledSpellIDs: Set<number>;
+	let nextDisabledSpellIDs = new Set(disabledSpellIDs.value);
 	if (spellFilterMode.value === 'all') {
 		nextEnabledSpellIDs = new Set(spellOptions.value.map(option => option.spellID));
 		nextEnabledSpellIDs.delete(spellID);
+		nextDisabledSpellIDs.clear();
 		spellFilterMode.value = 'custom';
+	} else if (spellFilterMode.value === 'default' || spellFilterMode.value === 'default-custom') {
+		const option = spellOptions.value.find(candidate => candidate.spellID === spellID);
+		if (!option) return;
+		nextEnabledSpellIDs = new Set(enabledSpellIDs.value);
+		if (option.defaultEnabled) {
+			if (nextDisabledSpellIDs.has(spellID)) {
+				nextDisabledSpellIDs.delete(spellID);
+			} else {
+				nextDisabledSpellIDs.add(spellID);
+			}
+		} else {
+			if (nextEnabledSpellIDs.has(spellID)) {
+				nextEnabledSpellIDs.delete(spellID);
+			} else {
+				nextEnabledSpellIDs.add(spellID);
+			}
+		}
+		spellFilterMode.value = 'default-custom';
 	} else {
 		nextEnabledSpellIDs = new Set(enabledSpellIDs.value);
 		if (nextEnabledSpellIDs.has(spellID)) {
@@ -659,13 +726,29 @@ function toggleSpell(spellID: number) {
 			nextEnabledSpellIDs.add(spellID);
 		}
 	}
+	if (
+		spellFilterMode.value === 'default-custom'
+		&& nextEnabledSpellIDs.size === 0
+		&& nextDisabledSpellIDs.size === 0
+	) {
+		spellFilterMode.value = 'default';
+	}
 	enabledSpellIDs.value = [...nextEnabledSpellIDs].sort((left, right) => left - right);
+	disabledSpellIDs.value = [...nextDisabledSpellIDs].sort((left, right) => left - right);
 	persistSpellPreferences();
 }
 
 function showAllSpells() {
 	spellFilterMode.value = 'all';
 	enabledSpellIDs.value = [];
+	disabledSpellIDs.value = [];
+	persistSpellPreferences();
+}
+
+function restoreDefaultSpells() {
+	spellFilterMode.value = 'default';
+	enabledSpellIDs.value = [];
+	disabledSpellIDs.value = [];
 	persistSpellPreferences();
 }
 
@@ -711,13 +794,14 @@ function finishLegacySpellPreferenceMigration() {
 	if (props.loading && spellOptions.value.length === 0) return;
 
 	const legacyExcludedSpellIDSet = new Set(pendingLegacyExcludedSpellIDs);
-	spellFilterMode.value = legacyExcludedSpellIDSet.size === 0 ? 'all' : 'custom';
-	enabledSpellIDs.value = spellFilterMode.value === 'all'
+	spellFilterMode.value = legacyExcludedSpellIDSet.size === 0 ? 'default' : 'custom';
+	enabledSpellIDs.value = spellFilterMode.value === 'default'
 		? []
 		: spellOptions.value
 			.filter(option => !legacyExcludedSpellIDSet.has(option.spellID))
 			.map(option => option.spellID)
 			.sort((left, right) => left - right);
+	disabledSpellIDs.value = [];
 	pendingLegacyExcludedSpellIDs = null;
 	spellPreferencesLoaded.value = true;
 	persistSpellPreferences();
@@ -1083,6 +1167,7 @@ onMounted(async () => {
 		if (storedPreferences) {
 			spellFilterMode.value = storedPreferences.mode;
 			enabledSpellIDs.value = storedPreferences.enabledSpellIDs;
+			disabledSpellIDs.value = storedPreferences.disabledSpellIDs;
 			spellPreferencesLoaded.value = true;
 			return;
 		}
@@ -1093,8 +1178,9 @@ onMounted(async () => {
 		finishLegacySpellPreferenceMigration();
 	} catch (error) {
 		log.error('Failed to load review cooldown spell filters', error);
-		spellFilterMode.value = 'all';
+		spellFilterMode.value = 'default';
 		enabledSpellIDs.value = [];
+		disabledSpellIDs.value = [];
 		spellPreferencesLoaded.value = true;
 	}
 });
@@ -1302,8 +1388,8 @@ function getGroupBorderColor(groupID: reviewCooldownGroupID) {
 }
 
 function getCooldownBorderColor(event: reviewCooldownEvent) {
-	const displayedGroup = event.cooldown.groups.find(groupID => enabledGroupIDs.value.has(groupID))
-		|| event.cooldown.primaryGroup;
+	const displayedGroup = getReviewCooldownGroups(event).find(groupID => enabledGroupIDs.value.has(groupID))
+		|| getReviewCooldownPrimaryGroup(event);
 	return getGroupBorderColor(displayedGroup);
 }
 
@@ -1359,6 +1445,9 @@ function cancelDetailTooltipPositionUpdate() {
 function updateDetailTooltipPosition(event: MouseEvent) {
 	if (!detailTooltip.value) return;
 	pendingDetailTooltipPoint = getTooltipPoint(event);
+	if (detailTooltip.value.kind === 'alert') {
+		pendingDetailTooltipPoint = { x: event.clientX, y: event.clientY };
+	}
 	if (detailTooltipAnimationFrame != null) return;
 
 	detailTooltipAnimationFrame = window.requestAnimationFrame(() => {
@@ -1380,6 +1469,18 @@ function showDeathTooltip(death: DeathPeriod, event: MouseEvent) {
 	cancelDetailTooltipPositionUpdate();
 	const point = getTooltipPoint(event);
 	detailTooltip.value = { kind: 'death', death, ...point };
+}
+
+function showEncounterAlertTooltip(marker: EncounterAlertMarker, event: MouseEvent) {
+	cancelDetailTooltipPositionUpdate();
+	const placement = event.clientY < window.innerHeight / 2 ? 'below' : 'above';
+	detailTooltip.value = {
+		kind: 'alert',
+		marker,
+		placement,
+		x: event.clientX,
+		y: event.clientY,
+	};
 }
 
 function showBossCastTooltip(
@@ -1571,6 +1672,26 @@ const visibleDeathPeriods = computed(() => (
 	enabledGroupIDs.value.has('deaths') ? deathPeriods.value : []
 ));
 
+const encounterAlertMarkers = computed<EncounterAlertMarker[]>(() => {
+	if (props.fightDuration <= 0) return [];
+	const occurrences = props.fightEvents.flatMap((event, index): EncounterAlertOccurrence[] => {
+		if (!event.encounterAlert) return [];
+		const relativeTime = event.timestamp - props.fightStartTime;
+		if (relativeTime < 0 || relativeTime > props.fightDuration) return [];
+		return [{
+			event,
+			key: `alert:${event.encounterAlert.id}:${event.timestamp}:${index}`,
+			percent: relativeTime / props.fightDuration,
+			timestampSeconds: relativeTime / 1000,
+		}];
+	});
+	return aggregateEncounterAlertMarkers(occurrences);
+});
+const encounterAlertOccurrenceCount = computed(() => encounterAlertMarkers.value.reduce(
+	(total, marker) => total + marker.occurrences.length,
+	0,
+));
+
 const lanes = computed<TimelineLane[]>(() => {
 	if (props.fightDuration <= 0) return [];
 
@@ -1588,7 +1709,7 @@ const lanes = computed<TimelineLane[]>(() => {
 	props.events.forEach((event, index) => {
 		if (
 			shouldFilterGroups
-			&& !event.cooldown.groups.some(groupID => enabledGroupIDs.value.has(groupID))
+			&& !getReviewCooldownGroups(event).some(groupID => enabledGroupIDs.value.has(groupID))
 		) {
 			return;
 		}
@@ -1597,34 +1718,35 @@ const lanes = computed<TimelineLane[]>(() => {
 		const relativeTime = event.timestamp - props.fightStartTime;
 		if (relativeTime < 0 || relativeTime > props.fightDuration) return;
 
-		const sourceName = event.source?.name || 'Unknown player';
-		const sourceKey = getActorKey(event.source);
-		const sourceEntry = eventsBySource.get(sourceKey) || {
-			actorID: event.source?.id,
-			name: sourceName,
-			className: event.source?.type || '',
-			actorIcon: event.source?.icon || '',
-			role: getActorRole(event.source),
-			events: [],
-			deathPeriods: [],
-		};
-		if (sourceEntry.role === 'unknown') {
-			sourceEntry.role = getActorRole(event.source);
-		}
-		if (!sourceEntry.actorIcon && event.source?.icon) {
-			sourceEntry.actorIcon = event.source.icon;
-		}
-		if (sourceEntry.actorID == null && event.source?.id != null) {
-			sourceEntry.actorID = event.source.id;
-		}
+		getReviewCooldownDisplayActors(event).forEach((actor, actorIndex) => {
+			const actorKey = getActorKey(actor);
+			const actorEntry = eventsBySource.get(actorKey) || {
+				actorID: actor.id,
+				name: actor.name || 'Unknown player',
+				className: actor.type || '',
+				actorIcon: actor.icon || '',
+				role: getActorRole(actor),
+				events: [],
+				deathPeriods: [],
+			};
+			if (actorEntry.role === 'unknown') {
+				actorEntry.role = getActorRole(actor);
+			}
+			if (!actorEntry.actorIcon && actor.icon) {
+				actorEntry.actorIcon = actor.icon;
+			}
+			if (actorEntry.actorID == null && actor.id != null) {
+				actorEntry.actorID = actor.id;
+			}
 
-		sourceEntry.events.push({
-			event,
-			key: `${event.timestamp}:${event.cooldown.spellID}:${index}`,
-			percent: relativeTime / props.fightDuration,
-			timestampSeconds: relativeTime / 1000,
+			actorEntry.events.push({
+				event,
+				key: `${event.timestamp}:${event.cooldown.spellID}:${index}:${actorIndex}`,
+				percent: relativeTime / props.fightDuration,
+				timestampSeconds: relativeTime / 1000,
+			});
+			eventsBySource.set(actorKey, actorEntry);
 		});
-		eventsBySource.set(sourceKey, sourceEntry);
 	});
 
 	visibleDeathPeriods.value.forEach((death) => {
@@ -1750,7 +1872,7 @@ watch(
 );
 
 const visibleCooldownCount = computed(() => (
-	lanes.value.reduce((total, lane) => total + lane.cooldowns.length, 0)
+	new Set(lanes.value.flatMap(lane => lane.cooldowns.map(cooldown => cooldown.event))).size
 ));
 
 const detailTooltipPosition = computed(() => {
@@ -1846,7 +1968,7 @@ function onComparisonPlayerRequestApplied(token: number) {
 						<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" class="size-3.5" aria-hidden="true"><path d="M4.75 3A1.75 1.75 0 0 0 3 4.75v7.5C3 13.216 3.784 14 4.75 14H7v-1.5H4.75a.25.25 0 0 1-.25-.25v-7.5a.25.25 0 0 1 .25-.25h7.5a.25.25 0 0 1 .25.25V7H14V4.75A1.75 1.75 0 0 0 12.25 3h-7.5Z"/><path d="M9.75 7A1.75 1.75 0 0 0 8 8.75v6.5c0 .966.784 1.75 1.75 1.75h5.5A1.75 1.75 0 0 0 17 15.25v-6.5A1.75 1.75 0 0 0 15.25 7h-5.5Zm-.25 1.75a.25.25 0 0 1 .25-.25h5.5a.25.25 0 0 1 .25.25v6.5a.25.25 0 0 1-.25.25h-5.5a.25.25 0 0 1-.25-.25v-6.5Z"/></svg>
 						Detach
 					</button>
-					<template v-if="timelineViewMode === 'fight'"><span v-if="loading" class="shrink-0 text-xs text-neutral-500">Loading cooldowns...</span><span v-else-if="error" class="shrink-0 text-xs text-red-500">Cooldowns unavailable</span></template>
+					<template v-if="timelineViewMode === 'fight'"><span v-if="loading" class="shrink-0 text-xs text-neutral-500">Loading timeline...</span><span v-else-if="error" class="shrink-0 text-xs text-red-500">Timeline data incomplete</span></template>
 				</div>
 				<div v-if="timelineViewMode === 'fight'" class="flex min-w-0 items-center gap-1.5 text-[10px]">
 					<span class="rounded border border-neutral-500/25 bg-light4/70 px-1.5 py-0.5 tabular-nums text-neutral-600 dark:bg-dark4/70 dark:text-neutral-300">
@@ -1854,6 +1976,9 @@ function onComparisonPlayerRequestApplied(token: number) {
 					</span>
 					<span class="rounded border border-neutral-500/25 bg-light4/70 px-1.5 py-0.5 tabular-nums text-neutral-600 dark:bg-dark4/70 dark:text-neutral-300">
 						{{ visibleDeathPeriods.length }} deaths
+					</span>
+					<span v-if="encounterAlertOccurrenceCount > 0" class="rounded border border-amber-500/35 bg-amber-500/10 px-1.5 py-0.5 tabular-nums text-amber-700 dark:text-amber-300">
+						{{ encounterAlertOccurrenceCount }} alerts
 					</span>
 					<span class="rounded border border-neutral-500/25 bg-light4/70 px-1.5 py-0.5 tabular-nums text-neutral-600 dark:bg-dark4/70 dark:text-neutral-300">
 						{{ lanes.length }} players
@@ -2002,6 +2127,14 @@ function onComparisonPlayerRequestApplied(token: number) {
 						placeholder="Search name or ID"
 						class="h-7 min-w-32 flex-1 rounded border border-neutral-500/30 bg-light4 px-2 text-[11px] shadow-inner outline-none transition-colors placeholder:text-neutral-500 focus:border-sky-500 dark:bg-dark4"
 					/>
+					<button
+						type="button"
+						class="h-7 shrink-0 rounded border border-neutral-500/25 bg-light4/50 px-2 text-[10px] text-neutral-500 shadow-sm hover:bg-neutral-500/15 hover:text-inherit focus:outline-none focus:ring-1 focus:ring-sky-500 disabled:opacity-50 dark:bg-dark4/50 dark:text-neutral-400"
+						:disabled="spellFilterMode === 'default'"
+						@click="restoreDefaultSpells"
+					>
+						Defaults
+					</button>
 					<button
 						type="button"
 						class="h-7 shrink-0 rounded border border-neutral-500/25 bg-light4/50 px-2 text-[10px] text-neutral-500 shadow-sm hover:bg-neutral-500/15 hover:text-inherit focus:outline-none focus:ring-1 focus:ring-sky-500 disabled:opacity-50 dark:bg-dark4/50 dark:text-neutral-400"
@@ -2174,13 +2307,13 @@ function onComparisonPlayerRequestApplied(token: number) {
 
 			<template v-if="timelineViewMode === 'fight'">
 			<div
-				v-if="(loading || isBossCastsLoading) && lanes.length === 0 && bossCastLanes.length === 0"
+				v-if="(loading || isBossCastsLoading) && lanes.length === 0 && bossCastLanes.length === 0 && encounterAlertMarkers.length === 0"
 				class="flex min-h-0 flex-1 items-center justify-center text-sm text-neutral-500"
 			>
 				Loading timeline...
 			</div>
 			<div
-				v-else-if="lanes.length === 0 && bossCastLanes.length === 0"
+				v-else-if="lanes.length === 0 && bossCastLanes.length === 0 && encounterAlertMarkers.length === 0"
 				class="flex min-h-0 flex-1 items-center justify-center px-3 text-sm text-neutral-500"
 				:class="{ 'text-red-500': error }"
 			>
@@ -2217,6 +2350,21 @@ function onComparisonPlayerRequestApplied(token: number) {
 						>
 							{{ phase.name }}
 						</span>
+						<button
+							v-for="marker in encounterAlertMarkers"
+							:key="`axis:${marker.key}`"
+							type="button"
+							class="absolute top-0.5 z-30 flex size-4 items-center justify-center overflow-visible border border-amber-200/90 bg-amber-500 text-xs font-black leading-none text-black shadow-[0_0_7px_rgba(245,158,11,0.45)] hover:z-40 hover:bg-amber-300 focus:z-40 focus:outline-none focus:ring-1 focus:ring-white"
+							:style="{ left: `clamp(0px, ${marker.percent * 100}%, calc(100% - 16px))` }"
+							:aria-label="marker.occurrences.length > 1 ? `${marker.event.encounterAlert?.label || 'Encounter alert'}, ${marker.occurrences.length} occurrences, first at ${formatCooldownTimestamp(marker.timestampSeconds)}` : `${marker.event.encounterAlert?.label || 'Encounter alert'} at ${formatCooldownTimestamp(marker.timestampSeconds)}`"
+							@click.stop="emit('seek', marker.timestampSeconds)"
+							@mouseenter="showEncounterAlertTooltip(marker, $event)"
+							@mousemove="updateDetailTooltipPosition"
+							@mouseleave="hideDetailTooltip"
+						>
+							!
+							<span v-if="marker.occurrences.length > 1" class="pointer-events-none absolute -bottom-1 -right-1 z-10 min-w-3 border border-amber-200/80 bg-amber-600 px-0.5 text-center text-[8px] font-bold leading-[11px] text-white shadow">{{ marker.occurrences.length }}</span>
+						</button>
 					</div>
 				</div>
 
@@ -2325,6 +2473,12 @@ function onComparisonPlayerRequestApplied(token: number) {
 								:key="`phase:${phase.name}:${phase.percent}`"
 								class="pointer-events-none absolute inset-y-0 z-10 w-0.5 bg-sky-400/80"
 								:style="{ left: `${phase.percent * 100}%` }"
+							></div>
+							<div
+								v-for="marker in encounterAlertMarkers"
+								:key="`alert-line:${marker.key}`"
+								class="pointer-events-none absolute inset-y-0 z-[11] w-0.5 bg-amber-400/80 shadow-[0_0_5px_rgba(245,158,11,0.25)]"
+								:style="{ left: `${marker.percent * 100}%` }"
 							></div>
 							<div
 								v-if="cursorPercent > 0 && cursorPercent < 1"
@@ -2545,7 +2699,7 @@ function onComparisonPlayerRequestApplied(token: number) {
 				<span class="min-w-0 leading-tight">
 					<span class="block truncate text-xs font-semibold">Fight timeline</span>
 					<span class="block truncate text-[10px] text-neutral-500 dark:text-neutral-400">
-						{{ loading ? 'Loading...' : `${visibleCooldownCount} casts / ${visibleDeathPeriods.length} deaths` }}
+						{{ loading ? 'Loading...' : `${visibleCooldownCount} casts / ${visibleDeathPeriods.length} deaths${encounterAlertOccurrenceCount ? ` / ${encounterAlertOccurrenceCount} alerts` : ''}` }}
 					</span>
 				</span>
 			</button>
@@ -2568,6 +2722,26 @@ function onComparisonPlayerRequestApplied(token: number) {
 				>
 					<span class="absolute left-1 top-0 text-xs font-semibold leading-none text-sky-500">{{ phase.name }}</span>
 				</div>
+
+				<template v-for="marker in encounterAlertMarkers" :key="`compact:${marker.key}`">
+					<div
+						class="pointer-events-none absolute inset-y-0 z-[11] w-0.5 bg-amber-400/85"
+						:style="{ left: `${marker.percent * 100}%` }"
+					></div>
+					<button
+						type="button"
+						class="absolute top-0.5 z-30 flex size-4 items-center justify-center overflow-visible border border-amber-200/90 bg-amber-500 text-xs font-black leading-none text-black shadow-[0_0_7px_rgba(245,158,11,0.4)] hover:z-40 hover:bg-amber-300 focus:z-40 focus:outline-none focus:ring-1 focus:ring-white"
+						:style="{ left: `clamp(0px, ${marker.percent * 100}%, calc(100% - 16px))` }"
+						:aria-label="marker.occurrences.length > 1 ? `${marker.event.encounterAlert?.label || 'Encounter alert'}, ${marker.occurrences.length} occurrences, first at ${formatCooldownTimestamp(marker.timestampSeconds)}` : `${marker.event.encounterAlert?.label || 'Encounter alert'} at ${formatCooldownTimestamp(marker.timestampSeconds)}`"
+						@click.stop="emit('seek', marker.timestampSeconds)"
+						@mouseenter="showEncounterAlertTooltip(marker, $event)"
+						@mousemove.stop="updateDetailTooltipPosition"
+						@mouseleave="hideDetailTooltip"
+					>
+						!
+						<span v-if="marker.occurrences.length > 1" class="pointer-events-none absolute -bottom-1 -right-1 z-10 min-w-3 border border-amber-200/80 bg-amber-600 px-0.5 text-center text-[8px] font-bold leading-[11px] text-white shadow">{{ marker.occurrences.length }}</span>
+					</button>
+				</template>
 
 				<template v-for="death in visibleDeathPeriods" :key="`compact:${death.key}`">
 					<div
@@ -2604,7 +2778,7 @@ function onComparisonPlayerRequestApplied(token: number) {
 					v-if="error"
 					class="pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 text-[10px] text-red-500"
 				>
-					Cooldowns unavailable
+					Timeline data incomplete
 				</span>
 			</div>
 
@@ -2617,8 +2791,17 @@ function onComparisonPlayerRequestApplied(token: number) {
 		</div>
 
 		<Teleport to="body">
+			<ReviewEncounterAlertTooltip
+				v-if="detailTooltip?.kind === 'alert'"
+				:event="detailTooltip.marker.event"
+				:timestamp-label="formatCooldownTimestamp(detailTooltip.marker.timestampSeconds)"
+				:occurrences="detailTooltip.marker.occurrences.map(occurrence => ({ event: occurrence.event, timestampLabel: formatCooldownTimestamp(occurrence.timestampSeconds) }))"
+				:x="detailTooltip.x"
+				:y="detailTooltip.y"
+				:placement="detailTooltip.placement"
+			/>
 			<div
-				v-if="detailTooltip?.kind === 'cooldown'"
+				v-else-if="detailTooltip?.kind === 'cooldown'"
 				class="pointer-events-none fixed z-[999] w-max max-w-80 -translate-x-1/2 -translate-y-full rounded-md border border-neutral-500/60 bg-black/90 px-3 py-2 text-xs text-white shadow-xl"
 				:style="detailTooltipPosition"
 			>
@@ -2627,7 +2810,7 @@ function onComparisonPlayerRequestApplied(token: number) {
 						v-if="detailTooltip.cooldown.event.ability?.abilityIcon"
 						:src="getSpellIconURL(detailTooltip.cooldown.event.ability.abilityIcon)"
 						alt=""
-						class="size-8 shrink-0 rounded"
+						class="size-8 shrink-0 rounded-none"
 					/>
 					<div class="min-w-0">
 						<div class="font-semibold">
@@ -2661,7 +2844,7 @@ function onComparisonPlayerRequestApplied(token: number) {
 					<template v-else>No interrupt recorded</template>
 				</div>
 				<div class="mt-1 text-[11px] text-neutral-300">
-					{{ detailTooltip.cooldown.event.cooldown.groups.map(groupID => groupLabels.get(groupID) || groupID).join(', ') }}
+					{{ getReviewCooldownGroups(detailTooltip.cooldown.event).map(groupID => groupLabels.get(groupID) || groupID).join(', ') }}
 				</div>
 			</div>
 

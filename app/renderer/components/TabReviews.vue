@@ -107,6 +107,7 @@ const arePlayerControlsVisible = ref(true);
 const isPlayerPlaying = ref(false);
 const isPlayerControlDockHovered = ref(false);
 const isPlayerControlDockFocused = ref(false);
+const queuedSeekDeltaSeconds = ref<number | null>(null);
 
 const DEFAULT_SEEK_SECONDS = 5;
 const SHIFT_SEEK_SECONDS = 3;
@@ -115,6 +116,14 @@ const CTRL_SEEK_SECONDS = 60;
 const TEN_SECOND_SEEK_SECONDS = 10;
 const FRAME_SEEK_SECONDS = 1 / 30;
 const PLAYER_CONTROLS_IDLE_MS = 2200;
+const HOTKEY_SEEK_DEBOUNCE_MS = 80;
+const HOTKEY_SEEK_RETRY_MS = 1200;
+const HOTKEY_SEEK_MAX_PENDING_MS = 30_000;
+const HOTKEY_SEEK_TARGET_EPSILON_SECONDS = 0.001;
+const HOTKEY_SEEK_INDICATOR_MIN_VISIBLE_MS = 500;
+const HOTKEY_SEEK_HOLD_INITIAL_INTERVAL_MS = 350;
+const HOTKEY_SEEK_HOLD_FASTEST_INTERVAL_MS = 60;
+const HOTKEY_SEEK_HOLD_ACCELERATION_MS = 3500;
 
 const PLAYER_SHORTCUTS = [
 	{ keys: 'Space / K', action: 'Play or pause' },
@@ -146,6 +155,47 @@ type PlayerMouseDownPayload = {
 let fullscreenToggleInProgress = false;
 let playerControlsHideTimeout: number | null = null;
 let playerBoundsResizeObserver: ResizeObserver | null = null;
+let hotkeySeekDispatchTimeout: number | null = null;
+let hotkeySeekRetryTimeout: number | null = null;
+let hotkeySeekIndicatorHideTimeout: number | null = null;
+let hotkeySeekIndicatorUpdatedAt = 0;
+let hotkeySeekIndicatorCommittedDeltaSeconds = 0;
+let hotkeySeekHoldState: {
+	signature: string;
+	startedAt: number;
+	lastAcceptedAt: number;
+} | null = null;
+let hotkeySeekState: {
+	originSeconds: number;
+	targetSeconds: number;
+	dispatchedFromSeconds: number | null;
+	dispatchedTargetSeconds: number | null;
+	lastInputAt: number;
+} | null = null;
+
+const queuedSeekDeltaLabel = computed(() => {
+	const delta = queuedSeekDeltaSeconds.value;
+	if (delta === null) return '';
+	const absoluteDelta = Math.abs(delta);
+	const precision = absoluteDelta > 0 && absoluteDelta < 0.1
+		? 2
+		: Number.isInteger(absoluteDelta) ? 0 : 1;
+	const sign = delta > HOTKEY_SEEK_TARGET_EPSILON_SECONDS
+		? '+'
+		: delta < -HOTKEY_SEEK_TARGET_EPSILON_SECONDS ? '-' : '';
+	if (absoluteDelta >= 60) return `${sign}${formatTime(Math.round(absoluteDelta))}`;
+	return `${sign}${absoluteDelta.toFixed(precision)}s`;
+});
+const queuedSeekDirectionClass = computed(() => {
+	const delta = queuedSeekDeltaSeconds.value;
+	if (delta !== null && delta < -HOTKEY_SEEK_TARGET_EPSILON_SECONDS) {
+		return 'youtube-player-seek-queue--backward';
+	}
+	if (delta !== null && delta > HOTKEY_SEEK_TARGET_EPSILON_SECONDS) {
+		return 'youtube-player-seek-queue--forward';
+	}
+	return 'youtube-player-seek-queue--neutral';
+});
 
 function publishPlayerPointerBounds() {
 	const rect = videoContainer.value?.getBoundingClientRect();
@@ -233,10 +283,68 @@ function pauseVideo() {
 	}
 }
 
+function performSeek(seconds: number) {
+	player.value?.seek(seconds);
+}
+
+function clearHotkeySeekTimeouts() {
+	if (hotkeySeekDispatchTimeout !== null) {
+		window.clearTimeout(hotkeySeekDispatchTimeout);
+		hotkeySeekDispatchTimeout = null;
+	}
+	if (hotkeySeekRetryTimeout !== null) {
+		window.clearTimeout(hotkeySeekRetryTimeout);
+		hotkeySeekRetryTimeout = null;
+	}
+}
+
+function hideQueuedSeekIndicator() {
+	if (hotkeySeekIndicatorHideTimeout !== null) {
+		window.clearTimeout(hotkeySeekIndicatorHideTimeout);
+		hotkeySeekIndicatorHideTimeout = null;
+	}
+	queuedSeekDeltaSeconds.value = null;
+	hotkeySeekIndicatorCommittedDeltaSeconds = 0;
+}
+
+function showQueuedSeekIndicator(deltaSeconds: number) {
+	if (hotkeySeekIndicatorHideTimeout !== null) {
+		window.clearTimeout(hotkeySeekIndicatorHideTimeout);
+		hotkeySeekIndicatorHideTimeout = null;
+	}
+	hotkeySeekIndicatorUpdatedAt = performance.now();
+	queuedSeekDeltaSeconds.value = deltaSeconds;
+}
+
+function finishQueuedHotkeySeek() {
+	const completedState = hotkeySeekState;
+	if (completedState) {
+		hotkeySeekIndicatorCommittedDeltaSeconds += completedState.targetSeconds - completedState.originSeconds;
+	}
+	clearHotkeySeekTimeouts();
+	hotkeySeekState = null;
+	const remainingVisibleMs = HOTKEY_SEEK_INDICATOR_MIN_VISIBLE_MS
+		- (performance.now() - hotkeySeekIndicatorUpdatedAt);
+	if (remainingVisibleMs <= 0) {
+		hideQueuedSeekIndicator();
+		return;
+	}
+	hotkeySeekIndicatorHideTimeout = window.setTimeout(() => {
+		hotkeySeekIndicatorHideTimeout = null;
+		hideQueuedSeekIndicator();
+	}, remainingVisibleMs);
+}
+
+function clearQueuedHotkeySeek() {
+	clearHotkeySeekTimeouts();
+	hotkeySeekState = null;
+	hotkeySeekHoldState = null;
+	hideQueuedSeekIndicator();
+}
+
 function seekTo(seconds: number) {
-  	if (player.value) {
-		player.value.seek(seconds);
-  	}
+	clearQueuedHotkeySeek();
+	performSeek(seconds);
 }
 
 function togglePlayPause() {
@@ -310,16 +418,151 @@ function getArrowSeekDelta(input: Pick<PlayerHotkeyPayload, 'ctrlKey' | 'metaKey
 	return DEFAULT_SEEK_SECONDS;
 }
 
-function seekByDelta(delta: number, source: string) {
+function clampSeekTarget(seconds: number) {
+	const duration = player.value?.getDuration() || 0;
+	return Math.max(0, Math.min(seconds, duration > 0 ? duration : Number.POSITIVE_INFINITY));
+}
+
+function getSeekConfirmationTolerance(fromSeconds: number, targetSeconds: number) {
+	return Math.min(0.35, Math.max(0.012, Math.abs(targetSeconds - fromSeconds) * 0.15));
+}
+
+function isDispatchedHotkeySeekComplete(currentTime: number) {
+	const state = hotkeySeekState;
+	if (
+		!state
+		|| state.dispatchedFromSeconds === null
+		|| state.dispatchedTargetSeconds === null
+	) return false;
+
+	const fromSeconds = state.dispatchedFromSeconds;
+	const targetSeconds = state.dispatchedTargetSeconds;
+	const tolerance = getSeekConfirmationTolerance(fromSeconds, targetSeconds);
+	if (targetSeconds > fromSeconds) return currentTime >= targetSeconds - tolerance;
+	if (targetSeconds < fromSeconds) return currentTime <= targetSeconds + tolerance;
+	return Math.abs(currentTime - targetSeconds) <= tolerance;
+}
+
+function dispatchQueuedHotkeySeek() {
+	const state = hotkeySeekState;
+	if (!state || !player.value || !reviewsStore.getSelectedVideoId) {
+		clearQueuedHotkeySeek();
+		return;
+	}
+
+	clearHotkeySeekTimeouts();
+	state.targetSeconds = clampSeekTarget(state.targetSeconds);
+	state.dispatchedFromSeconds = player.value.getCurrentTime();
+	state.dispatchedTargetSeconds = state.targetSeconds;
+	performSeek(state.targetSeconds);
+
+	hotkeySeekRetryTimeout = window.setTimeout(() => {
+		hotkeySeekRetryTimeout = null;
+		const pendingState = hotkeySeekState;
+		if (!pendingState) return;
+		const currentTime = player.value?.getCurrentTime();
+		if (typeof currentTime === 'number' && isDispatchedHotkeySeekComplete(currentTime)) {
+			onHotkeySeekTimeUpdate(currentTime);
+			return;
+		}
+		if (Date.now() - pendingState.lastInputAt >= HOTKEY_SEEK_MAX_PENDING_MS) {
+			log.warn('YouTube hotkey seek was not confirmed before timeout', {
+				targetSeconds: pendingState.targetSeconds,
+			});
+			clearQueuedHotkeySeek();
+			return;
+		}
+		dispatchQueuedHotkeySeek();
+	}, HOTKEY_SEEK_RETRY_MS);
+}
+
+function scheduleQueuedHotkeySeek() {
+	if (hotkeySeekDispatchTimeout !== null) window.clearTimeout(hotkeySeekDispatchTimeout);
+	hotkeySeekDispatchTimeout = window.setTimeout(() => {
+		hotkeySeekDispatchTimeout = null;
+		dispatchQueuedHotkeySeek();
+	}, HOTKEY_SEEK_DEBOUNCE_MS);
+}
+
+function onHotkeySeekTimeUpdate(currentTime: number) {
+	const state = hotkeySeekState;
+	if (!state || !isDispatchedHotkeySeekComplete(currentTime)) return;
+
+	const dispatchedTarget = state.dispatchedTargetSeconds;
+	if (
+		dispatchedTarget !== null
+		&& Math.abs(state.targetSeconds - dispatchedTarget) > HOTKEY_SEEK_TARGET_EPSILON_SECONDS
+	) {
+		state.dispatchedFromSeconds = null;
+		state.dispatchedTargetSeconds = null;
+		dispatchQueuedHotkeySeek();
+		return;
+	}
+
+	finishQueuedHotkeySeek();
+}
+
+function seekByDelta(delta: number) {
 	if (!player.value) return false;
 
-	const currentTime = player.value.getCurrentTime();
-	const duration = player.value.getDuration();
-	const maxTime = duration > 0 ? duration : Number.POSITIVE_INFINITY;
-	const nextTime = Math.max(0, Math.min(currentTime + delta, maxTime));
+	if (!hotkeySeekState) {
+		const currentTime = player.value.getCurrentTime();
+		hotkeySeekState = {
+			originSeconds: currentTime,
+			targetSeconds: currentTime,
+			dispatchedFromSeconds: null,
+			dispatchedTargetSeconds: null,
+			lastInputAt: Date.now(),
+		};
+	}
 
-	// log.debug(`${source}: ${currentTime}s -> ${nextTime}s (delta: ${delta}s)`);
-	seekTo(nextTime);
+	const state = hotkeySeekState;
+	state.targetSeconds = clampSeekTarget(state.targetSeconds + delta);
+	state.lastInputAt = Date.now();
+	showQueuedSeekIndicator(
+		hotkeySeekIndicatorCommittedDeltaSeconds + state.targetSeconds - state.originSeconds,
+	);
+
+	if (state.dispatchedTargetSeconds === null) scheduleQueuedHotkeySeek();
+	return true;
+}
+
+function seekByCurrentPlayerTime(delta: number) {
+	if (!player.value) return false;
+	const currentTime = player.value.getCurrentTime();
+	seekTo(clampSeekTarget(currentTime + delta));
+	return true;
+}
+
+function getQueuedSeekHotkeySignature(input: PlayerHotkeyPayload | KeyboardEvent) {
+	return [
+		input.code,
+		input.altKey ? 'alt' : '',
+		input.ctrlKey ? 'ctrl' : '',
+		input.metaKey ? 'meta' : '',
+		input.shiftKey ? 'shift' : '',
+	].join(':');
+}
+
+function shouldApplyQueuedSeekHotkey(input: PlayerHotkeyPayload | KeyboardEvent) {
+	const now = performance.now();
+	const signature = getQueuedSeekHotkeySignature(input);
+	if (!input.repeat || hotkeySeekHoldState?.signature !== signature) {
+		hotkeySeekHoldState = {
+			signature,
+			startedAt: now,
+			lastAcceptedAt: now,
+		};
+		return true;
+	}
+
+	const heldForMs = now - hotkeySeekHoldState.startedAt;
+	const accelerationProgress = Math.min(1, heldForMs / HOTKEY_SEEK_HOLD_ACCELERATION_MS);
+	const repeatIntervalMs = HOTKEY_SEEK_HOLD_INITIAL_INTERVAL_MS
+		- (HOTKEY_SEEK_HOLD_INITIAL_INTERVAL_MS - HOTKEY_SEEK_HOLD_FASTEST_INTERVAL_MS)
+		* accelerationProgress;
+	if (now - hotkeySeekHoldState.lastAcceptedAt < repeatIntervalMs) return false;
+	hotkeySeekHoldState.lastAcceptedAt = now;
 	return true;
 }
 
@@ -385,7 +628,9 @@ function handlePlayerHotkey(input: PlayerHotkeyPayload | KeyboardEvent) {
 			input.preventDefault();
 			input.stopPropagation();
 		}
-		return seekByDelta(direction * delta, `Custom seek via ${input.key}`);
+		return shouldApplyQueuedSeekHotkey(input)
+			? seekByDelta(direction * delta)
+			: true;
 	}
 
 	if (input.ctrlKey || input.metaKey || input.altKey || input.shiftKey) return false;
@@ -397,7 +642,9 @@ function handlePlayerHotkey(input: PlayerHotkeyPayload | KeyboardEvent) {
 		}
 
 		const direction = input.code === 'KeyL' ? 1 : -1;
-		return seekByDelta(direction * TEN_SECOND_SEEK_SECONDS, `Fixed seek via ${input.code}`);
+		return shouldApplyQueuedSeekHotkey(input)
+			? seekByDelta(direction * TEN_SECOND_SEEK_SECONDS)
+			: true;
 	}
 
 	if (input.code === 'Comma' || input.code === 'Period') {
@@ -407,7 +654,7 @@ function handlePlayerHotkey(input: PlayerHotkeyPayload | KeyboardEvent) {
 		}
 
 		const direction = input.code === 'Period' ? 1 : -1;
-		return seekByDelta(direction * FRAME_SEEK_SECONDS, `Frame seek via ${input.code}`);
+		return seekByCurrentPlayerTime(direction * FRAME_SEEK_SECONDS);
 	}
 
 	if (input.code === 'Space' || input.code === 'KeyK') {
@@ -495,6 +742,7 @@ watch(videoContainer, (container) => {
 
 let lastFightRelativeTime = 0;
 function onVideoIdChanged() {
+	clearQueuedHotkeySeek();
 	if (player.value) {
 		const videoId = reviewsStore.getSelectedVideoId;
 		if (videoId) {
@@ -581,6 +829,7 @@ function reloadPlayer() {
 const currentVideoTime = ref(0);
 
 watch(playerIframe, (el) => {
+	clearQueuedHotkeySeek();
 	isPlayerPlaying.value = false;
 	keepPlayerControlsVisible();
 	if (player.value) {
@@ -605,6 +854,7 @@ watch(playerIframe, (el) => {
 		});
 
 		player.value.on('unplayable', ({ videoId, errorCode, data }) => {
+			clearQueuedHotkeySeek();
 			log.info("YouTube video unplayable:", videoId, errorCode);
 			log.info(player.value._player)
 			log.info("playerInfo", player.value?._player?.playerInfo)
@@ -623,12 +873,14 @@ watch(playerIframe, (el) => {
 		});
 
 		player.value.on('error', (error) => {
+			clearQueuedHotkeySeek();
 			log.info("YouTube embed error:", error);
 			alert(`Error embedding video. Error code: ${error}`);
 		});
 
 		player.value.on('timeupdate', (seconds) => {
 			currentVideoTime.value = seconds;
+			onHotkeySeekTimeUpdate(seconds);
 		});
 
 		player.value.on('cued', () => {
@@ -701,6 +953,7 @@ onBeforeUnmount(() => {
 	playerBoundsResizeObserver = null;
 	ipc.send(IPC_EVENTS.YOUTUBE_PLAYER_POINTER_BOUNDS_SET, null);
 	clearPlayerControlsHideTimeout();
+	clearQueuedHotkeySeek();
 	isPlayerFullscreen.value = false;
 	void ipc.invoke(IPC_EVENTS.YOUTUBE_PLAYER_FULLSCREEN_SET, false).catch((error) => {
 		log.warn('Failed to leave YouTube player fullscreen while closing Reviews', error);
@@ -1130,6 +1383,18 @@ function deleteYoutubeVideo(videoId: string) {
 								class="rounded-md w-full h-full z-50"
 							></div>
 						</div>
+						<Transition name="youtube-player-seek-queue">
+							<div
+								v-if="queuedSeekDeltaSeconds !== null"
+								class="youtube-player-seek-queue"
+								:class="queuedSeekDirectionClass"
+								role="status"
+								aria-live="polite"
+								aria-atomic="true"
+							>
+								<strong>{{ queuedSeekDeltaLabel }}</strong>
+							</div>
+						</Transition>
 						<div
 							v-if="reviewsStore.selectedVideoInfo"
 							class="youtube-player-control-dock"
@@ -1319,8 +1584,8 @@ function deleteYoutubeVideo(videoId: string) {
 						:fight-start-time="reviewsStore.getFightStartTimeOffset"
 						:fight-duration="reviewsStore.getFightDuration"
 						:cursor-percent="currentFightCursor"
-						:loading="reviewsStore.isFightCooldownsLoading"
-						:error="reviewsStore.getFightCooldownError"
+						:loading="reviewsStore.isFightCooldownsLoading || reviewsStore.isFightEventsLoading"
+						:error="reviewsStore.getFightCooldownError || reviewsStore.getFightEventsError"
 						@seek="seekToFightTimestamp"
 						@open-fight="openWCLFight"
 						@open-death="openWCLDeath"
@@ -1341,6 +1606,48 @@ function deleteYoutubeVideo(videoId: string) {
 	height: 100%;
 	border: 0;
 	border-radius: 0.375rem;
+}
+
+.youtube-player-seek-queue {
+	position: absolute;
+	top: 50%;
+	z-index: 60;
+	transform: translate(-50%, -50%);
+	color: rgb(241 245 249);
+	pointer-events: none;
+	text-align: center;
+	text-shadow: 0 2px 5px rgb(0 0 0 / 95%), 0 0 16px rgb(0 0 0 / 75%);
+}
+
+.youtube-player-seek-queue--backward {
+	left: 22%;
+}
+
+.youtube-player-seek-queue--forward {
+	left: 78%;
+}
+
+.youtube-player-seek-queue--neutral {
+	left: 50%;
+}
+
+.youtube-player-seek-queue strong {
+	font-size: clamp(2.1rem, 5vw, 4rem);
+	font-weight: 750;
+	font-variant-numeric: tabular-nums;
+	letter-spacing: -0.04em;
+	line-height: 0.9;
+}
+
+.youtube-player-seek-queue-enter-active,
+.youtube-player-seek-queue-leave-active {
+	transition: left 80ms ease-out, opacity 80ms linear, transform 80ms linear;
+}
+
+.youtube-player-seek-queue-enter-from,
+.youtube-player-seek-queue-leave-to {
+	opacity: 0;
+	transform: translate(-50%, -50%) scale(0.92);
 }
 
 .youtube-player-control-dock {

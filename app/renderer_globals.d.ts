@@ -100,6 +100,9 @@ declare type ObsStatus = {
 declare type fightEvent = {
 	timestamp: number;
 	type: string;
+	amount?: number;
+	overheal?: number;
+	absorbed?: number;
 	source?: {
 		guid?: number,
 		icon?: string,
@@ -107,6 +110,8 @@ declare type fightEvent = {
 		name?: string,
 		type?: string
 	};
+	sourceInstance?: number;
+	sourceMarker?: number;
 	target?: {
 		guid?: number,
 		icon?: string,
@@ -114,6 +119,8 @@ declare type fightEvent = {
 		name?: string,
 		type?: string
 	};
+	targetInstance?: number;
+	targetMarker?: number;
 	ability?: {
 		abilityIcon?: string,
 		guid?: number,
@@ -128,6 +135,14 @@ declare type fightEvent = {
 		guid?: number,
 		name?: string,
 		type?: number,
+	};
+	encounterAlert?: {
+		id: string;
+		encounterID: number;
+		spellID: number;
+		label: string;
+		description: string;
+		severity: 'warning';
 	};
 }
 
@@ -203,6 +218,7 @@ declare type reviewCooldownEvent = {
 		spellID: number;
 		groups: reviewCooldownGroupID[];
 		primaryGroup: reviewCooldownGroupID;
+		defaultEnabled?: boolean;
 		interruptSuccessful?: boolean;
 	};
 }

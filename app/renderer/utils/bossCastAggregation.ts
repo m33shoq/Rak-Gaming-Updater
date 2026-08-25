@@ -24,6 +24,49 @@ type BossCastEventLike = {
 	bossCast: { spellID: number };
 };
 
+export type TimelineOccurrenceGroup<TItem> = {
+	item: TItem;
+	occurrences: TItem[];
+};
+
+/**
+ * Shared burst aggregation policy for timeline events: a rolling three-second
+ * gap, capped at six seconds from the first occurrence in a group.
+ */
+export function aggregateTimelineOccurrences<TItem, TKey>(
+	items: readonly TItem[],
+	getKey: (item: TItem) => TKey,
+	getTimestampSeconds: (item: TItem) => number,
+	aggregationWindowSeconds = COLLAPSED_BOSS_CAST_AGGREGATION_WINDOW_SECONDS,
+	maxAggregateSpanSeconds = COLLAPSED_BOSS_CAST_MAX_AGGREGATE_SPAN_SECONDS,
+): TimelineOccurrenceGroup<TItem>[] {
+	const groups: TimelineOccurrenceGroup<TItem>[] = [];
+	const latestGroupByKey = new Map<TKey, TimelineOccurrenceGroup<TItem>>();
+
+	[...items]
+		.sort((left, right) => getTimestampSeconds(left) - getTimestampSeconds(right))
+		.forEach((item) => {
+			const key = getKey(item);
+			const existingGroup = latestGroupByKey.get(key);
+			const previousOccurrence = existingGroup?.occurrences.at(-1);
+			if (
+				existingGroup
+				&& previousOccurrence
+				&& getTimestampSeconds(item) - getTimestampSeconds(previousOccurrence) <= aggregationWindowSeconds
+				&& getTimestampSeconds(item) - getTimestampSeconds(existingGroup.item) <= maxAggregateSpanSeconds
+			) {
+				existingGroup.occurrences.push(item);
+				return;
+			}
+
+			const group = { item, occurrences: [item] };
+			groups.push(group);
+			latestGroupByKey.set(key, group);
+		});
+
+	return groups;
+}
+
 export function sortBossCastAbilitiesByFirstOccurrence<TAbility extends BossCastAbilityLike>(
 	abilities: readonly TAbility[],
 	events: readonly BossCastEventLike[],
@@ -66,33 +109,17 @@ export function buildCollapsedBossCastMarkers<
 	aggregationWindowSeconds = COLLAPSED_BOSS_CAST_AGGREGATION_WINDOW_SECONDS,
 	maxAggregateSpanSeconds = COLLAPSED_BOSS_CAST_MAX_AGGREGATE_SPAN_SECONDS,
 ): CollapsedBossCastMarker<TLane>[] {
-	const orderedMarkers = lanes
-		.flatMap(lane => lane.markers.map(marker => ({ lane, marker })))
-		.sort((left, right) => left.marker.timestampSeconds - right.marker.timestampSeconds);
-	const groups: Array<Omit<CollapsedBossCastMarker<TLane>, 'offsetPixels'>> = [];
-	const latestGroupBySpellID = new Map<number, Omit<CollapsedBossCastMarker<TLane>, 'offsetPixels'>>();
-
-	orderedMarkers.forEach((item) => {
-		const spellID = item.lane.ability.spellID;
-		const existingGroup = latestGroupBySpellID.get(spellID);
-		const previousOccurrence = existingGroup?.occurrences.at(-1);
-		if (
-			existingGroup
-			&& previousOccurrence
-			&& item.marker.timestampSeconds - previousOccurrence.timestampSeconds <= aggregationWindowSeconds
-			&& item.marker.timestampSeconds - existingGroup.marker.timestampSeconds <= maxAggregateSpanSeconds
-		) {
-			existingGroup.occurrences.push(item.marker);
-			return;
-		}
-
-		const group = {
-			...item,
-			occurrences: [item.marker],
-		};
-		groups.push(group);
-		latestGroupBySpellID.set(spellID, group);
-	});
+	const markers = lanes.flatMap(lane => lane.markers.map(marker => ({ lane, marker })));
+	const groups = aggregateTimelineOccurrences(
+		markers,
+		item => item.lane.ability.spellID,
+		item => item.marker.timestampSeconds,
+		aggregationWindowSeconds,
+		maxAggregateSpanSeconds,
+	).map(group => ({
+		...group.item,
+		occurrences: group.occurrences.map(item => item.marker),
+	}));
 
 	let collisionIndex = 0;
 	let collisionStartPercent = Number.NEGATIVE_INFINITY;

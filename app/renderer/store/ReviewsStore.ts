@@ -66,6 +66,7 @@ export const useReviewsStore = defineStore('Reviews', () => {
 	const fightEventPromises = new Map<string, Promise<fightEvent[]>>();
 	const fightCooldownPromises = new Map<string, Promise<reviewFightCooldownData>>();
 	const fightBossCastPromises = new Map<string, Promise<reviewFightBossCastData>>();
+	let fightEventRequestEpoch = 0;
 	let fightCooldownRequestEpoch = 0;
 	let fightBossCastRequestEpoch = 0;
 	let fightCooldownInvalidatedAt = 0;
@@ -355,6 +356,14 @@ export const useReviewsStore = defineStore('Reviews', () => {
 
 	const getFightCooldownEvents = computed(() => getFightCooldownData.value?.fightCooldownEvents || []);
 	const getFightCooldownGroups = computed(() => getFightCooldownData.value?.cooldownGroups || []);
+	const isFightEventsLoading = computed(() => {
+		const cacheKey = getSelectedFightCooldownCacheKey.value;
+		return cacheKey ? Boolean(fightEventRequests.value[cacheKey]) : false;
+	});
+	const getFightEventsError = computed(() => {
+		const cacheKey = getSelectedFightCooldownCacheKey.value;
+		return cacheKey ? fightEventErrors.value[cacheKey] || null : null;
+	});
 	const isFightCooldownsLoading = computed(() => {
 		const cacheKey = getSelectedFightCooldownCacheKey.value;
 		return cacheKey ? Boolean(fightCooldownRequests.value[cacheKey]) : false;
@@ -543,7 +552,7 @@ export const useReviewsStore = defineStore('Reviews', () => {
 		setReportDetails(reportData);
 	}
 
-	async function ensureFightEvents(reportCode: string, fightID: number, force = false): Promise<fightEvent[]> {
+	async function ensureFightEvents(reportCode: string, fightID: number, force = false, encounterID?: number): Promise<fightEvent[]> {
 		const cacheKey = getFightCooldownCacheKey(reportCode, fightID);
 		const cached = savedFightEvents.value[cacheKey];
 		if (!force && cached && isFresh(fightEventCachedAt.value, cacheKey)) return cached;
@@ -553,25 +562,31 @@ export const useReviewsStore = defineStore('Reviews', () => {
 
 		fightEventRequests.value[cacheKey] = true;
 		fightEventErrors.value[cacheKey] = null;
+		const requestEpoch = fightEventRequestEpoch;
 		const request = (async () => {
 			try {
 				const response = await ipc.invoke(
 					IPC_EVENTS.WCL_REQUEST_FIGHT_EVENTS,
-					{ reportCode, fightID },
+					{ reportCode, fightID, encounterID },
 				) as reviewFightEventsResponse;
 				if (response.error) throw new Error(response.error);
+				if (requestEpoch !== fightEventRequestEpoch) {
+					return savedFightEvents.value[cacheKey] || response.fightEvents || [];
+				}
 				savedFightEvents.value[cacheKey] = response.fightEvents || [];
 				fightEventCachedAt.value[cacheKey] = Date.now();
 				markTimelineWindowFightDataUpdated(reportCode, fightID);
 				return savedFightEvents.value[cacheKey];
 			} catch (error) {
 				const message = error instanceof Error ? error.message : 'Failed to request fight events';
-				fightEventErrors.value[cacheKey] = message;
+				if (requestEpoch === fightEventRequestEpoch) fightEventErrors.value[cacheKey] = message;
 				log.error('Failed to request WCL fight events', { reportCode, fightID, error });
 				return savedFightEvents.value[cacheKey] || [];
 			} finally {
-				fightEventRequests.value[cacheKey] = false;
-				fightEventPromises.delete(cacheKey);
+				if (fightEventPromises.get(cacheKey) === request) {
+					fightEventRequests.value[cacheKey] = false;
+					fightEventPromises.delete(cacheKey);
+				}
 			}
 		})();
 		fightEventPromises.set(cacheKey, request);
@@ -685,7 +700,7 @@ export const useReviewsStore = defineStore('Reviews', () => {
 		const reportCode = selectedReportCode.value;
 		const fightID = selectedFightID.value;
 		if (!reportCode || !fightID) return [];
-		return ensureFightEvents(reportCode, fightID, force);
+		return ensureFightEvents(reportCode, fightID, force, getSelectedFight.value?.encounterID);
 	}
 
 	async function requestFightCooldowns(force = false) {
@@ -787,12 +802,17 @@ export const useReviewsStore = defineStore('Reviews', () => {
 	});
 
 	ipc.on(IPC_EVENTS.SOCKET_CONNECTED_CALLBACK, () => {
-		// A reconnect can mean the server was deployed with a new cooldown
-		// catalog. Keep current data visible, but make every entry stale so
+		// A reconnect can mean the server was deployed with a new cooldown catalog
+		// or encounter-alert registry. Keep current data visible, but make entries stale so
 		// active comparison pulls and the selected pull refresh immediately.
 		const invalidatedAt = Date.now();
 		fightCooldownInvalidatedAt = invalidatedAt;
 		fightBossCastInvalidatedAt = invalidatedAt;
+		fightEventCachedAt.value = {};
+		fightEventRequests.value = {};
+		fightEventErrors.value = {};
+		fightEventRequestEpoch++;
+		fightEventPromises.clear();
 		fightCooldownCachedAt.value = {};
 		fightCooldownRequests.value = {};
 		fightCooldownErrors.value = {};
@@ -810,6 +830,7 @@ export const useReviewsStore = defineStore('Reviews', () => {
 		const fightID = selectedFightID.value;
 		if (!reportCode || !fightID) return;
 
+		void ensureFightEvents(reportCode, fightID, true, getSelectedFight.value?.encounterID);
 		void ensureFightCooldowns(reportCode, fightID, true);
 	});
 
@@ -871,7 +892,9 @@ export const useReviewsStore = defineStore('Reviews', () => {
 		getSelectedFight,
 		getFightEvents,
 		getFightEventsFor,
+		isFightEventsLoading,
 		isFightEventsLoadingFor,
+		getFightEventsError,
 		getFightEventsErrorFor,
 		getFightCooldownData,
 		getFightCooldownDataFor,

@@ -1805,7 +1805,7 @@ ipcMain.handle(IPC_EVENTS.WCL_REQUEST_REPORT_DATA, async (event, { reportCode })
 	});
 });
 
-ipcMain.handle(IPC_EVENTS.WCL_REQUEST_FIGHT_EVENTS, async (event, { reportCode, fightID }) => {
+ipcMain.handle(IPC_EVENTS.WCL_REQUEST_FIGHT_EVENTS, async (event, { reportCode, fightID, encounterID }) => {
 	return new Promise<reviewFightEventsResponse>((resolve) => {
 		log.info('Requesting WCL fight events for report', reportCode, 'fightID', fightID);
 		let settled = false;
@@ -1814,7 +1814,7 @@ ipcMain.handle(IPC_EVENTS.WCL_REQUEST_FIGHT_EVENTS, async (event, { reportCode, 
 			resolve({ error: 'Timed out while requesting fight events' });
 		}, 15000);
 
-		socket.emit(SOCKET_EVENTS.WCL_REQUEST_FIGHT_EVENTS, { reportCode, fightID }, (response?: reviewFightEventsResponse) => {
+		socket.emit(SOCKET_EVENTS.WCL_REQUEST_FIGHT_EVENTS, { reportCode, fightID, encounterID }, (response?: reviewFightEventsResponse) => {
 			if (settled) return;
 			settled = true;
 			clearTimeout(timeout);

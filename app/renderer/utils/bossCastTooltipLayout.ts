@@ -1,6 +1,6 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, type CSSProperties } from 'vue';
 
-type BossCastTooltipDescriptor = {
+type TimelineOccurrenceTooltipDescriptor = {
 	occurrences: unknown[];
 	placement: 'above' | 'below';
 	x: number;
@@ -12,14 +12,14 @@ const TOOLTIP_COLUMN_WIDTH_PX = 420;
 const MIN_TOOLTIP_COLUMN_WIDTH_PX = 340;
 const BELOW_CURSOR_OFFSET_PX = 12;
 
-export function useBossCastTooltipLayout(getTooltip: () => BossCastTooltipDescriptor | null) {
+export function useTimelineOccurrenceTooltipLayout(getTooltip: () => TimelineOccurrenceTooltipDescriptor | null) {
 	const element = ref<HTMLElement | null>(null);
 	const columnCount = ref(1);
 	const fitScale = ref(1);
 	const measuredSize = ref({ width: 0, height: 0 });
 	let layoutGeneration = 0;
 
-	function tooltipWidth(tooltip: BossCastTooltipDescriptor) {
+	function tooltipWidth(tooltip: TimelineOccurrenceTooltipDescriptor) {
 		if (tooltip.occurrences.length <= 1) return undefined;
 		return Math.min(
 			columnCount.value * TOOLTIP_COLUMN_WIDTH_PX,
@@ -135,3 +135,7 @@ export function useBossCastTooltipLayout(getTooltip: () => BossCastTooltipDescri
 		clear,
 	};
 }
+
+// Keep the existing, domain-specific name for boss-cast consumers while the
+// generic helper is also reused by other aggregated timeline markers.
+export const useBossCastTooltipLayout = useTimelineOccurrenceTooltipLayout;

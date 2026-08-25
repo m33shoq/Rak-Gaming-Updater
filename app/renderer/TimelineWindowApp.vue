@@ -21,19 +21,24 @@ const emptyCooldownData: reviewFightCooldownData = {
 };
 const timelineCooldownData = computed(() => reviewsStore.getFightCooldownData || emptyCooldownData);
 const timelineFightEvents = computed(() => reviewsStore.getFightEvents);
-const timelineLoading = computed(() => reviewsStore.isFightCooldownsLoading);
-const timelineError = computed(() => reviewsStore.getFightCooldownError);
+const timelineLoading = computed(() => (
+	reviewsStore.isFightCooldownsLoading || reviewsStore.isFightEventsLoading
+));
+const timelineError = computed(() => (
+	reviewsStore.getFightCooldownError || reviewsStore.getFightEventsError
+));
 
 async function applyContext(nextContext: ReviewTimelineWindowContext | null) {
 	if (!nextContext) return;
 	context.value = nextContext;
 	cursorPercent.value = nextContext.cursorPercent;
 	await reviewsStore.hydrateTimelineWindowContext(nextContext);
+	const selectedFight = nextContext.reportDetails.fights.find(fight => fight.id === nextContext.fightID);
 	// Requests cannot be transferred between renderer processes. Revalidate the
 	// selected pull locally; timestamped snapshots make this a cache hit when the
 	// main renderer already supplied fresh data.
 	void Promise.allSettled([
-		reviewsStore.ensureFightEvents(nextContext.reportCode, nextContext.fightID),
+		reviewsStore.ensureFightEvents(nextContext.reportCode, nextContext.fightID, false, selectedFight?.encounterID),
 		reviewsStore.ensureFightCooldowns(nextContext.reportCode, nextContext.fightID),
 	]);
 }
