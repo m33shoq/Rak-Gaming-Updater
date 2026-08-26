@@ -268,7 +268,10 @@ export const useReviewsStore = defineStore('Reviews', () => {
 				})) fightCooldownErrors.value[cacheKey] = null;
 			}
 			if (fightData.bossCastData) {
-				const bossCastCachedAt = fightData.bossCastData.interruptsComplete === false
+				const bossCastCachedAt = (
+					fightData.bossCastData.interruptsComplete === false
+					|| fightData.bossCastData.targetDetailsComplete === false
+				)
 					? 0
 					: fightData.bossCastDataCachedAt;
 				if (mergeTimelineWindowCacheEntry({
@@ -647,7 +650,12 @@ export const useReviewsStore = defineStore('Reviews', () => {
 		return request;
 	}
 
-	async function ensureFightBossCasts(reportCode: string, fightID: number, force = false): Promise<reviewFightBossCastData> {
+	async function ensureFightBossCasts(
+		reportCode: string,
+		fightID: number,
+		force = false,
+		encounterID?: number,
+	): Promise<reviewFightBossCastData> {
 		const cacheKey = getFightCooldownCacheKey(reportCode, fightID);
 		const cached = savedFightBossCasts.value[cacheKey];
 		if (!force && cached && isFresh(fightBossCastCachedAt.value, cacheKey)) return cached;
@@ -661,7 +669,7 @@ export const useReviewsStore = defineStore('Reviews', () => {
 			try {
 				const response = await ipc.invoke(
 					IPC_EVENTS.WCL_REQUEST_FIGHT_BOSS_CASTS,
-					{ reportCode, fightID },
+					{ reportCode, fightID, encounterID },
 				) as reviewFightBossCastResponse;
 				if (response.error || !response.bossCastData) {
 					throw new Error(response.error || 'Failed to request fight boss casts');
@@ -669,8 +677,15 @@ export const useReviewsStore = defineStore('Reviews', () => {
 				if (requestEpoch !== fightBossCastRequestEpoch) {
 					return savedFightBossCasts.value[cacheKey] || response.bossCastData;
 				}
-				if (response.bossCastData.interruptsComplete === false) {
-					if (cached && cached.interruptsComplete !== false) return cached;
+				if (
+					response.bossCastData.interruptsComplete === false
+					|| response.bossCastData.targetDetailsComplete === false
+				) {
+					if (
+						cached
+						&& cached.interruptsComplete !== false
+						&& cached.targetDetailsComplete !== false
+					) return cached;
 					savedFightBossCasts.value[cacheKey] = response.bossCastData;
 					delete fightBossCastCachedAt.value[cacheKey];
 					markTimelineWindowFightDataUpdated(reportCode, fightID);
@@ -713,8 +728,9 @@ export const useReviewsStore = defineStore('Reviews', () => {
 	async function requestFightBossCasts(force = false) {
 		const reportCode = selectedReportCode.value;
 		const fightID = selectedFightID.value;
-		if (!reportCode || !fightID) return null;
-		return ensureFightBossCasts(reportCode, fightID, force);
+		const encounterID = getSelectedFight.value?.encounterID;
+		if (!reportCode || !fightID || !encounterID) return null;
+		return ensureFightBossCasts(reportCode, fightID, force, encounterID);
 	}
 
 	const videoList = computed<YouTubeVideo[]>(() => {

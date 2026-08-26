@@ -1870,17 +1870,22 @@ ipcMain.handle(IPC_EVENTS.WCL_REQUEST_FIGHT_COOLDOWNS, async (event, { reportCod
 
 ipcMain.handle(IPC_EVENTS.WCL_REQUEST_FIGHT_BOSS_CASTS, async (
 	_event,
-	payload?: { reportCode?: unknown; fightID?: unknown },
+	payload?: { reportCode?: unknown; fightID?: unknown; encounterID?: unknown },
 ) => {
-	const { reportCode, fightID } = payload || {};
+	const { reportCode, fightID, encounterID } = payload || {};
 	if (
 		typeof reportCode !== 'string'
 		|| reportCode.trim().length === 0
 		|| typeof fightID !== 'number'
 		|| !Number.isSafeInteger(fightID)
 		|| fightID <= 0
+		|| (encounterID != null && (
+			typeof encounterID !== 'number'
+			|| !Number.isSafeInteger(encounterID)
+			|| encounterID <= 0
+		))
 	) {
-		return { error: 'Invalid report code or fight ID' } satisfies reviewFightBossCastResponse;
+		return { error: 'Invalid report code, fight ID, or encounter ID' } satisfies reviewFightBossCastResponse;
 	}
 	const normalizedReportCode = reportCode.trim();
 
@@ -1894,7 +1899,11 @@ ipcMain.handle(IPC_EVENTS.WCL_REQUEST_FIGHT_BOSS_CASTS, async (
 
 		socket.emit(
 			SOCKET_EVENTS.WCL_REQUEST_FIGHT_BOSS_CASTS,
-			{ reportCode: normalizedReportCode, fightID },
+			{
+				reportCode: normalizedReportCode,
+				fightID,
+				...(typeof encounterID === 'number' ? { encounterID } : {}),
+			},
 			(response?: reviewFightBossCastResponse) => {
 				if (settled) return;
 				settled = true;

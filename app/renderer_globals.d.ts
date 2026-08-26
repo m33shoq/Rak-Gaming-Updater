@@ -299,6 +299,26 @@ declare type reviewBossCastEvent = {
 				type?: number;
 			};
 		};
+		targetDebuffs?: Array<{
+			timestamp: number;
+			target: {
+				gameID?: number;
+				guid?: number;
+				icon?: string;
+				id?: number;
+				name?: string;
+				subType?: string;
+				type?: string;
+			};
+			targetInstance?: number;
+			targetMarker?: number;
+			ability?: {
+				abilityIcon?: string;
+				guid?: number;
+				name?: string;
+				type?: number;
+			};
+		}>;
 	};
 }
 
@@ -320,6 +340,7 @@ declare type reviewFightBossCastData = {
 	abilities: reviewBossCastAbility[];
 	bossCastEvents: reviewBossCastEvent[];
 	interruptsComplete?: boolean;
+	targetDetailsComplete?: boolean;
 }
 
 declare type reviewFightBossCastResponse = {

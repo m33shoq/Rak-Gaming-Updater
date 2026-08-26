@@ -3,6 +3,7 @@ import log from 'electron-log/renderer';
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 
 import ReviewBossCastInterrupt from '@/renderer/components/ReviewBossCastInterrupt.vue';
+import ReviewBossCastTargets from '@/renderer/components/ReviewBossCastTargets.vue';
 import ReviewCooldownComparison from '@/renderer/components/ReviewCooldownComparison.vue';
 import ReviewCooldownTarget from '@/renderer/components/ReviewCooldownTarget.vue';
 import ReviewEncounterAlertTooltip from '@/renderer/components/ReviewEncounterAlertTooltip.vue';
@@ -469,8 +470,9 @@ const bossCastAbilities = computed(() => {
 		? sortBossCastAbilitiesByFirstOccurrence(data.abilities, data.bossCastEvents)
 		: [];
 });
-const bossCastInterruptsIncomplete = computed(() => (
+const bossCastDetailsIncomplete = computed(() => (
 	selectedBossCastData.value?.interruptsComplete === false
+	|| selectedBossCastData.value?.targetDetailsComplete === false
 ));
 const visibleBossCastAbilityCount = computed(() => {
 	const fight = selectedFight.value;
@@ -782,7 +784,7 @@ function retrySelectedBossCasts() {
 	const reportCode = reviewsStore.selectedReportCode;
 	const fightID = reviewsStore.selectedFightID;
 	if (!reportCode || !fightID) return;
-	void reviewsStore.ensureFightBossCasts(reportCode, fightID, true);
+	void reviewsStore.ensureFightBossCasts(reportCode, fightID, true, selectedFight.value?.encounterID);
 }
 
 function setBossCastDisplayMode(mode: 'full' | 'collapsed') {
@@ -1210,12 +1212,13 @@ watch(
 		timelineViewMode,
 		() => reviewsStore.selectedReportCode,
 		() => reviewsStore.selectedFightID,
+		() => selectedFight.value?.encounterID,
 		() => reviewsStore.fightBossCastCacheEpoch,
 	],
-	([expanded, viewMode, reportCode, fightID]) => {
-		if (!expanded || viewMode !== 'fight' || !reportCode || !fightID) return;
+	([expanded, viewMode, reportCode, fightID, encounterID]) => {
+		if (!expanded || viewMode !== 'fight' || !reportCode || !fightID || !encounterID) return;
 		void reviewsStore.ensureBossCastPreferencesLoaded();
-		void reviewsStore.ensureFightBossCasts(reportCode, fightID);
+		void reviewsStore.ensureFightBossCasts(reportCode, fightID, false, encounterID || undefined);
 	},
 	{ immediate: true },
 );
@@ -1993,7 +1996,7 @@ function onComparisonPlayerRequestApplied(token: number) {
 					>
 						<span v-if="isBossCastsLoading">Boss casts...</span>
 						<span v-else>Boss {{ visibleBossCastAbilityCount }}/{{ bossCastAbilities.length }}</span>
-						<span v-if="bossCastInterruptsIncomplete" class="font-bold text-amber-500" title="Interrupt details are incomplete" aria-label="Interrupt details are incomplete">!</span>
+						<span v-if="bossCastDetailsIncomplete" class="font-bold text-amber-500" title="Boss cast details are incomplete" aria-label="Boss cast details are incomplete">!</span>
 						<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" class="size-3 transition-transform" :class="{ 'rotate-180': isBossCastFiltersExpanded }">
 							<path fill-rule="evenodd" d="M5.22 7.47a.75.75 0 0 1 1.06 0L10 11.19l3.72-3.72a.75.75 0 1 1 1.06 1.06l-4.25 4.25a.75.75 0 0 1-1.06 0L5.22 8.53a.75.75 0 0 1 0-1.06Z" clip-rule="evenodd" />
 						</svg>
@@ -2097,13 +2100,13 @@ function onComparisonPlayerRequestApplied(token: number) {
 						Defaults
 					</button>
 					<button
-						v-if="bossCastInterruptsIncomplete"
+						v-if="bossCastDetailsIncomplete"
 						type="button"
 						class="h-7 shrink-0 border border-amber-500/40 bg-amber-500/10 px-2 text-[10px] text-amber-700 hover:border-amber-500/70 hover:bg-amber-500/15 focus:outline-none focus:ring-1 focus:ring-amber-500 dark:text-amber-300"
-						title="Boss casts loaded, but the WCL interrupt request failed"
+						title="Boss casts loaded, but a supplemental WCL request failed"
 						@click="retrySelectedBossCasts"
 					>
-						Interrupts incomplete · Retry
+						Details incomplete · Retry
 					</button>
 				</div>
 			</div>
@@ -2898,6 +2901,7 @@ function onComparisonPlayerRequestApplied(token: number) {
 								<span v-if="occurrence.durationSeconds > 0" class="text-[11px]" :class="occurrence.event.bossCast.interrupt ? 'text-emerald-300' : 'text-neutral-400'">· Cast time {{ formatDuration(occurrence.durationSeconds) }}</span>
 							</div>
 							<ReviewCooldownTarget v-if="occurrence.event.target" :target="occurrence.event.target" :target-marker="occurrence.event.targetMarker" :target-instance="occurrence.event.targetInstance" />
+							<ReviewBossCastTargets v-if="occurrence.event.bossCast.targetDebuffs?.length" :targets="occurrence.event.bossCast.targetDebuffs" />
 							<ReviewBossCastInterrupt v-if="occurrence.event.bossCast.interrupt" :interrupt="occurrence.event.bossCast.interrupt" />
 							<div v-else class="mt-1 flex items-center gap-1 text-[11px]">
 								<svg viewBox="0 0 16 16" fill="none" class="size-4 shrink-0 border border-amber-500/55 bg-amber-500/10 p-0.5 text-amber-200" aria-hidden="true">
@@ -2910,6 +2914,7 @@ function onComparisonPlayerRequestApplied(token: number) {
 				</template>
 				<template v-else>
 					<ReviewCooldownTarget v-if="detailTooltip.marker.event.target" :target="detailTooltip.marker.event.target" :target-marker="detailTooltip.marker.event.targetMarker" :target-instance="detailTooltip.marker.event.targetInstance" />
+					<ReviewBossCastTargets v-if="detailTooltip.marker.event.bossCast.targetDebuffs?.length" :targets="detailTooltip.marker.event.bossCast.targetDebuffs" />
 					<div v-if="detailTooltip.marker.durationSeconds > 0" class="mt-1 text-[11px]" :class="detailTooltip.marker.event.bossCast.interrupt ? 'text-emerald-300' : 'text-neutral-300'">Cast time {{ formatDuration(detailTooltip.marker.durationSeconds) }}</div>
 					<ReviewBossCastInterrupt v-if="detailTooltip.marker.event.bossCast.interrupt" :interrupt="detailTooltip.marker.event.bossCast.interrupt" />
 				</template>

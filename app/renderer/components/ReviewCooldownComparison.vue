@@ -3,6 +3,7 @@ import log from 'electron-log/renderer';
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 
 import ReviewBossCastInterrupt from '@/renderer/components/ReviewBossCastInterrupt.vue';
+import ReviewBossCastTargets from '@/renderer/components/ReviewBossCastTargets.vue';
 import ReviewCooldownTarget from '@/renderer/components/ReviewCooldownTarget.vue';
 import ReviewEncounterAlertTooltip from '@/renderer/components/ReviewEncounterAlertTooltip.vue';
 import ReviewRaidMarker from '@/renderer/components/ReviewRaidMarker.vue';
@@ -706,8 +707,9 @@ const longestBossCastAbilities = computed(() => {
 		? sortBossCastAbilitiesByFirstOccurrence(data.abilities, data.bossCastEvents)
 		: [];
 });
-const bossCastInterruptsIncomplete = computed(() => (
+const bossCastDetailsIncomplete = computed(() => (
 	longestBossCastData.value?.interruptsComplete === false
+	|| longestBossCastData.value?.targetDetailsComplete === false
 ));
 const visibleBossCastAbilityCount = computed(() => {
 	const anchor = anchorFight.value;
@@ -822,7 +824,7 @@ function retryLongestBossCasts() {
 	const reportCode = anchorReportCode.value;
 	const fight = longestEligiblePull.value;
 	if (!reportCode || !fight) return;
-	void reviewsStore.ensureFightBossCasts(reportCode, fight.id, true);
+	void reviewsStore.ensureFightBossCasts(reportCode, fight.id, true, fight.encounterID);
 }
 
 function setBossCastDisplayMode(mode: 'full' | 'collapsed') {
@@ -833,12 +835,13 @@ watch(
 	[
 		anchorReportCode,
 		() => longestEligiblePull.value?.id || null,
+		() => longestEligiblePull.value?.encounterID || null,
 		() => reviewsStore.fightBossCastCacheEpoch,
 	],
-	([reportCode, fightID]) => {
+	([reportCode, fightID, encounterID]) => {
 		if (!reportCode || !fightID) return;
 		void reviewsStore.ensureBossCastPreferencesLoaded();
-		void reviewsStore.ensureFightBossCasts(reportCode, fightID);
+		void reviewsStore.ensureFightBossCasts(reportCode, fightID, false, encounterID || undefined);
 	},
 	{ immediate: true },
 );
@@ -1562,7 +1565,7 @@ onBeforeUnmount(() => {
 					@click="isBossCastPickerOpen = !isBossCastPickerOpen"
 				>
 					{{ isBossCastsLoading ? 'Boss casts...' : `Boss ${visibleBossCastAbilityCount}/${longestBossCastAbilities.length}` }}
-					<span v-if="bossCastInterruptsIncomplete" class="font-bold text-amber-500" title="Interrupt details are incomplete" aria-label="Interrupt details are incomplete">!</span>
+					<span v-if="bossCastDetailsIncomplete" class="font-bold text-amber-500" title="Boss cast details are incomplete" aria-label="Boss cast details are incomplete">!</span>
 					<span aria-hidden="true">▾</span>
 				</button>
 				<span class="hidden rounded-sm border border-neutral-500/25 bg-neutral-500/[0.07] px-2 py-1 tabular-nums text-neutral-500 2xl:inline-flex">{{ selectedPulls.length }}/{{ eligiblePulls.length }} pulls · {{ visibleCooldownCount }} casts · {{ visibleDeathCount }} deaths<span v-if="visibleAlertCount"> · {{ visibleAlertCount }} alerts</span></span>
@@ -1583,7 +1586,7 @@ onBeforeUnmount(() => {
 				</div>
 				<input v-model="bossCastSearchQuery" type="search" placeholder="Search spell, source, or ID" class="h-7 min-w-36 flex-1 border border-neutral-500/30 bg-light4 px-2 text-[11px] outline-none placeholder:text-neutral-500 focus:border-amber-500 dark:bg-dark4" />
 				<button type="button" class="h-7 shrink-0 border border-neutral-500/25 px-2 text-[10px] text-neutral-500 hover:bg-neutral-500/15 hover:text-inherit" @click="restoreDefaultBossCasts">Defaults</button>
-				<button v-if="bossCastInterruptsIncomplete" type="button" class="h-7 shrink-0 border border-amber-500/40 bg-amber-500/10 px-2 text-[10px] text-amber-700 hover:border-amber-500/70 hover:bg-amber-500/15 focus:outline-none focus:ring-1 focus:ring-amber-500 dark:text-amber-300" title="Boss casts loaded, but the WCL interrupt request failed" @click="retryLongestBossCasts">Interrupts incomplete · Retry</button>
+				<button v-if="bossCastDetailsIncomplete" type="button" class="h-7 shrink-0 border border-amber-500/40 bg-amber-500/10 px-2 text-[10px] text-amber-700 hover:border-amber-500/70 hover:bg-amber-500/15 focus:outline-none focus:ring-1 focus:ring-amber-500 dark:text-amber-300" title="Boss casts loaded, but a supplemental WCL request failed" @click="retryLongestBossCasts">Details incomplete · Retry</button>
 				<button type="button" class="size-7 shrink-0 text-neutral-500 hover:bg-neutral-500/15 hover:text-inherit" aria-label="Close boss cast filters" @click="isBossCastPickerOpen = false">×</button>
 			</div>
 			<div class="mt-2 grid max-h-52 grid-cols-2 gap-1 overflow-x-hidden overflow-y-auto pr-1">
@@ -1827,6 +1830,7 @@ onBeforeUnmount(() => {
 								<span v-if="occurrence.durationSeconds > 0" class="text-[11px]" :class="occurrence.event.bossCast.interrupt ? 'text-emerald-300' : 'text-neutral-400'">· Cast time {{ formatDuration(occurrence.durationSeconds) }}</span>
 							</div>
 							<ReviewCooldownTarget v-if="occurrence.event.target" :target="occurrence.event.target" :target-marker="occurrence.event.targetMarker" :target-instance="occurrence.event.targetInstance" />
+							<ReviewBossCastTargets v-if="occurrence.event.bossCast.targetDebuffs?.length" :targets="occurrence.event.bossCast.targetDebuffs" />
 							<ReviewBossCastInterrupt v-if="occurrence.event.bossCast.interrupt" :interrupt="occurrence.event.bossCast.interrupt" />
 							<div v-else class="mt-1 flex items-center gap-1 text-[11px]">
 								<svg viewBox="0 0 16 16" fill="none" class="size-4 shrink-0 border border-amber-500/55 bg-amber-500/10 p-0.5 text-amber-200" aria-hidden="true">
@@ -1839,6 +1843,7 @@ onBeforeUnmount(() => {
 				</template>
 				<template v-else>
 					<ReviewCooldownTarget v-if="detailTooltip.marker.event.target" :target="detailTooltip.marker.event.target" :target-marker="detailTooltip.marker.event.targetMarker" :target-instance="detailTooltip.marker.event.targetInstance" />
+					<ReviewBossCastTargets v-if="detailTooltip.marker.event.bossCast.targetDebuffs?.length" :targets="detailTooltip.marker.event.bossCast.targetDebuffs" />
 					<div v-if="detailTooltip.marker.durationSeconds > 0" class="mt-1 text-[11px]" :class="detailTooltip.marker.event.bossCast.interrupt ? 'text-emerald-300' : 'text-neutral-300'">Cast time {{ formatDuration(detailTooltip.marker.durationSeconds) }}</div>
 					<ReviewBossCastInterrupt v-if="detailTooltip.marker.event.bossCast.interrupt" :interrupt="detailTooltip.marker.event.bossCast.interrupt" />
 				</template>
