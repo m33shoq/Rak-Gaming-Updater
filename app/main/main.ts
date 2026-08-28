@@ -1,6 +1,6 @@
 import 'dotenv/config';
 
-import { app, BrowserWindow, ipcMain, dialog, Tray, Menu, nativeImage, protocol, shell, Notification, net, powerMonitor } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, Tray, Menu, nativeImage, protocol, shell, net, powerMonitor } from 'electron';
 import { autoUpdater } from 'electron-updater';
 import log from 'electron-log/main';
 import { io as Socket } from 'socket.io-client';
@@ -18,6 +18,7 @@ import mainWindowWrapper from '@/main/MainWindowWrapper';
 import store from '@/main/store';
 import { RegisterSVCallback } from '@/main/svWatcher';
 import BackupService from '@/main/backupService';
+import AppUpdateService from '@/main/appUpdateService';
 import { getSafeInitialWindowBounds, getWindowSettingsFromWindow, type StoredWindowSettings } from '@/main/windowBounds';
 import ObsWebsocketService, { type ObsSettings as ObsServiceSettings } from '@/main/obsWebsocketService';
 import { registerRendererStoreSync } from '@/main/rendererStoreSync';
@@ -42,17 +43,9 @@ import {
 	DOWNLOAD_REASON_UPDATE,
 	DOWNLOAD_REASON_INSTALL,
 	DOWNLOAD_REASON_UP_TO_DATE,
-	BACKUPS_ERROR_NO_PATH_SET,
-	BACKUP_STATUS_DISABLED,
-	BACKUP_STATUS_DELETING_OLD,
-	BACKUP_STATUS_CREATING,
-	BACKUP_STATUS_COMPLETED,
-	BACKUP_STATUS_FAILED,
-	BACKUP_STATUS_DELETED,
-	BACKUP_INTERVAL_ONE_WEK,
 } from '@/constants'
 
-import { IPC_EVENTS, SOCKET_EVENTS, type AppUpdateDownloadState } from '@/events';
+import { IPC_EVENTS, SOCKET_EVENTS } from '@/events';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -74,10 +67,6 @@ process.on("unhandledRejection", (error) => {
 let isQuiting = false;
 let isSystemShutdown = false;
 let shutdownInProgress = false;
-
-let updatedRecheckTimer: NodeJS.Timeout | null = null;
-let rechekTries = 0;
-let lastQueuedUpdateVersion: string | null = null;
 
 const TEMP_DIR = path.join(app.getPath('temp'), app.getName()); // Temporary directory for unzipped/zipped files
 
@@ -103,7 +92,7 @@ function persistWindowSettingsDebounced(win: BrowserWindow, delayMs = 250) {
 }
 
 const socket = Socket(SERVER_URL, { autoConnect: false });
-const backupService = new BackupService(socket);
+const backupService = new BackupService(() => isQuiting || isSystemShutdown);
 
 const isDev = process.env.npm_lifecycle_event === 'app:dev' ? true : false;
 if (isDev) {
@@ -188,26 +177,52 @@ const html = path.join(__dirname, 'index.html');
 
 protocol.registerSchemesAsPrivileged([{ scheme: 'app', privileges: { secure: true, standard: true } }]);
 
-autoUpdater.autoDownload = false;
-autoUpdater.autoInstallOnAppQuit = false;
-autoUpdater.allowPrerelease = false;
 log.transports.file.level = 'info';
-autoUpdater.logger = log;
 
 log.info('App starting...');
 
-const queuedDialogs = [] as Array<{ dialogOptions: Electron.MessageBoxOptions; onSuccessCallback: (value: Electron.MessageBoxReturnValue) => void }>;
+type QueuedDialog = {
+	dialogOptions: Electron.MessageBoxOptions;
+	resolve: (value: Electron.MessageBoxReturnValue) => void;
+	reject: (error: unknown) => void;
+};
 
-function queueDialog(dialogOptions: Electron.MessageBoxOptions, onSuccessCallback: (value: Electron.MessageBoxReturnValue) => void) {
-	if (mainWindow?.isVisible()) {
-		dialog.showMessageBox(mainWindow, dialogOptions).then(onSuccessCallback);
-	} else {
-		queuedDialogs.push({ dialogOptions, onSuccessCallback });
-	}
-}
+const queuedDialogs: QueuedDialog[] = [];
+let isShowingQueuedDialog = false;
 
 let mainWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
+
+function queueDialog(dialogOptions: Electron.MessageBoxOptions): Promise<Electron.MessageBoxReturnValue> {
+	return new Promise((resolve, reject) => {
+		queuedDialogs.push({ dialogOptions, resolve, reject });
+		void drainDialogQueue();
+	});
+}
+
+async function drainDialogQueue(): Promise<void> {
+	if (isShowingQueuedDialog) return;
+	const window = mainWindow;
+	if (!window || window.isDestroyed() || !window.isVisible()) return;
+
+	isShowingQueuedDialog = true;
+	try {
+		while (queuedDialogs.length > 0) {
+			const currentWindow = mainWindow;
+			if (!currentWindow || currentWindow.isDestroyed() || !currentWindow.isVisible()) return;
+
+			const queuedDialog = queuedDialogs.shift();
+			if (!queuedDialog) return;
+			try {
+				queuedDialog.resolve(await dialog.showMessageBox(currentWindow, queuedDialog.dialogOptions));
+			} catch (error) {
+				queuedDialog.reject(error);
+			}
+		}
+	} finally {
+		isShowingQueuedDialog = false;
+	}
+}
 let isYouTubePlayerFullscreen = false;
 let desiredYouTubePlayerFullscreen = false;
 let lastYouTubePlayerPointerActivityAt = 0;
@@ -325,45 +340,16 @@ const timelineWindowController = new TimelineWindowController({
 	isAppClosing: () => isQuiting || isSystemShutdown,
 });
 
-let appUpdateDownloadState: AppUpdateDownloadState | null = null;
-
-function publishAppUpdateDownloadState(state: AppUpdateDownloadState) {
-	appUpdateDownloadState = state;
-	mainWindow?.webContents.send(IPC_EVENTS.APP_UPDATE_DOWNLOAD_STATE_CALLBACK, state);
-}
-
-function failAppUpdateDownload(error: unknown) {
-	if (appUpdateDownloadState?.status !== 'downloading') return;
-
-	const errorMessage = error instanceof Error ? error.message : String(error);
-	publishAppUpdateDownloadState({
-		...appUpdateDownloadState,
-		status: 'error',
-		error: errorMessage,
-	});
-	mainWindow?.setProgressBar(-1);
-}
-
-function startAppUpdateDownload(version: string) {
-	publishAppUpdateDownloadState({
-		status: 'downloading',
-		version,
-		percent: 0,
-		bytesPerSecond: 0,
-		transferred: 0,
-		total: 0,
-	});
-
-	void (async () => {
-		try {
-			await autoUpdater.downloadUpdate();
-		} catch (error) {
-			failAppUpdateDownload(error);
-		}
-	})();
-}
-
-ipcMain.handle(IPC_EVENTS.APP_UPDATE_DOWNLOAD_STATE_GET, () => appUpdateDownloadState);
+const appUpdateService = new AppUpdateService({
+	updater: autoUpdater,
+	backupService,
+	getMainWindow: () => mainWindow,
+	showDialog: queueDialog,
+	notificationIcon: notificationIconImage,
+	setAppQuitting: (isQuitting) => {
+		isQuiting = isQuitting;
+	},
+});
 
 const obsService = new ObsWebsocketService({
 	onStatus: (status) => {
@@ -514,10 +500,7 @@ function beginSystemShutdown(source: string) {
 
 	log.info(`System shutdown requested from ${source}`);
 
-	if (updatedRecheckTimer) {
-		clearInterval(updatedRecheckTimer);
-		updatedRecheckTimer = null;
-	}
+	appUpdateService.dispose();
 
 	try {
 		if (socket.connected) {
@@ -544,19 +527,22 @@ function beginSystemShutdown(source: string) {
 async function startProcess() {
 	if (!app.isReady() || mainWindow) return;
 	createWindow();
-	autoUpdater.checkForUpdates().then((UpdateCheckResults) => {
-		log.info('Update check results:', UpdateCheckResults);
-	});
+	void appUpdateService.checkForUpdates('startup');
 	backupService.InitiateBackup(false);
 }
 
 let forceClose = false;
+let backupCloseDialogPending = false;
 function shouldAppClose(): boolean {
 	if (isSystemShutdown) {
 		return true;
 	}
 
 	if (backupService.IsBackupInProgress() && !forceClose) {
+		if (backupCloseDialogPending) {
+			return false;
+		}
+		backupCloseDialogPending = true;
 		const dialogOpts = {
 			buttons: ['Okay', 'Force Close'],
 			title: 'Rak Gaming Updater',
@@ -567,7 +553,8 @@ function shouldAppClose(): boolean {
 			parent: mainWindow,
 		} as Electron.MessageBoxOptions;
 
-		queueDialog(dialogOpts, ({ response }) => {
+		void queueDialog(dialogOpts).then(({ response }) => {
+			backupCloseDialogPending = false;
 			if (response === 1) {
 				log.info('Forcing close of the app');
 				forceClose = true;
@@ -576,6 +563,10 @@ function shouldAppClose(): boolean {
 				isQuiting = false;
 				log.info('User chose to wait for backup to finish');
 			}
+		}).catch((error) => {
+			backupCloseDialogPending = false;
+			isQuiting = false;
+			log.error('Could not display backup close dialog:', error);
 		});
 		mainWindow?.show();
 		return false;
@@ -693,6 +684,7 @@ async function createWindow() {
 			youtubeFullscreenTransition.resolve(false);
 			youtubeFullscreenTransition = null;
 		}
+		mainWindowWrapper.clear(mainWindow ?? undefined);
 		mainWindow = null;
 		isYouTubePlayerFullscreen = false;
 		desiredYouTubePlayerFullscreen = false;
@@ -742,16 +734,7 @@ async function createWindow() {
 
 	mainWindow?.on('show', () => {
 		mainWindow?.setSkipTaskbar(false);
-
-		if (queuedDialogs.length > 0) {
-			queuedDialogs.forEach(({ dialogOptions, onSuccessCallback }) => {
-				if (onSuccessCallback) {
-					dialog.showMessageBox(mainWindow as BrowserWindow, dialogOptions).then(onSuccessCallback);
-				}
-			});
-			// wipe the queue
-			queuedDialogs.length = 0; // Clear the queue
-		}
+		void drainDialogQueue();
 	});
 
 	mainWindow?.on('unmaximize', () => {
@@ -794,6 +777,7 @@ async function createWindow() {
 			return;
 		}
 
+		isQuiting = true;
 		if (!shouldAppClose()) {
 			event.preventDefault();
 		}
@@ -847,15 +831,20 @@ app.on('window-all-closed', () => {
 	}
 });
 
-app.on('before-quit', () => {
+app.on('before-quit', (event) => {
 	isQuiting = true;
-	timelineWindowController.destroyForQuit();
 	if (isSystemShutdown) {
 		forceClose = true;
 	}
+	if (!shouldAppClose()) {
+		event.preventDefault();
+		return;
+	}
+	timelineWindowController.destroyForQuit();
 });
 
 app.on('will-quit', (event) => {
+	appUpdateService.dispose();
 	if (isQuiting) {
 		socket.disconnect();
 	}
@@ -990,111 +979,6 @@ app.on('web-contents-created', (webContentsCreatedEvent, webContents) => {
 		});
 	});
 });
-
-// Auto-updater events
-autoUpdater.on('update-available', (info) => {
-	log.info(`Update available Version: ${info.version} Release Date: ${info.releaseDate}`);
-	if (updatedRecheckTimer) {
-		clearInterval(updatedRecheckTimer);
-		log.info('Recheck timer cleared');
-	}
-
-	if (lastQueuedUpdateVersion === info.version) {
-		log.info(`Update dialog for version ${info.version} was already queued; skipping duplicate`);
-		return;
-	}
-
-	// Record the version before queueing so concurrent update checks cannot add
-	// another dialog for the same release while the window is hidden.
-	lastQueuedUpdateVersion = info.version;
-
-	new Notification({
-		title: 'Update available',
-		body: `Rak Gaming Updater ${info.version} is available.`,
-		icon: notificationIconImage,
-	}).show();
-
-	const dialogOpts = {
-		buttons: ['Update', 'Later'],
-		title: 'Rak Gaming Updater',
-		message: info.releaseName || 'Update Available',
-		detail: `A new version ${info.version} is available. Do you want to update now?`,
-		noLink: true,
-		modal: true,
-		parent: mainWindow,
-	} as Electron.MessageBoxOptions;
-
-	queueDialog(dialogOpts, ({ response }) => {
-		if (response === 0) {
-			startAppUpdateDownload(info.version);
-		}
-	});
-});
-
-autoUpdater.on('update-not-available', () => {
-	log.info('Application is up to date');
-});
-
-autoUpdater.on('error', (err) => {
-	log.info('Error in auto-updater. ' + err);
-	failAppUpdateDownload(err);
-});
-
-autoUpdater.on('download-progress', (progress) => {
-	if (appUpdateDownloadState?.status !== 'downloading') return;
-
-	// Convert bytes per second to megabytes per second and format to 2 decimal places
-	const speedInMbps = (progress.bytesPerSecond / (1024 * 1024)).toFixed(2);
-	// Convert transferred and total bytes to megabytes and format to 2 decimal places
-	const transferredInMB = (progress.transferred / (1024 * 1024)).toFixed(2);
-	const totalInMB = (progress.total / (1024 * 1024)).toFixed(2);
-	// Format the percent to 2 decimal places
-	const percentFormatted = progress.percent.toFixed(2);
-
-	log.info(`Download speed: ${speedInMbps} MB/s - Downloaded ${percentFormatted}% (${transferredInMB}/${totalInMB} MB)`);
-	const percent = Math.min(100, Math.max(0, Number.isFinite(progress.percent) ? progress.percent : 0));
-	publishAppUpdateDownloadState({
-		status: 'downloading',
-		version: appUpdateDownloadState?.version || '',
-		percent,
-		bytesPerSecond: progress.bytesPerSecond,
-		transferred: progress.transferred,
-		total: progress.total,
-	});
-	mainWindow?.setProgressBar(percent / 100);
-});
-
-let updatePending = false
-autoUpdater.on('update-downloaded', () => {
-	mainWindow?.setProgressBar(-1);
-	publishAppUpdateDownloadState({
-		status: 'downloaded',
-		version: appUpdateDownloadState?.version || '',
-		percent: 100,
-		bytesPerSecond: 0,
-		transferred: appUpdateDownloadState?.total || appUpdateDownloadState?.transferred || 0,
-		total: appUpdateDownloadState?.total || 0,
-	});
-
-	updatePending = true;
-
-	CheckPendingAppUpdate()
-});
-
-function CheckPendingAppUpdate() {
-	if (updatePending && !backupService.IsBackupInProgress()) {
-		log.info('Update downloaded; will install in 5 seconds');
-		setTimeout(() => {
-			// Shenanigans to make sure the app closes properly
-			isQuiting = true;
-			mainWindow?.close();
-			autoUpdater.quitAndInstall(true, true);
-			setTimeout(() => {
-				app.quit();
-			}, 1000);
-		}, 5000);
-	}
-}
 
 function sanitizeInput(input: string): string {
 	let res = validator.escape(input);
@@ -1383,9 +1267,7 @@ ipcMain.on(IPC_EVENTS.UPDATER_DOWNLOAD_FILE, async (event, fileData) => {
 });
 
 socket.on(SOCKET_EVENTS.SOCKET_CONNECTED, () => {
-	autoUpdater.checkForUpdates().then((UpdateCheckResults) => {
-		log.info('Update check results:', UpdateCheckResults);
-	});
+	void appUpdateService.checkForUpdates('server connection');
 	log.info('Connected to server');
 	BrowserWindow.getAllWindows().forEach(window => {
 		if (!window.isDestroyed() && !window.webContents.isDestroyed()) {
@@ -1460,26 +1342,7 @@ ipcMain.on(IPC_EVENTS.PUSHER_FILE_DELETE, (event, fileData) => {
 
 socket.on(SOCKET_EVENTS.NEW_RELEASE, (data) => {
 	log.info('New release:', data);
-	rechekTries = 0;
-	if (updatedRecheckTimer) {
-		clearInterval(updatedRecheckTimer);
-		log.info('Recheck timer cleared');
-	}
-	updatedRecheckTimer = setInterval(() => {
-		rechekTries++;
-		if (rechekTries > 20) {
-			if (updatedRecheckTimer) {
-				clearInterval(updatedRecheckTimer);
-			}
-			log.info('Recheck timer cleared');
-			return;
-		}
-		autoUpdater.checkForUpdates().then((UpdateCheckResults) => {
-			log.info('Update check results:', UpdateCheckResults);
-		}).catch((error) => {
-			log.error('Error checking for updates:', error);
-		});
-	}, 30 * 1000);
+	appUpdateService.startReleaseRechecks(typeof data === 'string' ? data : undefined);
 });
 
 socket.on(SOCKET_EVENTS.STATUS_CONNECTED_CLIENTS, (data) => {

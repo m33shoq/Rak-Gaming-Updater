@@ -4,6 +4,7 @@ defineProps<{
 	placeholder: string;
 	label: string;
 	title: string;
+	disabled?: boolean;
 }>();
 
 
@@ -32,8 +33,12 @@ defineProps<{
 				box-border
 				transition-all
 				ease-in
+				disabled:cursor-not-allowed
+				disabled:opacity-50
+				disabled:hover:border-transparent
 				overflow-hidden"
 				@click="click"
+				:disabled="disabled"
 			>
 				{{ label || placeholder }}
 			</button>

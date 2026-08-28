@@ -98,40 +98,40 @@ export async function getWoWPath(): Promise<string | null> {
 export function isPathWithin(basePath: string, targetPath: string): boolean {
 	const resolvedBasePath = path.resolve(basePath);
 	const resolvedTargetPath = path.resolve(targetPath);
-	return resolvedTargetPath.startsWith(resolvedBasePath);
+	const relativePath = path.relative(resolvedBasePath, resolvedTargetPath);
+	return relativePath === '' || (
+		!relativePath.startsWith(`..${path.sep}`) &&
+		relativePath !== '..' &&
+		!path.isAbsolute(relativePath)
+	);
 }
 
 export async function getFolderSize(folderPath: string, signal: AbortSignal): Promise<string> {
 	let totalSize = 0;
+	const files = await fsp.readdir(folderPath, { withFileTypes: true });
 
-	async function calculateSize(directory: string): Promise<void> {
-		const files = await fsp.readdir(directory, { withFileTypes: true });
+	for (const file of files) {
+		if (signal.aborted) {
+			throw new Error('Operation aborted');
+		}
 
-		for (const file of files) {
-			if (signal && signal.aborted) {
-				throw new Error('Operation aborted');
-			}
+		if (!file.isFile() || !/^WTF-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}(?:-\d{3}Z)?\.zip$/i.test(file.name)) {
+			continue;
+		}
 
-			const filePath = path.join(directory, file.name);
-			try {
-				const stats = await fsp.stat(filePath);
-
-				if (stats.isDirectory()) {
-					await calculateSize(filePath); // Recursively calculate size for subdirectories
-				} else if (file.name.startsWith('WTF-')) {
-					totalSize += stats.size; // Accumulate file size for files starting with WTF-
-				}
-			} catch (error: any) {
-				if (error.code === 'EPERM' || error.code === 'EACCES') {
-					console.warn(`Skipping inaccessible file: ${filePath}`);
-				} else {
-					throw error; // Re-throw other errors
-				}
+		const filePath = path.join(folderPath, file.name);
+		try {
+			const stats = await fsp.stat(filePath);
+			totalSize += stats.size;
+		} catch (error: any) {
+			if (error.code === 'EPERM' || error.code === 'EACCES' || error.code === 'ENOENT') {
+				log.warn(`Skipping inaccessible backup file: ${filePath}`);
+			} else {
+				throw error;
 			}
 		}
 	}
 
-	await calculateSize(folderPath);
 	const totalSizeInMB = totalSize / (1024 * 1024); // Convert bytes to megabytes
 	log.info(`Total size for ${folderPath}:`, totalSizeInMB.toFixed(2), 'MB');
 	return totalSizeInMB.toFixed(2); // Return size in MB with 2 decimal places

@@ -1,11 +1,31 @@
+export type BackupProgress = {
+	phase: 'cleaning' | 'scanning' | 'checking-space' | 'creating' | 'validating' | 'waiting-for-stable-source' | 'cancelling';
+	percent: number | null;
+	processedBytes: number;
+	totalBytes: number;
+	cancellable: boolean;
+	diskSpaceWarning?: {
+		availableBytes: number;
+		recommendedBytes: number;
+	};
+};
+
+export type BackupStatus = {
+	status: string;
+	desc?: string;
+	progress?: BackupProgress | null;
+};
+
 export type AppUpdateDownloadState = {
-	status: 'downloading' | 'downloaded' | 'error';
+	status: 'downloading' | 'downloaded' | 'waiting-for-backup' | 'error';
 	version: string;
 	percent: number;
 	bytesPerSecond: number;
 	transferred: number;
 	total: number;
 	error?: string;
+	canRetry?: boolean;
+	backupProgress?: BackupProgress;
 };
 
 // IPC Events
@@ -19,6 +39,7 @@ export const IPC_EVENTS = {
 	APP_OPEN_LOGS_FOLDER: 'open-logs-folder',
 	APP_UPDATE_DOWNLOAD_STATE_GET: 'app-update-download-state-get',
 	APP_UPDATE_DOWNLOAD_STATE_CALLBACK: 'app-update-download-state',
+	APP_UPDATE_RETRY: 'app-update-retry',
 
 
 	LOGIN_SEND_CREDENTIALS: 'login',
@@ -53,6 +74,8 @@ export const IPC_EVENTS = {
 	BACKUPS_OPEN_BACKUPS_FOLDER: 'open-backups-folder',
 	BACKUPS_CREATED_CALLBACK: 'backup-created',
 	BACKUPS_INITIATE: 'initiate-backup',
+	BACKUPS_ABORT: 'abort-backup',
+	BACKUPS_STATUS_GET: 'backup-status-get',
 	BACKUPS_STATUS_CALLBACK: 'backup-status',
 
 
