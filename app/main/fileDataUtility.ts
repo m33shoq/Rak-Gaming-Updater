@@ -4,22 +4,33 @@ import path from 'path';
 import crc32 from 'crc/crc32';
 import { zipFile, unzipFile } from './zipHandler';
 import log from 'electron-log/main';
+import { randomUUID } from 'node:crypto';
 
 const TEMP_DIR = path.join(app.getPath('temp'), app.getName()); // Temporary directory for unzipped/zipped files
 
-export async function GetFileData(filePath: string, relativePath: string): Promise<FileData> {
+export type FileDataResult = {
+	fileData: FileData;
+	totalBytes: number;
+};
+
+export async function GetFileData(filePath: string, relativePath: string): Promise<FileDataResult> {
 	let fileName = path.basename(filePath);
 	const displayName = fileName;
 	const stats = await fsp.stat(filePath);
 	const timestamp = stats.mtimeMs / 1000; // Convert to seconds
 
 	let hash;
+	let totalBytes = stats.isFile() ? stats.size : 0;
 	if (stats.isFile()) {
 		const fileExtension = path.extname(filePath).toLowerCase();
 		if (fileExtension === '.zip') {
 			// we need hash of unzipped content
-			const tempFilePath = path.join(TEMP_DIR, fileName);
-			await fsp.mkdir(path.dirname(tempFilePath), { recursive: true });
+			const tempRoot = path.resolve(TEMP_DIR, 'file-data');
+			const tempFilePath = path.resolve(tempRoot, randomUUID());
+			if (path.dirname(tempFilePath) !== tempRoot) {
+				throw new Error('Could not create a safe temporary directory for ZIP inspection.');
+			}
+			await fsp.mkdir(tempFilePath, { recursive: true });
 			try {
 				await unzipFile(filePath, tempFilePath); // Unzip the file to a temporary location
 
@@ -31,46 +42,59 @@ export async function GetFileData(filePath: string, relativePath: string): Promi
 				fileName = unzippedFiles[0];
 				const hashFilePath = path.join(tempFilePath, fileName);
 
-				hash = await CalculateHashForPath(hashFilePath); // Calculate hash of the unzipped content
+				hash = (await getHashAndSizeForPath(hashFilePath)).hash; // Calculate hash of the unzipped content
 			} finally {
-				await fsp.rm(tempFilePath, { recursive: true }); // Clean up the temporary directory
+				await fsp.rm(tempFilePath, { recursive: true, force: true }); // Clean up the temporary directory
 			}
 		} else {
 			// calculate hash of file
-			hash = await CalculateHashForPath(filePath);
+			const pathData = await getHashAndSizeForPath(filePath);
+			hash = pathData.hash;
+			totalBytes = pathData.totalBytes;
 		}
 	} else {
 		// calculate hash of folder
-		hash = await CalculateHashForPath(filePath);
+		const pathData = await getHashAndSizeForPath(filePath);
+		hash = pathData.hash;
+		totalBytes = pathData.totalBytes;
 	}
 
-	// const hash = await CalculateHashForPath(filePath);
-	return { fileName, displayName, hash, relativePath, timestamp };
+	return {
+		fileData: { fileName, displayName, hash, relativePath, timestamp },
+		totalBytes,
+	};
 }
 
-async function getHashForPath(filePath: string): Promise<string> {
+type PathHashAndSize = {
+	hash: string;
+	totalBytes: number;
+};
+
+async function getHashAndSizeForPath(filePath: string): Promise<PathHashAndSize> {
 	const stats = await fsp.stat(filePath);
 	if (stats.isDirectory()) {
 		// Get all entries in the directory
 		const entries = await fsp.readdir(filePath);
 		const sortedEntries = entries.sort();
 		let combinedHash = '';
+		let totalBytes = 0;
 		for (let entry of sortedEntries) {
 			const fullPath = path.join(filePath, entry);
-			const entryHash = await getHashForPath(fullPath); // Process each entry sequentially
-			combinedHash += entryHash; // Concatenate hashes
+			const entryData = await getHashAndSizeForPath(fullPath); // Process each entry sequentially
+			combinedHash += entryData.hash; // Concatenate hashes
+			totalBytes += entryData.totalBytes;
 		}
-		return crc32(combinedHash).toString(16);
+		return { hash: crc32(combinedHash).toString(16), totalBytes };
 	} else {
 		// It's a file, generate hash as before
 		const fileBuffer = await fsp.readFile(filePath);
-		return crc32(fileBuffer).toString(16);
+		return { hash: crc32(fileBuffer).toString(16), totalBytes: fileBuffer.byteLength };
 	}
 }
 
 
 export async function CalculateHashForPath(filePath: string): Promise<string> {
-	const hash = await getHashForPath(filePath);
+	const { hash } = await getHashAndSizeForPath(filePath);
 	log.info(`HASH CALCULATION: ${filePath} -> ${hash}`)
 
 	return hash;

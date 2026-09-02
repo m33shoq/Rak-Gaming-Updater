@@ -2,6 +2,7 @@ import { defineStore } from 'pinia';
 import log from 'electron-log/renderer';
 import { ref, computed } from 'vue';
 import { IPC_EVENTS } from '@/events';
+import type { FileUploadState } from '@/events';
 
 import {
 	DOWNLOAD_REASON_DOWNLOADING,
@@ -58,8 +59,12 @@ function wasRecentlyDownloaded(file: FileDataInfo): boolean {
 
 export const useUploadedFilesStore = defineStore('UploadedFiles', () => {
 	const files = ref<FileDataInfo[]>([]);
+	const uploads = ref<FileUploadState[]>([]);
+	const completedUploadTimers = new Map<string, ReturnType<typeof setTimeout>>();
+	const mergedUploadIds = new Set<string>();
 
 	const getFiles = computed(() => files.value);
+	const getUploads = computed(() => uploads.value);
 	const getLastPacketTimestamp = computed(() => (file: FileData) => {
 		const fileData = files.value.find((f) => isFilesSame(f, file));
 		return fileData ? fileData.lastPacketTimestamp : undefined;
@@ -80,7 +85,10 @@ export const useUploadedFilesStore = defineStore('UploadedFiles', () => {
 
 
 	const setFiles = async (newFiles: FileData[]) => {
-		files.value = newFiles.map(file => ({
+		const uniqueFiles = newFiles.filter((file, index) => (
+			newFiles.findIndex(candidate => isFilesSame(candidate, file)) === index
+		));
+		files.value = uniqueFiles.map(file => ({
 			...file,
 			lastPacketTimestamp: 0,
 			shouldDownload: false,
@@ -95,6 +103,10 @@ export const useUploadedFilesStore = defineStore('UploadedFiles', () => {
 		}
 	};
 	const addFile = (file: FileData) => {
+		if (files.value.some(existingFile => isFilesSame(existingFile, file))) {
+			log.info('Ignoring duplicate uploaded file:', file.displayName);
+			return;
+		}
 		const fileData: FileDataInfo = {
 			...file,
 			lastPacketTimestamp: 0,
@@ -173,6 +185,47 @@ export const useUploadedFilesStore = defineStore('UploadedFiles', () => {
 		const unreactiveFile = { ...file };
 		ipc.send(IPC_EVENTS.UPDATER_DOWNLOAD_FILE, unreactiveFile);
 	};
+	const updateUploadState = (upload: FileUploadState) => {
+		if (mergedUploadIds.has(upload.id)) return;
+		if (upload.fileData && files.value.some(file => isFilesSame(file, upload.fileData as FileData))) {
+			mergedUploadIds.add(upload.id);
+			setTimeout(() => mergedUploadIds.delete(upload.id), 30_000);
+			dismissUpload(upload.id);
+			return;
+		}
+		const existingIndex = uploads.value.findIndex(item => item.id === upload.id);
+		if (existingIndex === -1) {
+			uploads.value.push(upload);
+		} else {
+			uploads.value[existingIndex] = upload;
+		}
+
+		const existingTimer = completedUploadTimers.get(upload.id);
+		if (existingTimer) {
+			clearTimeout(existingTimer);
+			completedUploadTimers.delete(upload.id);
+		}
+		if (upload.status === 'completed') {
+			completedUploadTimers.set(upload.id, setTimeout(() => {
+				dismissUpload(upload.id);
+			}, 5000));
+		}
+	};
+	const mergePublishedFile = (file: FileData) => {
+		const matchingUpload = uploads.value.find(upload => upload.fileData && isFilesSame(upload.fileData, file));
+		if (matchingUpload) {
+			mergedUploadIds.add(matchingUpload.id);
+			setTimeout(() => mergedUploadIds.delete(matchingUpload.id), 30_000);
+			dismissUpload(matchingUpload.id);
+		}
+		addFile(file);
+	};
+	const dismissUpload = (uploadId: string) => {
+		const timer = completedUploadTimers.get(uploadId);
+		if (timer) clearTimeout(timer);
+		completedUploadTimers.delete(uploadId);
+		uploads.value = uploads.value.filter(upload => upload.id !== uploadId);
+	};
 
 	ipc.on(IPC_EVENTS.SOCKET_CONNECTED_CALLBACK, async () => {
 		fetchFiles();
@@ -203,7 +256,7 @@ export const useUploadedFilesStore = defineStore('UploadedFiles', () => {
 
 	ipc.on(IPC_EVENTS.UPDATER_NEW_FILE_CALLBACK, async (event, fileData: FileData) => {
 		log.info('New file received:', fileData);
-		addFile(fileData);
+		mergePublishedFile(fileData);
 	});
 
 	ipc.on(IPC_EVENTS.UPDATER_FILE_DELETED_CALLBACK, (event, fileData: FileData) => {
@@ -211,10 +264,24 @@ export const useUploadedFilesStore = defineStore('UploadedFiles', () => {
 		deleteFile(fileData);
 	});
 
+	ipc.on(IPC_EVENTS.PUSHER_UPLOAD_STATE_CALLBACK, (event, upload: FileUploadState) => {
+		updateUploadState(upload);
+	});
+	void ipc.invoke(IPC_EVENTS.PUSHER_UPLOADS_STATE_GET).then((currentUploads: FileUploadState[]) => {
+		for (const upload of currentUploads) {
+			if (!uploads.value.some(currentUpload => currentUpload.id === upload.id)) {
+				updateUploadState(upload);
+			}
+		}
+	}).catch((error) => {
+		log.warn('Failed to restore file upload progress', error);
+	});
+
 	return {
 		files,
 
 		getFiles,
+		getUploads,
 		getLastPacketTimestamp,
 		getShouldDownload,
 		getDownloadStatusText,
@@ -227,8 +294,8 @@ export const useUploadedFilesStore = defineStore('UploadedFiles', () => {
 		checkDownLoadStatusForAll,
 		setIsFullyDownloaded,
 		fetchFiles,
-		downloadFile
+		downloadFile,
+		updateUploadState,
+		dismissUpload,
 	};
 })
-
-

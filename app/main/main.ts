@@ -45,7 +45,7 @@ import {
 	DOWNLOAD_REASON_UP_TO_DATE,
 } from '@/constants'
 
-import { IPC_EVENTS, SOCKET_EVENTS } from '@/events';
+import { IPC_EVENTS, SOCKET_EVENTS, type FileUploadState } from '@/events';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -101,6 +101,83 @@ if (isDev) {
 }
 
 const fileManagementService = new FileManagementService(socket);
+
+const fileUploadStates = new Map<string, FileUploadState>();
+const activeFileUploads = new Map<string, FileData>();
+let knownUploadedFiles: FileData[] = [];
+const FILE_UPLOAD_TIMEOUT_MS = 10 * 60_000;
+const FILE_UPLOAD_PROGRESS_INTERVAL_MS = 150;
+const UPLOAD_TEMP_ROOT = path.resolve(TEMP_DIR, 'uploads');
+const FILE_DATA_TEMP_ROOT = path.resolve(TEMP_DIR, 'file-data');
+
+function publishFileUploadState(state: FileUploadState) {
+	fileUploadStates.set(state.id, state);
+	const window = mainWindow;
+	if (!window || window.isDestroyed() || window.webContents.isDestroyed()) return;
+	try {
+		window.webContents.send(IPC_EVENTS.PUSHER_UPLOAD_STATE_CALLBACK, state);
+	} catch (error) {
+		log.warn('Could not publish file upload progress to the renderer:', error);
+	}
+}
+
+function updateFileUploadState(id: string, update: Partial<Omit<FileUploadState, 'id' | 'displayName' | 'relativePath'>>) {
+	const currentState = fileUploadStates.get(id);
+	if (!currentState) return;
+	publishFileUploadState({ ...currentState, ...update });
+}
+
+function getUploadErrorMessage(error: unknown): string {
+	return error instanceof Error ? error.message : String(error);
+}
+
+function isFileDataSame(file1: FileData, file2: FileData): boolean {
+	return file1.fileName === file2.fileName &&
+		file1.displayName === file2.displayName &&
+		file1.hash === file2.hash &&
+		file1.timestamp === file2.timestamp &&
+		file1.relativePath === file2.relativePath;
+}
+
+function deduplicateFileData(files: FileData[]): FileData[] {
+	return files.filter((file, index) => files.findIndex(candidate => isFileDataSame(candidate, file)) === index);
+}
+
+function rememberUploadedFile(fileData: FileData) {
+	if (!knownUploadedFiles.some(file => isFileDataSame(file, fileData))) {
+		knownUploadedFiles.push(fileData);
+	}
+}
+
+async function fetchUploadedFilesData(): Promise<{ files: FileData[] }> {
+	const response = await net.fetch(SERVER_EXISTING_FILES_ENDPOINT, {
+		method: 'GET',
+		headers: {
+			Authorization: `Bearer ${store.get('authToken')}`,
+		},
+	});
+	if (!response.ok) {
+		throw new Error(`Could not check uploaded files: HTTP ${response.status}`);
+	}
+	const data = await response.json() as { files?: FileData[] };
+	knownUploadedFiles = deduplicateFileData(Array.isArray(data.files) ? data.files : []);
+	return { files: knownUploadedFiles };
+}
+
+async function cleanupAbandonedUploadWorkspaces() {
+	const expectedParent = path.resolve(TEMP_DIR);
+	for (const tempRoot of [UPLOAD_TEMP_ROOT, FILE_DATA_TEMP_ROOT]) {
+		if (path.dirname(tempRoot) !== expectedParent) {
+			log.error('Refusing to clean unsafe upload temporary path:', tempRoot);
+			continue;
+		}
+		try {
+			await fsp.rm(tempRoot, { recursive: true, force: true });
+		} catch (error) {
+			log.warn('Could not clean abandoned upload temporary files:', tempRoot, error);
+		}
+	}
+}
 
 const startupLoginItemSettings = app.getLoginItemSettings();
 log.info('Login item settings at startup:', startupLoginItemSettings);
@@ -808,8 +885,9 @@ if (!app.requestSingleInstanceLock()) {
 		}
 	});
 
-	app.whenReady().then(() => {
+	app.whenReady().then(async () => {
 		log.info('App is ready');
+		await cleanupAbandonedUploadWorkspaces();
 		(powerMonitor as any).on('shutdown', (event: Electron.Event) => {
 			log.info('Power monitor reported system shutdown');
 			event.preventDefault();
@@ -998,28 +1076,68 @@ async function onFilePathSelected(folderPath: string) {
 		return;
 	}
 
-	if (folderPath) {
-		const fileData = await GetFileData(folderPath, relativePath);
+	if (!folderPath) {
+		log.info('No path selected');
+		return;
+	}
+
+	const uploadId = crypto.randomUUID();
+	publishFileUploadState({
+		id: uploadId,
+		displayName: path.basename(folderPath),
+		relativePath,
+		status: 'preparing',
+		percent: null,
+		transferred: 0,
+		total: 0,
+	});
+
+	try {
+		const { fileData, totalBytes: sourceSize } = await GetFileData(folderPath, relativePath);
+		await fetchUploadedFilesData();
+		const duplicateIsUploaded = knownUploadedFiles.some(file => isFileDataSame(file, fileData));
+		const duplicateIsUploading = Array.from(activeFileUploads.values()).some(file => isFileDataSame(file, fileData));
+		if (duplicateIsUploaded || duplicateIsUploading) {
+			throw new Error('This exact file and relative-path configuration is already uploaded or uploading.');
+		}
+		activeFileUploads.set(uploadId, fileData);
+		updateFileUploadState(uploadId, { fileData });
 		const stats = await fsp.stat(folderPath);
 
 		if (stats.isDirectory()) {
-			compressAndSend(folderPath, fileData);
+			await compressAndSend(folderPath, fileData, uploadId, sourceSize);
 		} else if (stats.isFile()) {
 			const fileExtension = path.extname(folderPath);
 			log.info('File extension:', fileExtension);
 
-			if (fileExtension === '.zip') {
-				// Send the .zip file directly
-				await sendFile(folderPath, fileData);
+			if (fileExtension.toLowerCase() === '.zip') {
+				await sendFile(folderPath, fileData, uploadId);
 			} else {
-				// normal file
-				compressAndSend(folderPath, fileData);
+				await compressAndSend(folderPath, fileData, uploadId, sourceSize);
 			}
 		}
-	} else {
-		log.info('No path selected');
+
+		updateFileUploadState(uploadId, {
+			status: 'completed',
+			percent: 100,
+			transferred: fileUploadStates.get(uploadId)?.total ?? 0,
+		});
+		setTimeout(() => fileUploadStates.delete(uploadId), 30_000);
+	} catch (error) {
+		const errorMessage = getUploadErrorMessage(error);
+		log.error('Could not prepare or upload file:', folderPath, error);
+		updateFileUploadState(uploadId, {
+			status: 'error',
+			percent: fileUploadStates.get(uploadId)?.percent ?? 0,
+			error: errorMessage,
+		});
+		setTimeout(() => fileUploadStates.delete(uploadId), 5 * 60_000);
+	} finally {
+		activeFileUploads.delete(uploadId);
 	}
 }
+
+ipcMain.handle(IPC_EVENTS.PUSHER_UPLOADS_STATE_GET, () => Array.from(fileUploadStates.values()));
 
 ipcMain.handle(IPC_EVENTS.LOGIN_CHECK, async () => {
 	const token = store.get('authToken');
@@ -1220,14 +1338,7 @@ ipcMain.handle(IPC_EVENTS.UPDATER_SHOULD_DOWNLOAD_FILE, (event, serverFile) => {
 });
 
 ipcMain.handle(IPC_EVENTS.UPDATER_FETCH_FILES_LIST, async (event) => {
-	return await net
-		.fetch(SERVER_EXISTING_FILES_ENDPOINT, {
-			method: 'GET',
-			headers: {
-				Authorization: `Bearer ${store.get('authToken')}`,
-			},
-		})
-		.then((response) => response.json())
+	return await fetchUploadedFilesData()
 		.catch((error) => console.error('Error fetching files data:', error));
 });
 
@@ -1323,6 +1434,7 @@ socket.on(SOCKET_EVENTS.SOCKET_DISCONNECTED, (reason, details) => {
 
 socket.on(SOCKET_EVENTS.UPDATER_NEW_FILE, (fileData) => {
 	log.info('New file:', fileData);
+	rememberUploadedFile(fileData);
 	mainWindow?.webContents.send(IPC_EVENTS.UPDATER_NEW_FILE_CALLBACK, fileData);
 });
 
@@ -1332,6 +1444,7 @@ socket.on(SOCKET_EVENTS.UPDATER_FILE_NOT_FOUND, (fileData) => {
 
 socket.on(SOCKET_EVENTS.UPDATER_FILE_DELETED, (fileData) => {
 	log.info('File deleted:', fileData);
+	knownUploadedFiles = knownUploadedFiles.filter(file => !isFileDataSame(file, fileData));
 	mainWindow?.webContents.send(IPC_EVENTS.UPDATER_FILE_DELETED_CALLBACK, fileData);
 });
 
@@ -1391,7 +1504,7 @@ ipcMain.on(IPC_EVENTS.PUSHER_OPEN_FOLDER_DIALOG, async () => {
 		properties: ['openDirectory'],
 	});
 	if (!canceled && filePaths.length > 0) {
-		onFilePathSelected(filePaths[0]);
+		void onFilePathSelected(filePaths[0]);
 	}
 });
 
@@ -1401,7 +1514,7 @@ ipcMain.on(IPC_EVENTS.PUSHER_OPEN_FILE_DIALOG, async () => {
 		properties: ['openFile'],
 	});
 	if (!canceled && filePaths.length > 0) {
-		onFilePathSelected(filePaths[0]);
+		void onFilePathSelected(filePaths[0]);
 	}
 });
 
@@ -1443,37 +1556,67 @@ async function shouldDownloadFile(serverFile: FileData): Promise<[boolean, strin
 	}
 }
 
-async function compressAndSend(folderPath: string, fileData: FileData) {
+async function compressAndSend(folderPath: string, fileData: FileData, uploadId: string, sourceSize: number) {
 	log.info('Compressing and sending file:', folderPath, 'with data:', fileData);
 	const baseName = path.basename(folderPath);
-	const outputPath = path.join(TEMP_DIR, baseName + '.zip');
+	const uploadTempDirectory = path.resolve(UPLOAD_TEMP_ROOT, uploadId);
+	if (path.dirname(uploadTempDirectory) !== UPLOAD_TEMP_ROOT) {
+		throw new Error('Could not create a safe temporary directory for the upload.');
+	}
+	const outputPath = path.join(uploadTempDirectory, baseName + '.zip');
 
-	log.info('Creating output directory if it does not exist:', path.dirname(outputPath));
-	await fsp.mkdir(path.dirname(outputPath), { recursive: true });
+	log.info('Creating output directory if it does not exist:', uploadTempDirectory);
+	await fsp.mkdir(uploadTempDirectory, { recursive: true });
 
 	try {
 		log.info('Compressing:', folderPath, 'to:', outputPath);
-		await zipFile(folderPath, outputPath);
+		updateFileUploadState(uploadId, {
+			status: 'compressing',
+			percent: null,
+			transferred: 0,
+			total: 0,
+		});
+		let lastProgressNotificationAt = 0;
+		await zipFile(folderPath, outputPath, ({ processedBytes }) => {
+			const now = Date.now();
+			const transferred = Math.min(processedBytes, sourceSize);
+			const percent = sourceSize > 0 ? Math.min(100, transferred / sourceSize * 100) : null;
+			if (percent !== 100 && now - lastProgressNotificationAt < FILE_UPLOAD_PROGRESS_INTERVAL_MS) return;
+			lastProgressNotificationAt = now;
+			updateFileUploadState(uploadId, {
+				status: 'compressing',
+				percent,
+				transferred,
+				total: sourceSize,
+			});
+		});
 		log.info('File compressed and saved:', outputPath);
 		// Send the file
-		await sendFile(outputPath, fileData);
-	} catch (error: any) {
+		await sendFile(outputPath, fileData, uploadId);
+	} catch (error: unknown) {
 		log.error('Error compressing and sending file:', error);
-		return;
+		throw error;
 	} finally {
-		// Clean up the zip file after sending
-		await fsp.rm(outputPath, { recursive: true });
+		// Clean up only this upload's isolated temporary workspace.
+		await fsp.rm(uploadTempDirectory, { recursive: true, force: true });
 	}
 }
 
-async function sendFile(filePath: string, fileData: FileData) {
+async function sendFile(filePath: string, fileData: FileData, uploadId: string) {
 	log.info('Sending file:', filePath, fileData);
 	const fileBuffer = await fsp.readFile(filePath);
-
-	const payload = {
+	const payload = Buffer.from(JSON.stringify({
 		fileData,
 		file: fileBuffer.toString('base64'),
-	};
+	}));
+	const totalBytes = payload.byteLength;
+	updateFileUploadState(uploadId, {
+		status: 'uploading',
+		percent: 0,
+		transferred: 0,
+		total: totalBytes,
+		error: undefined,
+	});
 
 	log.info('SERVER_UPLOADS_ENDPOINT:', SERVER_UPLOADS_ENDPOINT);
 
@@ -1486,16 +1629,92 @@ async function sendFile(filePath: string, fileData: FileData) {
 		},
 	});
 
-	req.on('response', (response) => {
-		log.info('Upload response status:', response.statusCode);
-		response.on('data', (data) => {
-			log.info('Upload response data:', data.toString());
-		});
-	});
+	await new Promise<void>((resolve, reject) => {
+		let settled = false;
+		let responseStarted = false;
+		let lastTransferred = -1;
+		let progressTimer: ReturnType<typeof setInterval> | null = null;
+		let uploadTimeout: ReturnType<typeof setTimeout> | null = null;
+		const stopProgressTimer = () => {
+			if (!progressTimer) return;
+			clearInterval(progressTimer);
+			progressTimer = null;
+		};
+		const stopTimers = () => {
+			stopProgressTimer();
+			if (uploadTimeout) clearTimeout(uploadTimeout);
+			uploadTimeout = null;
+		};
+		const finish = (error?: Error) => {
+			if (settled) return;
+			settled = true;
+			stopTimers();
+			if (error) reject(error);
+			else resolve();
+		};
+		progressTimer = setInterval(() => {
+			try {
+				const progress = req.getUploadProgress();
+				if (!progress.started || progress.current === lastTransferred) return;
+				lastTransferred = progress.current;
+				const transferred = Math.min(totalBytes, progress.current);
+				updateFileUploadState(uploadId, {
+					status: transferred >= totalBytes ? 'processing' : 'uploading',
+					percent: totalBytes > 0 ? transferred / totalBytes * 100 : null,
+					transferred,
+					total: totalBytes,
+				});
+			} catch {
+				// The request can close between interval ticks.
+			}
+		}, FILE_UPLOAD_PROGRESS_INTERVAL_MS);
+		uploadTimeout = setTimeout(() => {
+			finish(new Error('Upload timed out after 10 minutes.'));
+			req.abort();
+		}, FILE_UPLOAD_TIMEOUT_MS);
 
-	// Write the JSON payload and end the request
-	req.write(JSON.stringify(payload));
-	req.end();
+		req.once('error', finish);
+		req.once('abort', () => finish(new Error('Upload was aborted.')));
+		req.once('close', () => {
+			if (!settled) {
+				finish(new Error(responseStarted
+					? 'Upload response closed before it completed.'
+					: 'Upload connection closed before a response was received.'));
+			}
+		});
+		req.once('response', (response) => {
+			responseStarted = true;
+			stopProgressTimer();
+			updateFileUploadState(uploadId, {
+				status: 'processing',
+				percent: 100,
+				transferred: totalBytes,
+				total: totalBytes,
+			});
+
+			const responseChunks: Buffer[] = [];
+			response.on('data', (data: Buffer) => responseChunks.push(data));
+			response.once('error', finish);
+			response.once('aborted', () => finish(new Error('Upload response was aborted.')));
+			response.once('end', () => {
+				if (settled) return;
+				const responseBody = Buffer.concat(responseChunks).toString();
+				log.info('Upload response status:', response.statusCode);
+				log.info('Upload response data:', responseBody);
+				if (!response.statusCode || response.statusCode < 200 || response.statusCode >= 300) {
+					finish(new Error(responseBody || `Upload failed with HTTP ${response.statusCode || 'unknown status'}`));
+					return;
+				}
+				finish();
+			});
+		});
+
+		try {
+			req.end(payload);
+		} catch (error) {
+			finish(error instanceof Error ? error : new Error(String(error)));
+		}
+	});
 	log.info('File sent successfully:', filePath);
 }
 

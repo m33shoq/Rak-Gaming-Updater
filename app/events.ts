@@ -28,6 +28,18 @@ export type AppUpdateDownloadState = {
 	backupProgress?: BackupProgress;
 };
 
+export type FileUploadState = {
+	id: string;
+	displayName: string;
+	relativePath: string;
+	fileData?: FileData;
+	status: 'preparing' | 'compressing' | 'uploading' | 'processing' | 'completed' | 'error';
+	percent: number | null;
+	transferred: number;
+	total: number;
+	error?: string;
+};
+
 // IPC Events
 export const IPC_EVENTS = {
 	APP_GET_LANGUAGE: 'get-language',
@@ -67,6 +79,8 @@ export const IPC_EVENTS = {
 	PUSHER_OPEN_FOLDER_DIALOG: 'open-file-dialog-folder',
 	PUSHER_SELECT_RELATIVE_PATH: 'select-relative-path',
 	PUSHER_FILE_DELETE: 'delete-file',
+	PUSHER_UPLOADS_STATE_GET: 'pusher-uploads-state-get',
+	PUSHER_UPLOAD_STATE_CALLBACK: 'pusher-upload-state',
 
 
 	BACKUPS_SELECT_BACKUP_FOLDER: 'select-backups-path',
