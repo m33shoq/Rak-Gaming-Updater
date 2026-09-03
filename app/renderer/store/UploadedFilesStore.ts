@@ -3,6 +3,7 @@ import log from 'electron-log/renderer';
 import { ref, computed } from 'vue';
 import { IPC_EVENTS } from '@/events';
 import type { FileUploadState } from '@/events';
+import { isSameFile } from '@/fileDataIdentity';
 
 import {
 	DOWNLOAD_REASON_DOWNLOADING,
@@ -35,10 +36,6 @@ interface FileDataInfo extends FileData {
 
 // const dummyFileDataArray = [dummyFileData, dummyFileData, dummyFileData, dummyFileData, dummyFileData, dummyFileData, dummyFileData, dummyFileData]
 
-function isFilesSame(file1: FileData, file2: FileData): boolean {
-	return file1.fileName === file2.fileName && file1.displayName === file2.displayName && file1.hash === file2.hash && file1.timestamp === file2.timestamp && file1.relativePath === file2.relativePath;
-}
-
 function isWithin10Seconds(timestamp?: number): boolean {
 	if (!timestamp) return false; // If timestamp is undefined or null, return false
 	const now = Date.now();
@@ -66,11 +63,11 @@ export const useUploadedFilesStore = defineStore('UploadedFiles', () => {
 	const getFiles = computed(() => files.value);
 	const getUploads = computed(() => uploads.value);
 	const getLastPacketTimestamp = computed(() => (file: FileData) => {
-		const fileData = files.value.find((f) => isFilesSame(f, file));
+		const fileData = files.value.find((f) => isSameFile(f, file));
 		return fileData ? fileData.lastPacketTimestamp : undefined;
 	});
 	const getShouldDownload = computed(() => (file: FileData) => {
-		const fileData = files.value.find((f) => isFilesSame(f, file));
+		const fileData = files.value.find((f) => isSameFile(f, file));
 		if (!fileData) return false;
 		if (isUnzipping(fileData)) return false;
 		if (wasRecentlyDownloaded(fileData)) return false;
@@ -86,7 +83,7 @@ export const useUploadedFilesStore = defineStore('UploadedFiles', () => {
 
 	const setFiles = async (newFiles: FileData[]) => {
 		const uniqueFiles = newFiles.filter((file, index) => (
-			newFiles.findIndex(candidate => isFilesSame(candidate, file)) === index
+			newFiles.findIndex(candidate => isSameFile(candidate, file)) === index
 		));
 		files.value = uniqueFiles.map(file => ({
 			...file,
@@ -103,7 +100,7 @@ export const useUploadedFilesStore = defineStore('UploadedFiles', () => {
 		}
 	};
 	const addFile = (file: FileData) => {
-		if (files.value.some(existingFile => isFilesSame(existingFile, file))) {
+		if (files.value.some(existingFile => isSameFile(existingFile, file))) {
 			log.info('Ignoring duplicate uploaded file:', file.displayName);
 			return;
 		}
@@ -121,10 +118,10 @@ export const useUploadedFilesStore = defineStore('UploadedFiles', () => {
 		});
 	};
 	const deleteFile = (file: FileData) => {
-		files.value = files.value.filter((f) => !isFilesSame(f, file));
+		files.value = files.value.filter((f) => !isSameFile(f, file));
 	};
 	const updateLastPacketInfo = (file: FileData, percent: number, timestamp: number) => {
-		const foundFile = files.value.find(f => isFilesSame(f, file));
+		const foundFile = files.value.find(f => isSameFile(f, file));
 		if (foundFile) {
 			foundFile.lastPacketTimestamp = timestamp;
 			foundFile.percentDownloaded = percent;
@@ -132,7 +129,7 @@ export const useUploadedFilesStore = defineStore('UploadedFiles', () => {
 	};
 	const checkDownloadStatus = async (file: FileData) => {
 		log.info('Checking download status for file:', file.displayName);
-		const foundFile = files.value.find(f => isFilesSame(f, file));
+		const foundFile = files.value.find(f => isSameFile(f, file));
 		if (!foundFile) return;
 
 		foundFile.shouldDownload = false;
@@ -160,7 +157,7 @@ export const useUploadedFilesStore = defineStore('UploadedFiles', () => {
 		log.info('Download status check completed.');
 	};
 	const setIsFullyDownloaded = (file: FileData, isFullyDownloaded: boolean) => {
-		const foundFile = files.value.find(f => isFilesSame(f, file));
+		const foundFile = files.value.find(f => isSameFile(f, file));
 		if (foundFile) {
 			foundFile.isFullyDownloaded = isFullyDownloaded;
 			if (isFullyDownloaded) {
@@ -187,7 +184,7 @@ export const useUploadedFilesStore = defineStore('UploadedFiles', () => {
 	};
 	const updateUploadState = (upload: FileUploadState) => {
 		if (mergedUploadIds.has(upload.id)) return;
-		if (upload.fileData && files.value.some(file => isFilesSame(file, upload.fileData as FileData))) {
+		if (upload.fileData && files.value.some(file => isSameFile(file, upload.fileData as FileData))) {
 			mergedUploadIds.add(upload.id);
 			setTimeout(() => mergedUploadIds.delete(upload.id), 30_000);
 			dismissUpload(upload.id);
@@ -212,7 +209,7 @@ export const useUploadedFilesStore = defineStore('UploadedFiles', () => {
 		}
 	};
 	const mergePublishedFile = (file: FileData) => {
-		const matchingUpload = uploads.value.find(upload => upload.fileData && isFilesSame(upload.fileData, file));
+		const matchingUpload = uploads.value.find(upload => upload.fileData && isSameFile(upload.fileData, file));
 		if (matchingUpload) {
 			mergedUploadIds.add(matchingUpload.id);
 			setTimeout(() => mergedUploadIds.delete(matchingUpload.id), 30_000);
@@ -236,7 +233,7 @@ export const useUploadedFilesStore = defineStore('UploadedFiles', () => {
 	});
 
 	ipc.on(IPC_EVENTS.UPDATER_FILE_ERROR_CALLBACK, (event, fileData: FileData, errorCode: number) => {
-		const foundFile = files.value.find(f => isFilesSame(f, fileData));
+		const foundFile = files.value.find(f => isSameFile(f, fileData));
 		if (foundFile) {
 			foundFile.downloadError = `${errorCode}`;
 			foundFile.shouldDownload = false;

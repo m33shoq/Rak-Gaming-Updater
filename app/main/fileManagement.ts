@@ -1,4 +1,4 @@
-import { app, net } from 'electron';
+import { net } from 'electron';
 import fs from 'fs';
 import path from 'path';
 import fsp from 'fs/promises';
@@ -10,13 +10,7 @@ import { zipFile, unzipFile } from './zipHandler';
 import { nanoid } from 'nanoid';
 import { SOCKET_EVENTS, IPC_EVENTS } from '../events';
 
-import {
-	SERVER_URL,
-	SERVER_LOGIN_ENDPOINT,
-	SERVER_UPLOADS_ENDPOINT,
-	SERVER_EXISTING_FILES_ENDPOINT,
-	SERVER_DOWNLOAD_ENDPOINT
-} from './serverEndpoints';
+import { SERVER_DOWNLOAD_ENDPOINT } from './serverEndpoints';
 import type { Socket } from 'socket.io-client';
 
 export async function InstallFile(fileData: FileData, zipPath: string) {
