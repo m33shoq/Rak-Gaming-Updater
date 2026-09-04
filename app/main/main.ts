@@ -92,6 +92,17 @@ function persistWindowSettingsDebounced(win: BrowserWindow, delayMs = 250) {
 const socket = Socket(SERVER_URL, { autoConnect: false });
 const backupService = new BackupService(() => isQuiting || isSystemShutdown);
 
+function notifyRenderersWclReady(connectionID?: string) {
+	// Ignore a late credential callback belonging to a socket that has already
+	// disconnected or reconnected with a different identity.
+	if (!connectionID || !socket.connected || socket.id !== connectionID) return;
+	BrowserWindow.getAllWindows().forEach(window => {
+		if (!window.isDestroyed() && !window.webContents.isDestroyed()) {
+			window.webContents.send(IPC_EVENTS.SOCKET_WCL_READY_CALLBACK);
+		}
+	});
+}
+
 const isDev = process.env.npm_lifecycle_event === 'app:dev' ? true : false;
 if (isDev) {
 	// store.delete('authToken'); // Clear auth token on startup for testing
@@ -1230,6 +1241,7 @@ ipcMain.on(IPC_EVENTS.UPDATER_DOWNLOAD_FILE, async (event, fileData) => {
 });
 
 socket.on(SOCKET_EVENTS.SOCKET_CONNECTED, () => {
+	const connectionID = socket.id;
 	void appUpdateService.checkForUpdates('server connection');
 	log.info('Connected to server');
 	BrowserWindow.getAllWindows().forEach(window => {
@@ -1265,7 +1277,10 @@ socket.on(SOCKET_EVENTS.SOCKET_CONNECTED, () => {
 			} else {
 				log.info('Error sending WCL refresh token:', response.error);
 			}
+			notifyRenderersWclReady(connectionID);
 		});
+	} else {
+		notifyRenderersWclReady(connectionID);
 	}
 });
 

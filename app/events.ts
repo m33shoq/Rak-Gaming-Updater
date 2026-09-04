@@ -63,6 +63,7 @@ export const IPC_EVENTS = {
 
 	SOCKET_INITIATE_CONNECT: 'connect',
 	SOCKET_CONNECTED_CALLBACK: 'connected',
+	SOCKET_WCL_READY_CALLBACK: 'socket-wcl-ready',
 	SOCKET_SERVER_STATUS_CALLBACK: 'server-status',
 	SOCKET_CONNECT_ERROR_CALLBACK: 'connect-error',
 	SOCKET_DISCONNECTED_CALLBACK: 'disconnect',

@@ -817,10 +817,11 @@ export const useReviewsStore = defineStore('Reviews', () => {
 		}
 	});
 
-	ipc.on(IPC_EVENTS.SOCKET_CONNECTED_CALLBACK, () => {
-		// A reconnect can mean the server was deployed with a new cooldown catalog
-		// or encounter-alert registry. Keep current data visible, but make entries stale so
-		// active comparison pulls and the selected pull refresh immediately.
+	ipc.on(IPC_EVENTS.SOCKET_WCL_READY_CALLBACK, () => {
+		// A reconnect can mean the server was deployed with a new cooldown catalog,
+		// encounter-alert registry, or boss-cast enrichment. Wait until this socket's
+		// WCL credentials are restored before invalidating and refreshing; otherwise
+		// the first request can fail and leave the old visible fallback in place.
 		const invalidatedAt = Date.now();
 		fightCooldownInvalidatedAt = invalidatedAt;
 		fightBossCastInvalidatedAt = invalidatedAt;
@@ -848,6 +849,7 @@ export const useReviewsStore = defineStore('Reviews', () => {
 
 		void ensureFightEvents(reportCode, fightID, true, getSelectedFight.value?.encounterID);
 		void ensureFightCooldowns(reportCode, fightID, true);
+		void ensureFightBossCasts(reportCode, fightID, true, getSelectedFight.value?.encounterID);
 	});
 
 	ipc.on(IPC_EVENTS.TIMELINE_WINDOW_ACTION, (_event, action: ReviewTimelineWindowAction) => {
