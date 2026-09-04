@@ -40,6 +40,10 @@ export type FileUploadState = {
 	error?: string;
 };
 
+export type ServerStatus = {
+	serverRevision: string;
+};
+
 // IPC Events
 export const IPC_EVENTS = {
 	APP_GET_LANGUAGE: 'get-language',
@@ -59,6 +63,7 @@ export const IPC_EVENTS = {
 
 	SOCKET_INITIATE_CONNECT: 'connect',
 	SOCKET_CONNECTED_CALLBACK: 'connected',
+	SOCKET_SERVER_STATUS_CALLBACK: 'server-status',
 	SOCKET_CONNECT_ERROR_CALLBACK: 'connect-error',
 	SOCKET_DISCONNECTED_CALLBACK: 'disconnect',
 	SOCKET_NOT_ENOUGH_PERMISSIONS_CALLBACK: 'not-enough-permissions',
@@ -157,6 +162,7 @@ export const SOCKET_EVENTS = {
 	ERROR: 'error',
 	NOT_ENOUGH_PERMISSIONS: 'not-enough-permissions',
 	SERVER_SHUTDOWN: 'server-shutdown',
+	SERVER_STATUS: 'server-status',
 
 	STATUS_CONNECTED_CLIENTS: 'connected-clients',
 	STATUS_REQUEST_LOGS: 'request-client-log',

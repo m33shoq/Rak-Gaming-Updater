@@ -180,10 +180,18 @@ useIpcOn(IPC_EVENTS.APP_DEEP_LINK_CALLBACK, (event, payload: AppDeepLinkPayload)
 				<component :is="tab.component" v-if="selectedTab === tab.name" />
 			</template>
 		</div>
-		<footer class="text-center p-1 bottom-0 flex justify-between w-full text-sm text-neutral-500 font-medium
-		dark:bg-dark1
-		bg-light1">
-			<p>{{ loginStore.isConnected ? `Logged as: ${loginStore.getUsername} ${loginStore.getRole || ''}` : '' }}</p>
+		<footer
+			class="bottom-0 flex w-full justify-between p-1 text-center text-sm font-medium"
+			:class="loginStore.isConnected && loginStore.getServerRevision === 'dev'
+				? 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300'
+				: 'bg-light1 text-neutral-500 dark:bg-dark1'"
+		>
+			<p>
+				<template v-if="loginStore.isConnected">
+					Logged as: {{ loginStore.getUsername }} {{ loginStore.getRole || '' }}
+					<template v-if="loginStore.getServerRevision"> · Server: {{ loginStore.getServerRevision }}</template>
+				</template>
+			</p>
 			<p>Rak Gaming Updater {{ appVersionInfo.version }}-{{ appVersionInfo.releaseType }} by m33shoq</p>
 		</footer>
 	</div>

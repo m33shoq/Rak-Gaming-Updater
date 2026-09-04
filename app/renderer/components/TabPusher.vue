@@ -134,7 +134,8 @@ function isIndeterminate(upload: FileUploadState) {
 								{{ upload.error }}
 							</span>
 							<span v-else-if="upload.total > 0" class="font-mono text-xs font-normal text-zinc-400 tabular-nums">
-								{{ formatBytes(upload.transferred) }} / {{ formatBytes(upload.total) }}
+								<template v-if="upload.percent === null">{{ formatBytes(upload.total) }}</template>
+								<template v-else>{{ formatBytes(upload.transferred) }} / {{ formatBytes(upload.total) }}</template>
 							</span>
 						</div>
 						<UIButton

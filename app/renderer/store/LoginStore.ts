@@ -1,13 +1,14 @@
 import log from 'electron-log/renderer'
 import { defineStore } from 'pinia';
 import { ref, computed } from 'vue';
-import { IPC_EVENTS } from '@/events';
+import { IPC_EVENTS, type ServerStatus } from '@/events';
 
 export const useLoginStore = defineStore('Login', () =>{
 	const state = ref({
 		isSocketConnected: false as boolean,
 		username: '' as string,
 		role: '' as string,
+		serverRevision: null as string | null,
 		disconnectReason: '' as string,
 		connectionError: '' as string,
 		connectionErrorAt: 0 as number,
@@ -16,6 +17,7 @@ export const useLoginStore = defineStore('Login', () =>{
 	const isConnected = computed(() => state.value.isSocketConnected);
 	const getUsername = computed(() => state.value.username);
 	const getRole = computed(() => state.value.role);
+	const getServerRevision = computed(() => state.value.serverRevision);
 	const getDisconnectReason = computed(() => state.value.disconnectReason);
 	const getConnectionError = computed(() => state.value.connectionError);
 	const isAdmin = computed(() => state.value.isSocketConnected && state.value.role === 'admin');
@@ -57,9 +59,14 @@ export const useLoginStore = defineStore('Login', () =>{
 		setDisconnectReason('');
 	});
 
+	ipc.on(IPC_EVENTS.SOCKET_SERVER_STATUS_CALLBACK, (_event, serverStatus: ServerStatus) => {
+		state.value.serverRevision = serverStatus.serverRevision;
+	});
+
 	ipc.on(IPC_EVENTS.SOCKET_DISCONNECTED_CALLBACK, (event, reason) => {
 		log.info('Socket disconnected:', reason);
 		setConnected(false);
+		state.value.serverRevision = null;
 		setDisconnectReason(reason.description);
 	});
 
@@ -80,6 +87,7 @@ export const useLoginStore = defineStore('Login', () =>{
 		isConnected,
 		getUsername,
 		getRole,
+		getServerRevision,
 		getDisconnectReason,
 		getConnectionError,
 		isAdmin,

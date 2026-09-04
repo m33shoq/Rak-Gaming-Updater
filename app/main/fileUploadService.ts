@@ -15,6 +15,7 @@ const FILE_UPLOAD_CONFIRMATION_INTERVAL_MS = 2_000;
 const FILE_UPLOAD_PROGRESS_INTERVAL_MS = 150;
 const AMBIGUOUS_UPLOAD_RESPONSE_STATUS_CODES = new Set([502, 503, 504]);
 const UPLOAD_PUBLICATION_FAILED_CODE = 'UPLOAD_PUBLICATION_FAILED';
+const FILE_UPLOAD_METADATA_HEADER_NAME = 'x-rg-file-upload-metadata';
 
 type FileUploadServiceOptions = {
 	getAuthToken: () => unknown;
@@ -290,15 +291,11 @@ export default class FileUploadService {
 
 	private async sendFile(filePath: string, fileData: FileData, uploadId: string): Promise<void> {
 		log.info('Sending file:', filePath, fileData);
-		const fileBuffer = await fsp.readFile(filePath);
-		const payload = Buffer.from(JSON.stringify({
-			fileData,
-			file: fileBuffer.toString('base64'),
-		}));
+		const payload = await fsp.readFile(filePath);
 		const totalBytes = payload.byteLength;
 		this.updateFileUploadState(uploadId, {
 			status: 'uploading',
-			percent: 0,
+			percent: null,
 			transferred: 0,
 			total: totalBytes,
 			error: undefined,
@@ -310,17 +307,14 @@ export default class FileUploadService {
 			url: SERVER_UPLOADS_ENDPOINT,
 			method: 'POST',
 			headers: {
-				'Content-Type': 'application/json',
-				Authorization: `Bearer ${this.options.getAuthToken()}`,
+				'content-type': 'application/octet-stream',
+				[FILE_UPLOAD_METADATA_HEADER_NAME]: encodeURIComponent(JSON.stringify(fileData)),
+				'authorization': `Bearer ${this.options.getAuthToken()}`,
 			},
 		});
-		// Electron recommends chunked encoding for large request bodies so Chromium
-		// streams the payload instead of buffering the entire upload internally.
-		request.chunkedEncoding = true;
 
 		await new Promise<void>((resolve, reject) => {
 			let settled = false;
-			let responseStarted = false;
 			let confirmationStarted = false;
 			let requestBodySubmitted = false;
 			let lastTransferred = -1;
@@ -368,6 +362,7 @@ export default class FileUploadService {
 
 				void this.waitForUploadedFileConfirmation(fileData)
 					.then((confirmedFile) => {
+						if (settled) return;
 						if (!confirmedFile) {
 							finish(connectionError);
 							return;
@@ -407,15 +402,9 @@ export default class FileUploadService {
 				finish(error);
 			});
 			request.once('abort', () => finish(new Error('Upload was aborted.')));
-			request.once('close', () => {
-				if (!settled) {
-					finishAfterServerConfirmation(new Error(responseStarted
-						? 'Upload response closed before it completed.'
-						: 'Upload connection closed before a response was received.'));
-				}
-			});
+			// Electron can emit request `close` while Chromium is still uploading and before a delayed response arrives.
+			// Explicit request/response errors and the timeout determine failure instead.
 			request.once('response', (response) => {
-				responseStarted = true;
 				stopProgressTimer();
 				this.updateFileUploadState(uploadId, {
 					status: 'processing',
@@ -449,9 +438,8 @@ export default class FileUploadService {
 			});
 
 			try {
-				request.write(payload);
+				request.end(payload);
 				requestBodySubmitted = true;
-				request.end();
 			} catch (error) {
 				const requestError = error instanceof Error ? error : new Error(String(error));
 				if (requestBodySubmitted) {

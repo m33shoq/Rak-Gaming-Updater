@@ -1269,6 +1269,25 @@ socket.on(SOCKET_EVENTS.SOCKET_CONNECTED, () => {
 	}
 });
 
+socket.on(SOCKET_EVENTS.SERVER_STATUS, (serverStatus: unknown) => {
+	const serverRevision = typeof serverStatus === 'object'
+		&& serverStatus !== null
+		&& 'serverRevision' in serverStatus
+		&& typeof serverStatus.serverRevision === 'string'
+		? serverStatus.serverRevision
+		: null;
+	if (!serverRevision || !/^(?:dev|unknown|[0-9a-f]{7,40})$/i.test(serverRevision)) {
+		log.warn('Received invalid server status:', serverStatus);
+		return;
+	}
+
+	BrowserWindow.getAllWindows().forEach(window => {
+		if (!window.isDestroyed() && !window.webContents.isDestroyed()) {
+			window.webContents.send(IPC_EVENTS.SOCKET_SERVER_STATUS_CALLBACK, { serverRevision });
+		}
+	});
+});
+
 socket.on('connect_error', async (error: Error) => {
 	// change xhr poll error with server is not avaliable
 	if (error.message.includes('xhr poll error')) {
