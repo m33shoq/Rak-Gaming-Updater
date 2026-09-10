@@ -146,11 +146,6 @@ declare type fightEvent = {
 	};
 }
 
-declare type reviewFightEventsResponse = {
-	fightEvents?: fightEvent[];
-	error?: string;
-}
-
 declare type reviewPhaseMarker = {
 	name: string | number;
 	percent: number;
@@ -227,13 +222,6 @@ declare type reviewFightCooldownData = {
 	catalogVersion: number;
 	cooldownGroups: reviewCooldownGroup[];
 	fightCooldownEvents: reviewCooldownEvent[];
-}
-
-declare type reviewFightCooldownResponse = {
-	catalogVersion?: number;
-	cooldownGroups?: reviewCooldownGroup[];
-	fightCooldownEvents?: reviewCooldownEvent[];
-	error?: string;
 }
 
 declare type reviewBossCastEvent = {
@@ -341,11 +329,6 @@ declare type reviewFightBossCastData = {
 	bossCastEvents: reviewBossCastEvent[];
 	interruptsComplete?: boolean;
 	targetDetailsComplete?: boolean;
-}
-
-declare type reviewFightBossCastResponse = {
-	bossCastData?: reviewFightBossCastData;
-	error?: string;
 }
 
 declare type RgIpcRendererEvent = Readonly<Record<string, never>>;

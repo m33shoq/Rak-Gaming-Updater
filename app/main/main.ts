@@ -23,6 +23,10 @@ import ObsWebsocketService, { type ObsSettings as ObsServiceSettings } from '@/m
 import { registerRendererStoreSync } from '@/main/rendererStoreSync';
 import TimelineWindowController from '@/main/timelineWindowController';
 import FileUploadService from '@/main/fileUploadService';
+import WclRequestTransport, {
+	normalizeWclFightRequest,
+	normalizeWclReportCode,
+} from '@/main/wclRequestTransport';
 
 
 // @ts-ignore
@@ -90,12 +94,19 @@ function persistWindowSettingsDebounced(win: BrowserWindow, delayMs = 250) {
 }
 
 const socket = Socket(SERVER_URL, { autoConnect: false });
+let isWclSocketReady = false;
+const wclRequestTransport = new WclRequestTransport(
+	socket,
+	() => isWclSocketReady,
+	log,
+);
 const backupService = new BackupService(() => isQuiting || isSystemShutdown);
 
 function notifyRenderersWclReady(connectionID?: string) {
 	// Ignore a late credential callback belonging to a socket that has already
 	// disconnected or reconnected with a different identity.
 	if (!connectionID || !socket.connected || socket.id !== connectionID) return;
+	isWclSocketReady = true;
 	BrowserWindow.getAllWindows().forEach(window => {
 		if (!window.isDestroyed() && !window.webContents.isDestroyed()) {
 			window.webContents.send(IPC_EVENTS.SOCKET_WCL_READY_CALLBACK);
@@ -1241,6 +1252,7 @@ ipcMain.on(IPC_EVENTS.UPDATER_DOWNLOAD_FILE, async (event, fileData) => {
 });
 
 socket.on(SOCKET_EVENTS.SOCKET_CONNECTED, () => {
+	isWclSocketReady = false;
 	const connectionID = socket.id;
 	void appUpdateService.checkForUpdates('server connection');
 	log.info('Connected to server');
@@ -1271,17 +1283,21 @@ socket.on(SOCKET_EVENTS.SOCKET_CONNECTED, () => {
 
 	const WCL_REFRESH_TOKEN = store.get('WCL_REFRESH_TOKEN');
 	if (WCL_REFRESH_TOKEN) {
-		socket.emit(SOCKET_EVENTS.WCL_REQUEST_TOKEN_REFRESH, { WCL_REFRESH_TOKEN }, (response: { success: boolean; error?: string }) => {
-			if (response.success) {
+		void wclRequestTransport.requestTokenRefresh(WCL_REFRESH_TOKEN).then(response => {
+			if (response.success === true) {
 				log.info('WCL refresh token sent successfully');
 			} else {
-				log.info('Error sending WCL refresh token:', response.error);
+				log.info('Error sending WCL refresh token:', 'error' in response ? response.error : 'Unknown error');
 			}
 			notifyRenderersWclReady(connectionID);
 		});
 	} else {
 		notifyRenderersWclReady(connectionID);
 	}
+});
+
+socket.on(SOCKET_EVENTS.SOCKET_DISCONNECTED, () => {
+	isWclSocketReady = false;
 });
 
 socket.on(SOCKET_EVENTS.SERVER_STATUS, (serverStatus: unknown) => {
@@ -1465,31 +1481,17 @@ RegisterSVCallback('ExRT_Reminder', 'RGDB', (svPath, RGDB) => {
 	socket.emit('sv-updater-info', updaterInfo);
 });
 
-async function requestWCLAuthLink() {
-	return new Promise<string>((resolve, reject) => {
-		console.log('Requesting WCL auth link');
-		socket.emit(SOCKET_EVENTS.WCL_REQUEST_AUTH_LINK, null, (response: { authLink: string; error?: string }) => {
-			if (response.error) {
-				reject(new Error(response.error));
-			} else {
-				console.log('WCL Auth Link:', response.authLink);
-				resolve(response.authLink);
-			}
-		});
-		setTimeout(() => {
-			reject(new Error('Timeout waiting for WCL auth link'));
-		}, 15000);
-	});
-}
-
 ipcMain.handle(IPC_EVENTS.WCL_REQUEST_AUTH_LINK, async () => {
+	const result = await wclRequestTransport.requestAuthLink();
+	if (!result.success) return result;
 	try {
-		const link = await requestWCLAuthLink();
-		// follow link in default browser
-		void shell.openExternal(link);
-		return { success: true };
-	} catch (error: any) {
-		return { success: false, error: error.message };
+		await shell.openExternal(result.data);
+		return { success: true, data: true };
+	} catch (error) {
+		return {
+			success: false,
+			error: error instanceof Error ? error.message : 'Failed to open WCL authorization link',
+		};
 	}
 });
 
@@ -1503,167 +1505,51 @@ socket.on(SOCKET_EVENTS.WCL_REFRESH_TOKEN_UPDATE, (data) => {
 	mainWindow?.webContents.send(IPC_EVENTS.WCL_AUTH_STATUS_UPDATED, Boolean(data));
 });
 
-ipcMain.handle(IPC_EVENTS.WCL_REQUEST_REPORTS_LIST, async (event, { endTime }) => {
-	return new Promise<any[]>((resolve) => {
-		log.info(`Requesting WCL reports list, endTime: ${endTime}`);
-		socket.emit(SOCKET_EVENTS.WCL_REQUEST_REPORTS_LIST, { endTime }, (response: { reports: any[]; error?: string }) => {
-			if (response.reports) {
-				log.info('Received reports list, count:', response.reports.length);
-				resolve(response.reports);
-			} else {
-				log.error('Error receiving reports list:', response.error);
-				resolve([]);
-			}
-		});
-		setTimeout(() => {
-			resolve([]);
-		}, 15000);
-	});
+ipcMain.handle(IPC_EVENTS.WCL_REQUEST_REPORTS_LIST, async (_event, payload?: { endTime?: unknown }) => {
+	const endTime = payload?.endTime;
+	if (endTime !== undefined && (typeof endTime !== 'number' || !Number.isFinite(endTime) || endTime <= 0)) {
+		return { success: false, error: 'Invalid reports pagination timestamp' };
+	}
+	log.info(`Requesting WCL reports list, endTime: ${endTime}`);
+	return wclRequestTransport.requestReports(endTime as number | undefined);
 });
 
-ipcMain.handle(IPC_EVENTS.WCL_REQUEST_REPORT_DATA, async (event, { reportCode }) => {
-	// Handle the request for WCL fight details
-	return new Promise<any[]>((resolve) => {
-		log.info('Requesting WCL fight details for report', reportCode);
-		socket.emit(SOCKET_EVENTS.WCL_REQUEST_REPORT_DATA, { reportCode }, (response: { reportData: any; error?: string }) => {
-			if (response.reportData) {
-				log.info('Received fight details for report', reportCode);
-				resolve(response.reportData);
-			} else {
-				log.error('Error receiving fight details for report', reportCode, response.error);
-				resolve([]);
-			}
-		});
-		setTimeout(() => {
-			resolve([]);
-		}, 15000);
-	});
+ipcMain.handle(IPC_EVENTS.WCL_REQUEST_REPORT_DATA, async (_event, payload?: { reportCode?: unknown }) => {
+	const reportCode = normalizeWclReportCode(payload?.reportCode);
+	if (!reportCode) {
+		return { success: false, error: 'Invalid WCL report code' };
+	}
+	log.info('Requesting WCL fight details for report', reportCode);
+	return wclRequestTransport.requestReportData(reportCode);
 });
 
-ipcMain.handle(IPC_EVENTS.WCL_REQUEST_FIGHT_EVENTS, async (event, { reportCode, fightID, encounterID }) => {
-	return new Promise<reviewFightEventsResponse>((resolve) => {
-		log.info('Requesting WCL fight events for report', reportCode, 'fightID', fightID);
-		let settled = false;
-		const timeout = setTimeout(() => {
-			settled = true;
-			resolve({ error: 'Timed out while requesting fight events' });
-		}, 15000);
-
-		socket.emit(SOCKET_EVENTS.WCL_REQUEST_FIGHT_EVENTS, { reportCode, fightID, encounterID }, (response?: reviewFightEventsResponse) => {
-			if (settled) return;
-			settled = true;
-			clearTimeout(timeout);
-
-			if (Array.isArray(response?.fightEvents)) {
-				log.info('Received fight events for report', reportCode, 'fightID', fightID);
-				resolve({ fightEvents: response.fightEvents });
-			} else {
-				log.error('Error receiving fight events for report', reportCode, response?.error);
-				resolve({ error: response?.error || 'Failed to receive fight events' });
-			}
-		});
-	});
+ipcMain.handle(IPC_EVENTS.WCL_REQUEST_FIGHT_EVENTS, async (_event, payload: unknown) => {
+	const request = normalizeWclFightRequest(payload, true);
+	if (!request) return { success: false, error: 'Invalid report code, fight ID, or encounter ID' };
+	return wclRequestTransport.requestFightEvents(
+		request.reportCode,
+		request.fightID,
+		request.encounterID,
+	);
 });
 
-ipcMain.handle(IPC_EVENTS.WCL_REQUEST_FIGHT_COOLDOWNS, async (event, { reportCode, fightID }) => {
-	return new Promise<reviewFightCooldownResponse>((resolve) => {
-		log.info('Requesting WCL fight cooldowns for report', reportCode, 'fightID', fightID);
-
-		let settled = false;
-		const timeout = setTimeout(() => {
-			settled = true;
-			resolve({ error: 'Timed out while requesting fight cooldowns' });
-		}, 15000);
-
-		socket.emit(
-			SOCKET_EVENTS.WCL_REQUEST_FIGHT_COOLDOWNS,
-			{ reportCode, fightID },
-			(response?: reviewFightCooldownResponse) => {
-				if (settled) return;
-				settled = true;
-				clearTimeout(timeout);
-
-				if (Array.isArray(response?.fightCooldownEvents)) {
-					log.info(
-						'Received fight cooldowns for report',
-						reportCode,
-						'fightID',
-						fightID,
-						'count',
-						response.fightCooldownEvents.length,
-					);
-					resolve(response);
-					return;
-				}
-
-				log.error('Error receiving fight cooldowns for report', reportCode, response?.error);
-				resolve({ error: response?.error || 'Failed to receive fight cooldowns' });
-			},
-		);
-	});
+ipcMain.handle(IPC_EVENTS.WCL_REQUEST_FIGHT_COOLDOWNS, async (_event, payload: unknown) => {
+	const request = normalizeWclFightRequest(payload);
+	if (!request) return { success: false, error: 'Invalid report code or fight ID' };
+	return wclRequestTransport.requestFightCooldowns(request.reportCode, request.fightID);
 });
 
 ipcMain.handle(IPC_EVENTS.WCL_REQUEST_FIGHT_BOSS_CASTS, async (
 	_event,
 	payload?: { reportCode?: unknown; fightID?: unknown; encounterID?: unknown },
 ) => {
-	const { reportCode, fightID, encounterID } = payload || {};
-	if (
-		typeof reportCode !== 'string'
-		|| reportCode.trim().length === 0
-		|| typeof fightID !== 'number'
-		|| !Number.isSafeInteger(fightID)
-		|| fightID <= 0
-		|| (encounterID != null && (
-			typeof encounterID !== 'number'
-			|| !Number.isSafeInteger(encounterID)
-			|| encounterID <= 0
-		))
-	) {
-		return { error: 'Invalid report code, fight ID, or encounter ID' } satisfies reviewFightBossCastResponse;
-	}
-	const normalizedReportCode = reportCode.trim();
-
-	return new Promise<reviewFightBossCastResponse>((resolve) => {
-		log.info('Requesting WCL fight boss casts for report', normalizedReportCode, 'fightID', fightID);
-		let settled = false;
-		const timeout = setTimeout(() => {
-			settled = true;
-			resolve({ error: 'Timed out while requesting fight boss casts' });
-		}, 30_000);
-
-		socket.emit(
-			SOCKET_EVENTS.WCL_REQUEST_FIGHT_BOSS_CASTS,
-			{
-				reportCode: normalizedReportCode,
-				fightID,
-				...(typeof encounterID === 'number' ? { encounterID } : {}),
-			},
-			(response?: reviewFightBossCastResponse) => {
-				if (settled) return;
-				settled = true;
-				clearTimeout(timeout);
-				if (
-					response?.bossCastData
-					&& Array.isArray(response.bossCastData.abilities)
-					&& Array.isArray(response.bossCastData.bossCastEvents)
-				) {
-					log.info(
-						'Received fight boss casts for report',
-						normalizedReportCode,
-						'fightID',
-						fightID,
-						'count',
-						response.bossCastData.bossCastEvents.length,
-					);
-					resolve(response);
-					return;
-				}
-				log.error('Error receiving fight boss casts for report', normalizedReportCode, response?.error);
-				resolve({ error: response?.error || 'Failed to receive fight boss casts' });
-			},
-		);
-	});
+	const request = normalizeWclFightRequest(payload, true);
+	if (!request) return { success: false, error: 'Invalid report code, fight ID, or encounter ID' };
+	return wclRequestTransport.requestFightBossCasts(
+		request.reportCode,
+		request.fightID,
+		request.encounterID,
+	);
 });
 
 ipcMain.on(IPC_EVENTS.WCL_OPEN_FIGHT, async (

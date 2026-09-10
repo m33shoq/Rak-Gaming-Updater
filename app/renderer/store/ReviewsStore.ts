@@ -8,16 +8,20 @@ import type {
 	ReviewTimelineWindowContext,
 	ReviewTimelineWindowDataSnapshot,
 } from '@/timelineWindow';
+import type { WclRequestResult } from '@/wclRequests';
 
 import { useYoutubeVideoInfo } from '@/renderer/composables/useYoutubeVideoInfo';
 
 const TWELVE_HOURS_MS = 12 * 60 * 60 * 1000;
 const FIGHT_DATA_CACHE_TTL_MS = 30 * 60 * 1000;
+const REPORT_LIST_CACHE_TTL_MS = 15 * 1000;
+const REPORT_DETAILS_CACHE_TTL_MS = 15 * 1000;
 const BOSS_CAST_PREFERENCES_STORE_KEY = 'reviewBossCastVisibilityOverrides';
 const BOSS_CAST_DISPLAY_MODE_STORE_KEY = 'reviewBossCastDisplayMode';
 type BossCastVisibilityOverrides = Record<string, Record<string, boolean>>;
 type BossCastDisplayMode = 'full' | 'collapsed';
 type TimelineWindowActionHandler = (action: ReviewTimelineWindowAction) => boolean;
+type LoadStatus = 'idle' | 'loading' | 'refreshing' | 'ready' | 'error';
 
 export const useReviewsStore = defineStore('Reviews', () => {
 	const { youtubeVideoInfo, refreshYoutubeVideoInfo } = useYoutubeVideoInfo();
@@ -43,8 +47,17 @@ export const useReviewsStore = defineStore('Reviews', () => {
 	}
 
 	const reports = shallowRef<Array<reportSummary>>([]);
+	const reportListStatus = ref<LoadStatus>('idle');
+	const reportListError = ref<string | null>(null);
+	const olderReportsLoading = ref(false);
+	const olderReportsError = ref<string | null>(null);
+	const hasOlderReports = ref(true);
 	const selectedReportCode = ref<string | null>(null);
 	const reportDetails = ref<reportDetails | null>(null);
+	const reportDetailsByCode = ref<Record<string, reportDetails>>({});
+	const reportDetailsCachedAt = ref<Record<string, number>>({});
+	const reportDetailsStatusByCode = ref<Record<string, LoadStatus>>({});
+	const reportDetailsErrorByCode = ref<Record<string, string | null>>({});
 	const selectedFightID = ref<number | null>(null);
 	const savedFightEvents = ref<Record<string, fightEvent[]>>({});
 	const fightEventCachedAt = ref<Record<string, number>>({});
@@ -66,14 +79,19 @@ export const useReviewsStore = defineStore('Reviews', () => {
 	const fightEventPromises = new Map<string, Promise<fightEvent[]>>();
 	const fightCooldownPromises = new Map<string, Promise<reviewFightCooldownData>>();
 	const fightBossCastPromises = new Map<string, Promise<reviewFightBossCastData>>();
+	const reportDataPromises = new Map<string, Promise<reportDetails | null>>();
+	const reportListPromises = new Map<string, Promise<boolean>>();
 	let fightEventRequestEpoch = 0;
 	let fightCooldownRequestEpoch = 0;
 	let fightBossCastRequestEpoch = 0;
+	let reportSelectionGeneration = 0;
 	let fightCooldownInvalidatedAt = 0;
 	let fightBossCastInvalidatedAt = 0;
 	let bossCastPreferencesPromise: Promise<void> | null = null;
 	let timelineContextHydrationGeneration = 0;
 	let timelineContextHydrating = false;
+	let reportListRequested = false;
+	let reportListLoadedAt = 0;
 
 	const getSelectedVideoId = computed(() => selectedVideoInfo.value?.id || null);
 
@@ -82,13 +100,41 @@ export const useReviewsStore = defineStore('Reviews', () => {
 		reports.value = newReports;
 	}
 	const getSelectedReport = computed(() => selectedReportCode.value ? reports.value.find(r => r.code === selectedReportCode.value) || null : null);
+	const isReportListLoading = computed(() => (
+		reportListStatus.value === 'loading' || reportListStatus.value === 'refreshing'
+	));
 
 	const getReportDetails = computed(() => reportDetails.value);
 	function setReportDetails(details: reportDetails | null) {
 		reportDetails.value = details;
 	}
 
+	function cacheReportDetails(reportCode: string, details: reportDetails) {
+		const normalizedDetails: reportDetails = {
+			...details,
+			code: reportCode,
+			fights: [...details.fights].sort((left, right) => right.startTime - left.startTime),
+		};
+		reportDetailsByCode.value[reportCode] = normalizedDetails;
+		reportDetailsCachedAt.value[reportCode] = Date.now();
+		reportDetailsStatusByCode.value[reportCode] = 'ready';
+		reportDetailsErrorByCode.value[reportCode] = null;
+		return normalizedDetails;
+	}
+
 	const getSelectedFight = computed(() => getReportDetails.value?.fights?.find(f => f.id === selectedFightID.value) || null);
+	const selectedReportDetailsStatus = computed<LoadStatus>(() => {
+		const reportCode = selectedReportCode.value;
+		return reportCode ? reportDetailsStatusByCode.value[reportCode] || 'idle' : 'idle';
+	});
+	const selectedReportDetailsError = computed(() => {
+		const reportCode = selectedReportCode.value;
+		return reportCode ? reportDetailsErrorByCode.value[reportCode] || null : null;
+	});
+	const isSelectedReportDetailsLoading = computed(() => (
+		selectedReportDetailsStatus.value === 'loading'
+		|| selectedReportDetailsStatus.value === 'refreshing'
+	));
 
 	function getFightCooldownCacheKey(reportCode: string, fightID: number) {
 		return `${reportCode}:${fightID}`;
@@ -100,7 +146,6 @@ export const useReviewsStore = defineStore('Reviews', () => {
 	}
 
 	const hasPendingTimelineWindowActions = computed(() => pendingTimelineWindowActions.value.length > 0);
-
 	function flushPendingTimelineWindowActions() {
 		if (!timelineWindowActionHandler || pendingTimelineWindowActions.value.length === 0) return;
 		const queuedActions = pendingTimelineWindowActions.value;
@@ -288,9 +333,10 @@ export const useReviewsStore = defineStore('Reviews', () => {
 
 	async function hydrateTimelineWindowContext(context: ReviewTimelineWindowContext) {
 		const generation = ++timelineContextHydrationGeneration;
+		reportSelectionGeneration++;
 		timelineContextHydrating = true;
 		selectedReportCode.value = context.reportCode;
-		reportDetails.value = context.reportDetails;
+		reportDetails.value = cacheReportDetails(context.reportCode, context.reportDetails);
 		selectedFightID.value = context.fightID;
 		if (context.dataSnapshot?.reportCode === context.reportCode) {
 			mergeTimelineWindowDataSnapshot(context.dataSnapshot);
@@ -493,9 +539,7 @@ export const useReviewsStore = defineStore('Reviews', () => {
 	}
 
 	const getReportTimeOffset = computed(() => {
-		const selected = getSelectedReport.value;
-		if (!selected) return 0;
-		return selected.startTime;
+		return getSelectedReport.value?.startTime ?? getReportDetails.value?.startTime ?? 0;
 	});
 
 	const getFightStartTimeOffset = computed(() => {
@@ -522,37 +566,160 @@ export const useReviewsStore = defineStore('Reviews', () => {
 		return selected.endTime - selected.startTime;
 	});
 
-	async function requestReports(endTime?: number) {
-		// log.info(`Requesting WCL reports, endtime: ${endTime}`);
-		let reports = await ipc.invoke(IPC_EVENTS.WCL_REQUEST_REPORTS_LIST, { endTime });
-		// prepend older reports to the existing list
+	async function requestReports(endTime?: number, force = false): Promise<boolean> {
+		reportListRequested = true;
+		const isOlderPage = Number.isFinite(endTime);
+		const requestKey = isOlderPage ? `older:${endTime}` : 'latest';
+		if (
+			!isOlderPage
+			&& !force
+			&& reportListStatus.value === 'ready'
+			&& Date.now() - reportListLoadedAt < REPORT_LIST_CACHE_TTL_MS
+		) return true;
 
-		const newReports = [...getReports.value];
-		for (const report of reports) {
-			const existingIndex = newReports.findIndex(r => r.code === report.code);
-			if (existingIndex >= 0) {
-				newReports[existingIndex] = report;
-			} else {
-				newReports.push(report);
-			}
+		const pending = reportListPromises.get(requestKey);
+		if (pending) return pending;
+
+		if (isOlderPage) {
+			olderReportsLoading.value = true;
+			olderReportsError.value = null;
+		} else {
+			reportListStatus.value = reports.value.length > 0 ? 'refreshing' : 'loading';
+			reportListError.value = null;
 		}
 
-		newReports.sort((a, b) => b.startTime - a.startTime); // sort by start time descending
+		const request = (async () => {
+			try {
+				const response = await ipc.invoke(
+					IPC_EVENTS.WCL_REQUEST_REPORTS_LIST,
+					{ endTime },
+				) as WclRequestResult<reportSummary[]>;
+				if (!response || response.success !== true) {
+					throw new Error(
+						response && 'error' in response
+							? response.error
+							: 'Failed to request WCL reports',
+					);
+				}
+				if (!Array.isArray(response.data)) {
+					throw new Error('WCL reports request returned invalid data');
+				}
 
-		// log.info('Received WCL reports');
-		setReports(newReports);
+				const mergedReports = [...reports.value];
+				let addedReportCount = 0;
+				for (const report of response.data) {
+					if (!report || typeof report.code !== 'string') continue;
+					const existingIndex = mergedReports.findIndex(item => item.code === report.code);
+					if (existingIndex >= 0) mergedReports[existingIndex] = report;
+					else {
+						mergedReports.push(report);
+						addedReportCount++;
+					}
+				}
+				mergedReports.sort((left, right) => right.startTime - left.startTime);
+				setReports(mergedReports);
+				if (!isOlderPage) {
+					reportListLoadedAt = Date.now();
+					reportListStatus.value = 'ready';
+				} else if (response.data.length === 0 || addedReportCount === 0) hasOlderReports.value = false;
+				return true;
+			} catch (error) {
+				const message = error instanceof Error ? error.message : 'Failed to request WCL reports';
+				if (isOlderPage) olderReportsError.value = message;
+				else {
+					reportListStatus.value = 'error';
+					reportListError.value = message;
+				}
+				log.error('Failed to request WCL reports', { endTime, error });
+				return false;
+			} finally {
+				if (reportListPromises.get(requestKey) === request) {
+					reportListPromises.delete(requestKey);
+					if (isOlderPage) olderReportsLoading.value = false;
+				}
+			}
+		})();
+		reportListPromises.set(requestKey, request);
+		return request;
 	}
 
-	async function requestReportData() {
-		const selected = getSelectedReport.value;
-		if (!selected) return;
-		const reportCode = selected.code;
+	async function requestReportData(force = false): Promise<boolean> {
+		const reportCode = selectedReportCode.value;
+		if (!reportCode) return false;
+		const selectionGeneration = reportSelectionGeneration;
+		const cached = reportDetailsByCode.value[reportCode] || null;
+		if (
+			cached
+			&& !force
+			&& Date.now() - (reportDetailsCachedAt.value[reportCode] || 0) < REPORT_DETAILS_CACHE_TTL_MS
+		) {
+			reportDetailsStatusByCode.value[reportCode] = 'ready';
+			reportDetailsErrorByCode.value[reportCode] = null;
+			if (selectedReportCode.value === reportCode) setReportDetails(cached);
+			return true;
+		}
 
-		const reportData = await ipc.invoke(IPC_EVENTS.WCL_REQUEST_REPORT_DATA, { reportCode });
-		// sort fights by start time
-		reportData.fights?.sort((a: fightDetails, b: fightDetails) => b.startTime - a.startTime);
+		let request = reportDataPromises.get(reportCode);
+		if (!request) {
+			reportDetailsStatusByCode.value[reportCode] = cached ? 'refreshing' : 'loading';
+			reportDetailsErrorByCode.value[reportCode] = null;
+			request = (async () => {
+				try {
+					const response = await ipc.invoke(
+						IPC_EVENTS.WCL_REQUEST_REPORT_DATA,
+						{ reportCode },
+					) as WclRequestResult<reportDetails>;
+					if (!response || response.success !== true) {
+						throw new Error(
+							response && 'error' in response
+								? response.error
+								: 'Failed to request WCL report details',
+						);
+					}
+					const data = response.data;
+					if (!data || typeof data !== 'object' || !Array.isArray(data.fights)) {
+						throw new Error('WCL report details returned no fight list');
+					}
+					if (typeof data.code === 'string' && data.code !== reportCode) {
+						throw new Error('WCL report details returned a different report');
+					}
+					return cacheReportDetails(reportCode, data);
+				} catch (error) {
+					const message = error instanceof Error ? error.message : 'Failed to request WCL report details';
+					reportDetailsStatusByCode.value[reportCode] = 'error';
+					reportDetailsErrorByCode.value[reportCode] = message;
+					log.error('Failed to request WCL report details', { reportCode, error });
+					return null;
+				} finally {
+					if (reportDataPromises.get(reportCode) === request) {
+						reportDataPromises.delete(reportCode);
+					}
+				}
+			})();
+			reportDataPromises.set(reportCode, request);
+		}
 
-		setReportDetails(reportData);
+		const loadedDetails = await request;
+		if (!loadedDetails) return false;
+		if (
+			selectionGeneration === reportSelectionGeneration
+			&& selectedReportCode.value === reportCode
+		) setReportDetails(loadedDetails);
+		return true;
+	}
+
+	async function refreshReportListAfterWclReady() {
+		const pendingRequest = reportListPromises.get('latest');
+		if (pendingRequest && await pendingRequest) return;
+		await requestReports(undefined, true);
+	}
+
+	async function refreshSelectedReportAfterWclReady() {
+		const reportCode = selectedReportCode.value;
+		if (!reportCode) return;
+		const pendingRequest = reportDataPromises.get(reportCode);
+		if (pendingRequest && await pendingRequest) return;
+		if (selectedReportCode.value === reportCode) await requestReportData(true);
 	}
 
 	async function ensureFightEvents(reportCode: string, fightID: number, force = false, encounterID?: number): Promise<fightEvent[]> {
@@ -571,12 +738,16 @@ export const useReviewsStore = defineStore('Reviews', () => {
 				const response = await ipc.invoke(
 					IPC_EVENTS.WCL_REQUEST_FIGHT_EVENTS,
 					{ reportCode, fightID, encounterID },
-				) as reviewFightEventsResponse;
-				if (response.error) throw new Error(response.error);
-				if (requestEpoch !== fightEventRequestEpoch) {
-					return savedFightEvents.value[cacheKey] || response.fightEvents || [];
+				) as WclRequestResult<fightEvent[]>;
+				if (!response || response.success !== true) {
+					throw new Error(
+						response && 'error' in response ? response.error : 'Failed to request fight events',
+					);
 				}
-				savedFightEvents.value[cacheKey] = response.fightEvents || [];
+				if (requestEpoch !== fightEventRequestEpoch) {
+					return savedFightEvents.value[cacheKey] || response.data;
+				}
+				savedFightEvents.value[cacheKey] = response.data;
 				fightEventCachedAt.value[cacheKey] = Date.now();
 				markTimelineWindowFightDataUpdated(reportCode, fightID);
 				return savedFightEvents.value[cacheKey];
@@ -612,15 +783,15 @@ export const useReviewsStore = defineStore('Reviews', () => {
 				const response = await ipc.invoke(
 					IPC_EVENTS.WCL_REQUEST_FIGHT_COOLDOWNS,
 					{ reportCode, fightID },
-				) as reviewFightCooldownResponse;
+				) as WclRequestResult<reviewFightCooldownData>;
 
-				if (response.error) throw new Error(response.error);
+				if (!response || response.success !== true) {
+					throw new Error(
+						response && 'error' in response ? response.error : 'Failed to request fight cooldowns',
+					);
+				}
 
-				const data: reviewFightCooldownData = {
-					catalogVersion: response.catalogVersion || 0,
-					cooldownGroups: response.cooldownGroups || [],
-					fightCooldownEvents: response.fightCooldownEvents || [],
-				};
+				const data = response.data;
 				if (requestEpoch !== fightCooldownRequestEpoch) {
 					return savedFightCooldowns.value[cacheKey] || data;
 				}
@@ -670,31 +841,34 @@ export const useReviewsStore = defineStore('Reviews', () => {
 				const response = await ipc.invoke(
 					IPC_EVENTS.WCL_REQUEST_FIGHT_BOSS_CASTS,
 					{ reportCode, fightID, encounterID },
-				) as reviewFightBossCastResponse;
-				if (response.error || !response.bossCastData) {
-					throw new Error(response.error || 'Failed to request fight boss casts');
+				) as WclRequestResult<reviewFightBossCastData>;
+				if (!response || response.success !== true) {
+					throw new Error(
+						response && 'error' in response ? response.error : 'Failed to request fight boss casts',
+					);
 				}
+				const bossCastData = response.data;
 				if (requestEpoch !== fightBossCastRequestEpoch) {
-					return savedFightBossCasts.value[cacheKey] || response.bossCastData;
+					return savedFightBossCasts.value[cacheKey] || bossCastData;
 				}
 				if (
-					response.bossCastData.interruptsComplete === false
-					|| response.bossCastData.targetDetailsComplete === false
+					bossCastData.interruptsComplete === false
+					|| bossCastData.targetDetailsComplete === false
 				) {
 					if (
 						cached
 						&& cached.interruptsComplete !== false
 						&& cached.targetDetailsComplete !== false
 					) return cached;
-					savedFightBossCasts.value[cacheKey] = response.bossCastData;
+					savedFightBossCasts.value[cacheKey] = bossCastData;
 					delete fightBossCastCachedAt.value[cacheKey];
 					markTimelineWindowFightDataUpdated(reportCode, fightID);
-					return response.bossCastData;
+					return bossCastData;
 				}
-				savedFightBossCasts.value[cacheKey] = response.bossCastData;
+				savedFightBossCasts.value[cacheKey] = bossCastData;
 				fightBossCastCachedAt.value[cacheKey] = Date.now();
 				markTimelineWindowFightDataUpdated(reportCode, fightID);
-				return response.bossCastData;
+				return bossCastData;
 			} catch (error) {
 				const message = error instanceof Error ? error.message : 'Failed to request fight boss casts';
 				if (requestEpoch === fightBossCastRequestEpoch) fightBossCastErrors.value[cacheKey] = message;
@@ -741,23 +915,10 @@ export const useReviewsStore = defineStore('Reviews', () => {
 
 		const videosArray: YouTubeVideo[] = Object.values(youtubeVideoInfo.value.byId || {});
 
-		// if no specific fight selected just check streams that were active when report started
 		return videosArray.filter((video) => {
-			// If duration is 0, treat as "still live" (endTime = now + 12 hours)
 			const videoEnd = video.duration === 0
 				? Date.now() + TWELVE_HOURS_MS
 				: video.startTime + video.duration;
-
-			// log.info(`Video ${video.id} ${video.title} (${video.author}) from ${new Date(video.startTime).toLocaleString()} to ${new Date(videoEnd).toLocaleString()} checkTime: ${new Date(video.checkTime).toLocaleString()}}	`);
-			// log.info(video.startTim	e,
-			// 	videoEnd,
-			// 	fightEndTime,
-			// 	fightStartTime,
-			// 	(video.startTime <= fightEndTime) && (videoEnd >= fightStartTime),
-			// 	video.startTime <= fightEndTime,
-			// 	videoEnd >= fightStartTime
-			// );
-			// Check if video overlaps with fight time
 			return !selectedReportCode.value || ((video.startTime <= fightEndTime) && (videoEnd >= fightStartTime));
 		}).sort((a, b) => (b.startTime || 0) - (a.startTime || 0));
 	});
@@ -796,18 +957,19 @@ export const useReviewsStore = defineStore('Reviews', () => {
 		return { success: true };
 	}
 
-	watch(selectedReportCode, async (newVal, oldVal) => {
+	watch(selectedReportCode, (newVal, oldVal) => {
 		if (timelineContextHydrating) return;
 		if (newVal !== oldVal) {
+			reportSelectionGeneration++;
 			selectedFightID.value = null; // reset selected fight
-			await nextTick(); // wait for videoList to update based on new report selection
-			if (newVal && videoList.value.length > 0 && !videoList.value.some(v => v.id === selectedVideoInfo.value?.id)) {
+			reportDetails.value = newVal ? reportDetailsByCode.value[newVal] || null : null;
+			if (newVal && !videoList.value.some(v => v.id === selectedVideoInfo.value?.id)) {
 				setSelectedVideoInfo(videoList.value[0] || null); // auto-select first video if current selection is not relevant to new report
 			}
 			log.info('Selected report changed:', newVal);
-			requestReportData();
+			if (newVal) void requestReportData();
 		}
-	});
+	}, { flush: 'sync' });
 
 	watch(selectedFightID, (newVal, oldVal) => {
 		if (timelineContextHydrating) return;
@@ -842,6 +1004,8 @@ export const useReviewsStore = defineStore('Reviews', () => {
 		fightBossCastRequestEpoch++;
 		fightBossCastPromises.clear();
 		fightBossCastCacheEpoch.value++;
+		if (reportListRequested) void refreshReportListAfterWclReady();
+		if (selectedReportCode.value) void refreshSelectedReportAfterWclReady();
 
 		const reportCode = selectedReportCode.value;
 		const fightID = selectedFightID.value;
@@ -885,8 +1049,17 @@ export const useReviewsStore = defineStore('Reviews', () => {
 		timelineWindowUpdatedFight,
 		hasPendingTimelineWindowActions,
 		reports,
+		reportListStatus,
+		reportListError,
+		isReportListLoading,
+		olderReportsLoading,
+		olderReportsError,
+		hasOlderReports,
 		selectedReportCode,
 		reportDetails,
+		selectedReportDetailsStatus,
+		selectedReportDetailsError,
+		isSelectedReportDetailsLoading,
 		selectedFightID,
 		savedFightEvents,
 		savedFightCooldowns,
