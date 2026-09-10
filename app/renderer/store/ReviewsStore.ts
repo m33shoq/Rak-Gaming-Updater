@@ -8,11 +8,11 @@ import type {
 	ReviewTimelineWindowContext,
 	ReviewTimelineWindowDataSnapshot,
 } from '@/timelineWindow';
+import { reviewVideoOverlapsWindow } from '@/reviewVideoSelection';
 import type { WclRequestResult } from '@/wclRequests';
 
 import { useYoutubeVideoInfo } from '@/renderer/composables/useYoutubeVideoInfo';
 
-const TWELVE_HOURS_MS = 12 * 60 * 60 * 1000;
 const FIGHT_DATA_CACHE_TTL_MS = 30 * 60 * 1000;
 const REPORT_LIST_CACHE_TTL_MS = 15 * 1000;
 const REPORT_DETAILS_CACHE_TTL_MS = 15 * 1000;
@@ -566,6 +566,16 @@ export const useReviewsStore = defineStore('Reviews', () => {
 		return selected.endTime - selected.startTime;
 	});
 
+	function getSelectedFightAbsoluteWindow(): { start: number; end: number } | null {
+		const reportStart = getSelectedReport.value?.startTime ?? getReportDetails.value?.startTime;
+		const fight = getSelectedFight.value;
+		if (!Number.isFinite(reportStart) || !fight) return null;
+		return {
+			start: reportStart! + fight.startTime,
+			end: reportStart! + fight.endTime,
+		};
+	}
+
 	async function requestReports(endTime?: number, force = false): Promise<boolean> {
 		reportListRequested = true;
 		const isOlderPage = Number.isFinite(endTime);
@@ -907,21 +917,39 @@ export const useReviewsStore = defineStore('Reviews', () => {
 		return ensureFightBossCasts(reportCode, fightID, force, encounterID);
 	}
 
-	const videoList = computed<YouTubeVideo[]>(() => {
-		const reportTimeOffset = getReportTimeOffset.value || Date.now();
-		log.info('Calculating video list with report time offset:', reportTimeOffset);
-		const fightStartTime = reportTimeOffset + (getSelectedFight.value?.startTime || 0);
-		const fightEndTime = reportTimeOffset + (getSelectedFight.value?.endTime || 0);
+	const reportVideoList = computed<YouTubeVideo[]>(() => {
+		const selectedReport = getSelectedReport.value;
+		const reportStart = selectedReport?.startTime ?? getReportDetails.value?.startTime;
+		const reportEnd = selectedReport?.endTime ?? getReportDetails.value?.endTime;
+		const now = Date.now();
 
 		const videosArray: YouTubeVideo[] = Object.values(youtubeVideoInfo.value.byId || {});
 
-		return videosArray.filter((video) => {
-			const videoEnd = video.duration === 0
-				? Date.now() + TWELVE_HOURS_MS
-				: video.startTime + video.duration;
-			return !selectedReportCode.value || ((video.startTime <= fightEndTime) && (videoEnd >= fightStartTime));
+		return videosArray.filter(video => {
+			return !selectedReportCode.value
+				|| !Number.isFinite(reportStart)
+				|| !Number.isFinite(reportEnd)
+				|| reviewVideoOverlapsWindow(video, reportStart!, reportEnd!, now);
 		}).sort((a, b) => (b.startTime || 0) - (a.startTime || 0));
 	});
+
+	const videoList = computed<YouTubeVideo[]>(() => {
+		const fightWindow = getSelectedFightAbsoluteWindow();
+		if (!fightWindow) return reportVideoList.value;
+
+		const now = Date.now();
+		return reportVideoList.value.filter(video => (
+			reviewVideoOverlapsWindow(video, fightWindow.start, fightWindow.end, now)
+		));
+	});
+
+	function videoMatchesCurrentSelection(video: YouTubeVideo): boolean {
+		const fightWindow = getSelectedFightAbsoluteWindow();
+		if (fightWindow) {
+			return reviewVideoOverlapsWindow(video, fightWindow.start, fightWindow.end);
+		}
+		return videoList.value.some(candidate => candidate.id === video.id);
+	}
 
 	async function openVideoFromDeepLink(videoId: string, timestampSeconds: number) {
 		const normalizedVideoId = videoId.trim();
@@ -939,7 +967,7 @@ export const useReviewsStore = defineStore('Reviews', () => {
 		// if video was active during currently selected report/fight just select it and set the timestamp
 		// otherwise clear selected report/fight to avoid confusion and then select the video and set the timestamp
 
-		if (selectedReportCode.value && !videoList.value.some(v => v.id === normalizedVideoId)) {
+		if (selectedReportCode.value && !videoMatchesCurrentSelection(targetVideo)) {
 			log.info('Deep linked video is not relevant to currently selected report/fight, clearing selection');
 			selectedFightID.value = null;
 
