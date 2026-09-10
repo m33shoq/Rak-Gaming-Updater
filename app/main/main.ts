@@ -1539,6 +1539,12 @@ ipcMain.handle(IPC_EVENTS.WCL_REQUEST_FIGHT_COOLDOWNS, async (_event, payload: u
 	return wclRequestTransport.requestFightCooldowns(request.reportCode, request.fightID);
 });
 
+ipcMain.handle(IPC_EVENTS.WCL_REQUEST_FIGHT_REPLAY, async (_event, payload) => {
+	const request = normalizeWclFightRequest(payload);
+	if (!request) return { success: false, error: 'Invalid report code or fight ID' };
+	return wclRequestTransport.requestFightReplay(request.reportCode, request.fightID);
+});
+
 ipcMain.handle(IPC_EVENTS.WCL_REQUEST_FIGHT_BOSS_CASTS, async (
 	_event,
 	payload?: { reportCode?: unknown; fightID?: unknown; encounterID?: unknown },

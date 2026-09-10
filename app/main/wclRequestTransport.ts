@@ -1,5 +1,6 @@
 import type { Socket } from 'socket.io-client';
 import { SOCKET_EVENTS } from '@/events';
+import type { FightReplayData } from '@/replay';
 import type { WclRequestResult } from '@/wclRequests';
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 15_000;
@@ -20,6 +21,7 @@ type WclSocketResponse = {
 	cooldownGroups?: unknown;
 	fightCooldownEvents?: unknown;
 	bossCastData?: unknown;
+	replayData?: unknown;
 };
 
 type WclRequestOptions<T> = {
@@ -183,6 +185,23 @@ export default class WclRequestTransport {
 			},
 			requestLabel: 'WCL fight boss casts',
 			timeoutMs: 30_000,
+			logContext: { reportCode, fightID },
+		});
+	}
+
+	requestFightReplay(reportCode: string, fightID: number): Promise<WclRequestResult<FightReplayData>> {
+		return this.request({
+			eventName: SOCKET_EVENTS.WCL_REQUEST_FIGHT_REPLAY,
+			payload: { reportCode, fightID },
+			readData: response => (
+				response.replayData
+				&& typeof response.replayData === 'object'
+				&& !Array.isArray(response.replayData)
+					? response.replayData as FightReplayData
+					: undefined
+			),
+			requestLabel: 'WCL fight replay',
+			timeoutMs: 90_000,
 			logContext: { reportCode, fightID },
 		});
 	}

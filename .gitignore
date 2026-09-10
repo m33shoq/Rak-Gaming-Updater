@@ -4,4 +4,7 @@ releases/
 .env
 changelog.txt
 scripts/*
+!scripts/replay.test.mjs
+!scripts/reviewVideoSelection.test.mjs
+!scripts/build_replay_maps.py
 .vscode
