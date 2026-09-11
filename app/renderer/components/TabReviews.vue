@@ -5,6 +5,7 @@ import type { ReviewTimelineWindowAction, ReviewTimelineWindowContext } from '@/
 
 import { ref, computed, watch, onMounted, onBeforeUnmount, useTemplateRef, nextTick } from 'vue';
 import { useIpcOn } from '@/renderer/composables/useIpcOn';
+import { useReviewPlayerHotkeys } from '@/renderer/composables/useReviewPlayerHotkeys';
 import { createReviewTimelinePlayback } from '@/renderer/composables/useReviewTimelinePlayback';
 
 import TabContent from '@/renderer/components/TabContent.vue';
@@ -28,17 +29,6 @@ import {
 } from '@/renderer/reviewSeekCoordinator';
 import { getReviewVideoEndTime } from '@/reviewVideoSelection';
 
-// format seconds to mm:ss
-function formatTime(t) {
-	const hours = Math.floor(t / 3600);
-	const minutes = Math.floor((t % 3600) / 60);
-	const seconds = Math.floor(t % 60);
-	if (hours > 0) {
-		return `${hours}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
-	}
-	return `${minutes}:${seconds.toString().padStart(2, '0')}`;
-}
-
 const reviewsStore = useReviewsStore();
 let playerLoaded = false;
 
@@ -54,7 +44,6 @@ type ReviewPlayerOverlayHandle = {
 const playerOverlay = useTemplateRef<ReviewPlayerOverlayHandle | null>('playerOverlay');
 const isPlayerFullscreen = ref(false);
 const isPlayerPlaying = ref(false);
-const queuedSeekDeltaSeconds = ref<number | null>(null);
 const syncPrototypeAnchor = ref<{
 	videoId: string;
 	videoTimeSeconds: number;
@@ -64,21 +53,7 @@ const syncPrototypeStatus = ref('');
 const syncPrototypeStatusTone = ref<'success' | 'error' | 'info'>('info');
 const isSyncPrototypeCapturing = ref(false);
 
-const DEFAULT_SEEK_SECONDS = 5;
-const SHIFT_SEEK_SECONDS = 3;
-const ALT_SEEK_SECONDS = 1;
-const CTRL_SEEK_SECONDS = 60;
-const TEN_SECOND_SEEK_SECONDS = 10;
-const FRAME_SEEK_SECONDS = 1 / 30;
-const HOTKEY_SEEK_DEBOUNCE_MS = 80;
-const HOTKEY_SEEK_RETRY_MS = 1200;
-const HOTKEY_SEEK_MAX_PENDING_MS = 30_000;
-const HOTKEY_SEEK_TARGET_EPSILON_SECONDS = 0.001;
-const HOTKEY_SEEK_INDICATOR_MIN_VISIBLE_MS = 500;
-const HOTKEY_SEEK_HOLD_INITIAL_INTERVAL_MS = 350;
-const HOTKEY_SEEK_HOLD_FASTEST_INTERVAL_MS = 60;
 const VIDEO_TIME_UPDATE_HZ = 16;
-const HOTKEY_SEEK_HOLD_ACCELERATION_MS = 3500;
 const SYNC_MARKER_AUTO_READ_INTERVAL_MS = 10_000;
 const SYNC_MARKER_REANCHOR_THRESHOLD_MS = 250;
 const SYNC_MARKER_AUTO_FAILURE_LOG_INTERVAL_MS = 5 * 60_000;
@@ -154,65 +129,31 @@ const reviewSeekCoordinator = new ReviewSeekCoordinator(
 	},
 );
 
-type PlayerHotkeyPayload = {
-	key: string;
-	code: string;
-	altKey: boolean;
-	ctrlKey: boolean;
-	metaKey: boolean;
-	repeat: boolean;
-	shiftKey: boolean;
-};
-
-type PlayerMouseDownPayload = {
-	clickCount: number;
-};
-
 let fullscreenToggleInProgress = false;
 let playerBoundsResizeObserver: ResizeObserver | null = null;
-let hotkeySeekDispatchTimeout: number | null = null;
-let hotkeySeekRetryTimeout: number | null = null;
-let hotkeySeekIndicatorHideTimeout: number | null = null;
-let hotkeySeekIndicatorUpdatedAt = 0;
-let hotkeySeekIndicatorCommittedDeltaSeconds = 0;
-let hotkeySeekHoldState: {
-	signature: string;
-	startedAt: number;
-	lastAcceptedAt: number;
-} | null = null;
-let hotkeySeekState: {
-	originSeconds: number;
-	targetSeconds: number;
-	dispatchedFromSeconds: number | null;
-	dispatchedTargetSeconds: number | null;
-	dispatchedAt: number | null;
-	playbackRateAtDispatch: number;
-	wasPlayingAtDispatch: boolean;
-	lastInputAt: number;
-} | null = null;
 
-const queuedSeekDeltaLabel = computed(() => {
-	const delta = queuedSeekDeltaSeconds.value;
-	if (delta === null) return '';
-	const absoluteDelta = Math.abs(delta);
-	const precision = absoluteDelta > 0 && absoluteDelta < 0.1
-		? 2
-		: Number.isInteger(absoluteDelta) ? 0 : 1;
-	const sign = delta > HOTKEY_SEEK_TARGET_EPSILON_SECONDS
-		? '+'
-		: delta < -HOTKEY_SEEK_TARGET_EPSILON_SECONDS ? '-' : '';
-	if (absoluteDelta >= 60) return `${sign}${formatTime(Math.round(absoluteDelta))}`;
-	return `${sign}${absoluteDelta.toFixed(precision)}s`;
-});
-const queuedSeekDirectionClass = computed(() => {
-	const delta = queuedSeekDeltaSeconds.value;
-	if (delta !== null && delta < -HOTKEY_SEEK_TARGET_EPSILON_SECONDS) {
-		return 'youtube-player-seek-queue--backward';
-	}
-	if (delta !== null && delta > HOTKEY_SEEK_TARGET_EPSILON_SECONDS) {
-		return 'youtube-player-seek-queue--forward';
-	}
-	return 'youtube-player-seek-queue--neutral';
+const {
+	clampSeekTarget,
+	clearQueuedSeek: clearQueuedHotkeySeek,
+	onPlayerDoubleClick,
+	onPlayerTimeUpdate: onHotkeySeekTimeUpdate,
+	queuedSeekDeltaLabel,
+	queuedSeekDeltaSeconds,
+	queuedSeekDirectionClass,
+	togglePlayPause,
+} = useReviewPlayerHotkeys({
+	player,
+	isPlaying: isPlayerPlaying,
+	hasSelectedVideo: () => Boolean(reviewsStore.getSelectedVideoId),
+	revealControls: () => revealPlayerControls(),
+	closeHotkeyGuide: () => playerOverlay.value?.closeHotkeyGuide() ?? false,
+	requestFullscreenToggle: () => requestFullscreenToggle(),
+	requestQueuedSeek: seconds => {
+		void requestVideoTimeSeek(seconds, 'hotkey', false);
+	},
+	dispatchFrameSeek: seconds => dispatchPlayerSeek(seconds),
+	cancelActiveSeek: reason => reviewSeekCoordinator.cancel(reason),
+	cancelSynchronizedSeek: reason => cancelPendingSynchronizedSeek(reason),
 });
 
 function publishPlayerPointerBounds() {
@@ -243,18 +184,6 @@ function keepPlayerControlsVisible() {
 	playerOverlay.value?.keepControlsVisible();
 }
 
-function playVideo() {
-	if (player.value) {
-		player.value.play();
-	}
-}
-
-function pauseVideo() {
-	if (player.value) {
-		player.value.pause();
-	}
-}
-
 function dispatchPlayerSeek(seconds: number) {
 	youtubePlayerSeekRevision++;
 	player.value?.seek(seconds);
@@ -271,84 +200,6 @@ function dispatchPlayerSeek(seconds: number) {
 function dispatchPlayerLoad(videoID: string, autoplay: boolean, seconds: number) {
 	youtubePlayerSeekRevision++;
 	player.value?.load(videoID, autoplay, seconds);
-}
-
-function clearHotkeySeekTimeouts() {
-	if (hotkeySeekDispatchTimeout !== null) {
-		window.clearTimeout(hotkeySeekDispatchTimeout);
-		hotkeySeekDispatchTimeout = null;
-	}
-	if (hotkeySeekRetryTimeout !== null) {
-		window.clearTimeout(hotkeySeekRetryTimeout);
-		hotkeySeekRetryTimeout = null;
-	}
-}
-
-function hideQueuedSeekIndicator() {
-	if (hotkeySeekIndicatorHideTimeout !== null) {
-		window.clearTimeout(hotkeySeekIndicatorHideTimeout);
-		hotkeySeekIndicatorHideTimeout = null;
-	}
-	queuedSeekDeltaSeconds.value = null;
-	hotkeySeekIndicatorCommittedDeltaSeconds = 0;
-}
-
-function showQueuedSeekIndicator(deltaSeconds: number) {
-	if (hotkeySeekIndicatorHideTimeout !== null) {
-		window.clearTimeout(hotkeySeekIndicatorHideTimeout);
-		hotkeySeekIndicatorHideTimeout = null;
-	}
-	hotkeySeekIndicatorUpdatedAt = performance.now();
-	queuedSeekDeltaSeconds.value = deltaSeconds;
-}
-
-function finishQueuedHotkeySeek() {
-	const completedState = hotkeySeekState;
-	if (completedState) {
-		hotkeySeekIndicatorCommittedDeltaSeconds += completedState.targetSeconds - completedState.originSeconds;
-	}
-	clearHotkeySeekTimeouts();
-	hotkeySeekState = null;
-	const remainingVisibleMs = HOTKEY_SEEK_INDICATOR_MIN_VISIBLE_MS
-		- (performance.now() - hotkeySeekIndicatorUpdatedAt);
-	if (remainingVisibleMs <= 0) {
-		hideQueuedSeekIndicator();
-		return;
-	}
-	hotkeySeekIndicatorHideTimeout = window.setTimeout(() => {
-		hotkeySeekIndicatorHideTimeout = null;
-		hideQueuedSeekIndicator();
-	}, remainingVisibleMs);
-}
-
-function clearQueuedHotkeySeek() {
-	clearHotkeySeekTimeouts();
-	hotkeySeekState = null;
-	hotkeySeekHoldState = null;
-	hideQueuedSeekIndicator();
-}
-
-function togglePlayPause() {
-	if (!player.value) return;
-
-	const state = player.value.getState();
-	if (state === 'playing' || state === 'buffering') {
-		pauseVideo();
-		return;
-	}
-
-	playVideo();
-}
-
-function toggleMute() {
-	if (!player.value) return;
-
-	if (player.value.isMuted()) {
-		player.value.unMute();
-		return;
-	}
-
-	player.value.mute();
 }
 
 async function toggleFullscreen() {
@@ -373,214 +224,6 @@ async function toggleFullscreen() {
 	}
 }
 
-function isPlayerHotkeyExcludedTarget(target: EventTarget | null) {
-	if (!(target instanceof HTMLElement)) return false;
-	if (target.isContentEditable) return true;
-
-	return Boolean(target.closest([
-		'input',
-		'textarea',
-		'select',
-		'button',
-		'a[href]',
-		'summary',
-		'[contenteditable="true"]',
-		'[role="button"]',
-		'[role="menuitem"]',
-		'[role="option"]',
-		'[role="slider"]',
-	].join(', ')));
-}
-
-function getArrowSeekDelta(input: Pick<PlayerHotkeyPayload, 'ctrlKey' | 'metaKey' | 'shiftKey' | 'altKey'>) {
-	if (input.ctrlKey || input.metaKey) return CTRL_SEEK_SECONDS;
-	if (input.shiftKey) return SHIFT_SEEK_SECONDS;
-	if (input.altKey) return ALT_SEEK_SECONDS;
-	return DEFAULT_SEEK_SECONDS;
-}
-
-function clampSeekTarget(seconds: number) {
-	const duration = player.value?.getDuration() || 0;
-	return Math.max(0, Math.min(seconds, duration > 0 ? duration : Number.POSITIVE_INFINITY));
-}
-
-function getSeekConfirmationTolerance(fromSeconds: number, targetSeconds: number) {
-	return Math.min(0.35, Math.max(0.012, Math.abs(targetSeconds - fromSeconds) * 0.15));
-}
-
-function isDispatchedHotkeySeekComplete(currentTime: number) {
-	const state = hotkeySeekState;
-	if (
-		!state
-		|| state.dispatchedFromSeconds === null
-		|| state.dispatchedTargetSeconds === null
-	) return false;
-
-	const fromSeconds = state.dispatchedFromSeconds;
-	const targetSeconds = state.dispatchedTargetSeconds;
-	const tolerance = getSeekConfirmationTolerance(fromSeconds, targetSeconds);
-	if (targetSeconds > fromSeconds) {
-		if (currentTime < targetSeconds - tolerance) return false;
-		if (!state.wasPlayingAtDispatch || state.dispatchedAt === null) return true;
-
-		// Crossing a forward target is not proof that YouTube accepted the seek: for
-		// a one-second hotkey the video can naturally reach it before the retry. A
-		// successful seek must put playback measurably ahead of that natural path.
-		const elapsedSeconds = Math.max(0, performance.now() - state.dispatchedAt) / 1000;
-		const naturallyReachableTime = fromSeconds
-			+ elapsedSeconds * state.playbackRateAtDispatch
-			+ 0.2;
-		return currentTime > naturallyReachableTime;
-	}
-	if (targetSeconds < fromSeconds) return currentTime <= targetSeconds + tolerance;
-	return Math.abs(currentTime - targetSeconds) <= tolerance;
-}
-
-function dispatchQueuedHotkeySeek() {
-	const state = hotkeySeekState;
-	if (!state || !player.value || !reviewsStore.getSelectedVideoId) {
-		clearQueuedHotkeySeek();
-		return;
-	}
-
-	clearHotkeySeekTimeouts();
-	state.targetSeconds = clampSeekTarget(state.targetSeconds);
-	state.dispatchedFromSeconds = player.value.getCurrentTime();
-	state.dispatchedTargetSeconds = state.targetSeconds;
-	state.dispatchedAt = performance.now();
-	state.playbackRateAtDispatch = player.value.getPlaybackRate();
-	state.wasPlayingAtDispatch = isPlayerPlaying.value;
-	void requestVideoTimeSeek(state.targetSeconds, 'hotkey', false);
-
-	hotkeySeekRetryTimeout = window.setTimeout(() => {
-		hotkeySeekRetryTimeout = null;
-		const pendingState = hotkeySeekState;
-		if (!pendingState) return;
-		const currentTime = player.value?.getCurrentTime();
-		if (typeof currentTime === 'number' && isDispatchedHotkeySeekComplete(currentTime)) {
-			onHotkeySeekTimeUpdate(currentTime);
-			return;
-		}
-		if (Date.now() - pendingState.lastInputAt >= HOTKEY_SEEK_MAX_PENDING_MS) {
-			log.warn('YouTube hotkey seek was not confirmed before timeout', {
-				targetSeconds: pendingState.targetSeconds,
-			});
-			clearQueuedHotkeySeek();
-			return;
-		}
-		dispatchQueuedHotkeySeek();
-	}, HOTKEY_SEEK_RETRY_MS);
-}
-
-function scheduleQueuedHotkeySeek() {
-	if (hotkeySeekDispatchTimeout !== null) window.clearTimeout(hotkeySeekDispatchTimeout);
-	hotkeySeekDispatchTimeout = window.setTimeout(() => {
-		hotkeySeekDispatchTimeout = null;
-		dispatchQueuedHotkeySeek();
-	}, HOTKEY_SEEK_DEBOUNCE_MS);
-}
-
-function onHotkeySeekTimeUpdate(currentTime: number) {
-	const state = hotkeySeekState;
-	if (!state || !isDispatchedHotkeySeekComplete(currentTime)) return;
-
-	const dispatchedTarget = state.dispatchedTargetSeconds;
-	if (
-		dispatchedTarget !== null
-		&& Math.abs(state.targetSeconds - dispatchedTarget) > HOTKEY_SEEK_TARGET_EPSILON_SECONDS
-	) {
-		state.dispatchedFromSeconds = null;
-		state.dispatchedTargetSeconds = null;
-		state.dispatchedAt = null;
-		dispatchQueuedHotkeySeek();
-		return;
-	}
-
-	finishQueuedHotkeySeek();
-}
-
-function seekByDelta(delta: number) {
-	if (!player.value) return false;
-	reviewSeekCoordinator.cancel('Relative hotkey seek');
-	cancelPendingSynchronizedSeek('Relative hotkey seek superseded synchronized seek');
-
-	if (!hotkeySeekState) {
-		const currentTime = player.value.getCurrentTime();
-		hotkeySeekState = {
-			originSeconds: currentTime,
-			targetSeconds: currentTime,
-			dispatchedFromSeconds: null,
-			dispatchedTargetSeconds: null,
-			dispatchedAt: null,
-			playbackRateAtDispatch: player.value.getPlaybackRate(),
-			wasPlayingAtDispatch: isPlayerPlaying.value,
-			lastInputAt: Date.now(),
-		};
-	}
-
-	const state = hotkeySeekState;
-	state.targetSeconds = clampSeekTarget(state.targetSeconds + delta);
-	state.lastInputAt = Date.now();
-	showQueuedSeekIndicator(
-		hotkeySeekIndicatorCommittedDeltaSeconds + state.targetSeconds - state.originSeconds,
-	);
-
-	if (state.dispatchedTargetSeconds === null) scheduleQueuedHotkeySeek();
-	return true;
-}
-
-function seekByCurrentPlayerTime(delta: number) {
-	if (!player.value) return false;
-	const currentTime = player.value.getCurrentTime();
-	// Frame stepping intentionally bypasses the queued seek coordinator. Its tiny,
-	// immediate steps are the useful behavior and must not wait for marker checks.
-	reviewSeekCoordinator.cancel('Frame step');
-	cancelPendingSynchronizedSeek('Frame step');
-	dispatchPlayerSeek(clampSeekTarget(currentTime + delta));
-	return true;
-}
-
-function getQueuedSeekHotkeySignature(input: PlayerHotkeyPayload | KeyboardEvent) {
-	return [
-		input.code,
-		input.altKey ? 'alt' : '',
-		input.ctrlKey ? 'ctrl' : '',
-		input.metaKey ? 'meta' : '',
-		input.shiftKey ? 'shift' : '',
-	].join(':');
-}
-
-function shouldApplyQueuedSeekHotkey(input: PlayerHotkeyPayload | KeyboardEvent) {
-	const now = performance.now();
-	const signature = getQueuedSeekHotkeySignature(input);
-	if (!input.repeat || hotkeySeekHoldState?.signature !== signature) {
-		hotkeySeekHoldState = {
-			signature,
-			startedAt: now,
-			lastAcceptedAt: now,
-		};
-		return true;
-	}
-
-	const heldForMs = now - hotkeySeekHoldState.startedAt;
-	const accelerationProgress = Math.min(1, heldForMs / HOTKEY_SEEK_HOLD_ACCELERATION_MS);
-	const repeatIntervalMs = HOTKEY_SEEK_HOLD_INITIAL_INTERVAL_MS
-		- (HOTKEY_SEEK_HOLD_INITIAL_INTERVAL_MS - HOTKEY_SEEK_HOLD_FASTEST_INTERVAL_MS)
-		* accelerationProgress;
-	if (now - hotkeySeekHoldState.lastAcceptedAt < repeatIntervalMs) return false;
-	hotkeySeekHoldState.lastAcceptedAt = now;
-	return true;
-}
-
-function getPlayerIframeElement() {
-	const iframe = player.value?._player?.getIframe?.();
-	return iframe instanceof HTMLIFrameElement ? iframe : null;
-}
-
-function isPlayerHotkeyContext() {
-	return document.activeElement === getPlayerIframeElement();
-}
-
 function requestFullscreenToggle() {
 	if (fullscreenToggleInProgress) return;
 	playerOverlay.value?.closeHotkeyGuide();
@@ -591,111 +234,6 @@ function onReviewsVisibilityChange() {
 	if (document.visibilityState !== 'visible') return;
 	if (getPendingSyncMarkerSeek()) scheduleAutomaticSyncMarkerRead(0);
 }
-
-function onPlayerDoubleClick() {
-	requestFullscreenToggle();
-}
-
-function onPlayerMouseDown(input: PlayerMouseDownPayload) {
-	if (!isPlayerHotkeyContext()) return;
-	if (input.clickCount === 2) {
-		// YouTube handles the first click as play/pause before the app recognizes the
-		// double-click. Reverse that action so fullscreen does not change playback.
-		togglePlayPause();
-		onPlayerDoubleClick();
-	}
-}
-
-function handlePlayerHotkey(input: PlayerHotkeyPayload | KeyboardEvent) {
-	if (!player.value || !reviewsStore.getSelectedVideoId) return false;
-	revealPlayerControls();
-
-	if (input.key === 'ArrowLeft' || input.key === 'ArrowRight') {
-		const delta = getArrowSeekDelta(input);
-		const direction = input.key === 'ArrowRight' ? 1 : -1;
-
-		if ('preventDefault' in input) {
-			input.preventDefault();
-			input.stopPropagation();
-		}
-		return shouldApplyQueuedSeekHotkey(input)
-			? seekByDelta(direction * delta)
-			: true;
-	}
-
-	if (input.ctrlKey || input.metaKey || input.altKey || input.shiftKey) return false;
-
-	if (input.code === 'KeyJ' || input.code === 'KeyL') {
-		if ('preventDefault' in input) {
-			input.preventDefault();
-			input.stopPropagation();
-		}
-
-		const direction = input.code === 'KeyL' ? 1 : -1;
-		return shouldApplyQueuedSeekHotkey(input)
-			? seekByDelta(direction * TEN_SECOND_SEEK_SECONDS)
-			: true;
-	}
-
-	if (input.code === 'Comma' || input.code === 'Period') {
-		if ('preventDefault' in input) {
-			input.preventDefault();
-			input.stopPropagation();
-		}
-
-		const direction = input.code === 'Period' ? 1 : -1;
-		return seekByCurrentPlayerTime(direction * FRAME_SEEK_SECONDS);
-	}
-
-	if (input.code === 'Space' || input.code === 'KeyK') {
-		if ('preventDefault' in input) {
-			input.preventDefault();
-			input.stopPropagation();
-		}
-		if (!input.repeat) togglePlayPause();
-		return true;
-	}
-
-	if (input.code === 'KeyM') {
-		if ('preventDefault' in input) {
-			input.preventDefault();
-			input.stopPropagation();
-		}
-		if (!input.repeat) toggleMute();
-		return true;
-	}
-
-	if (input.code === 'KeyF') {
-		if ('preventDefault' in input) {
-			input.preventDefault();
-			input.stopPropagation();
-		}
-		if (!input.repeat) requestFullscreenToggle();
-		return true;
-	}
-
-	return false;
-}
-
-function onPlayerKeyDown(event: KeyboardEvent) {
-	if (event.defaultPrevented) return;
-	if (event.code === 'Escape' && playerOverlay.value?.closeHotkeyGuide()) {
-		event.preventDefault();
-		event.stopPropagation();
-		return;
-	}
-	if (isPlayerHotkeyExcludedTarget(event.target)) return;
-	handlePlayerHotkey(event);
-}
-
-useIpcOn(IPC_EVENTS.YOUTUBE_PLAYER_HOTKEY_CALLBACK, (event, input: PlayerHotkeyPayload) => {
-	if (!isPlayerHotkeyContext()) return;
-	handlePlayerHotkey(input);
-});
-
-useIpcOn(IPC_EVENTS.YOUTUBE_PLAYER_DOUBLE_CLICK_CALLBACK, (event, input: PlayerMouseDownPayload) => {
-	onPlayerMouseDown(input);
-});
 
 useIpcOn(IPC_EVENTS.YOUTUBE_PLAYER_POINTER_ACTIVITY_CALLBACK, () => {
 	revealPlayerControls();
@@ -971,7 +509,6 @@ watch(playerIframe, (el) => {
 });
 
 onMounted(async () => {
-	window.addEventListener('keydown', onPlayerKeyDown);
 	window.addEventListener('resize', publishPlayerPointerBounds);
 	document.addEventListener('visibilitychange', onReviewsVisibilityChange);
 	syncMarkerAutoReadInterval = window.setInterval(() => {
@@ -998,7 +535,6 @@ onMounted(async () => {
 });
 
 onBeforeUnmount(() => {
-	window.removeEventListener('keydown', onPlayerKeyDown);
 	window.removeEventListener('resize', publishPlayerPointerBounds);
 	document.removeEventListener('visibilitychange', onReviewsVisibilityChange);
 	clearScheduledSyncMarkerRead();
@@ -1011,7 +547,6 @@ onBeforeUnmount(() => {
 	playerBoundsResizeObserver?.disconnect();
 	playerBoundsResizeObserver = null;
 	ipc.send(IPC_EVENTS.YOUTUBE_PLAYER_POINTER_BOUNDS_SET, null);
-	clearQueuedHotkeySeek();
 	isPlayerFullscreen.value = false;
 	void ipc.invoke(IPC_EVENTS.YOUTUBE_PLAYER_FULLSCREEN_SET, false).catch((error) => {
 		log.warn('Failed to leave YouTube player fullscreen while closing Reviews', error);
