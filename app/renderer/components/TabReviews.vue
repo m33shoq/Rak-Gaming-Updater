@@ -1,13 +1,11 @@
 <script setup lang="ts">
-import log from 'electron-log/renderer';
-
-import { computed, watch, useTemplateRef, nextTick } from 'vue';
+import { computed, useTemplateRef } from 'vue';
+import { useReviewPlaybackCoordinator } from '@/renderer/composables/useReviewPlaybackCoordinator';
 import { useReviewPlayerFrame } from '@/renderer/composables/useReviewPlayerFrame';
 import { useReviewPlayerHotkeys } from '@/renderer/composables/useReviewPlayerHotkeys';
 import { createReviewTimelinePlayback } from '@/renderer/composables/useReviewTimelinePlayback';
 import { useReviewTimelineWindowBridge } from '@/renderer/composables/useReviewTimelineWindowBridge';
 import { useReviewVideoActions } from '@/renderer/composables/useReviewVideoActions';
-import { useReviewVideoSynchronization } from '@/renderer/composables/useReviewVideoSynchronization';
 import {
 	useReviewYoutubePlayer,
 	type ReviewYoutubePlayerState,
@@ -21,13 +19,6 @@ import ReviewWclSelectors from '@/renderer/components/ReviewWclSelectors.vue';
 
 import { useReviewsStore } from '@/renderer/store/ReviewsStore';
 
-import {
-	ReviewSeekCoordinator,
-	type ReviewSeekExecutionContext,
-	type ReviewSeekIntent,
-	type ReviewSeekSource,
-} from '@/renderer/reviewSeekCoordinator';
-import { getReviewVideoEndTime } from '@/reviewVideoSelection';
 import { buildReviewPhaseMarkers } from '@/reviewPhaseTransitions';
 
 const reviewsStore = useReviewsStore();
@@ -63,54 +54,39 @@ const {
 	revealControls: () => revealPlayerControls(),
 	keepControlsVisible: () => keepPlayerControlsVisible(),
 });
-let internallySelectedFight: { requestID: number; fightID: number } | null = null;
-let internallySelectedVideo: { requestID: number; videoID: string } | null = null;
-
-const reviewSeekCoordinator = new ReviewSeekCoordinator(
-	executeReviewSeek,
-	state => {
-		if (state?.phase === 'failed' || state?.phase === 'unavailable') {
-			reportSynchronizationSeekFailure(state.message || 'Video seek is unavailable');
-		}
-	},
-);
-
+let clearQueuedHotkeySeek = () => undefined;
 const {
-	cancelPendingSeek: cancelPendingSynchronizedSeek,
-	capture: captureReviewSyncMarker,
-	dismissStatus: dismissReviewSyncStatus,
-	failActiveSeek: failSynchronizationSeek,
-	getAbsoluteLogTimestampForVideoTime,
-	getPendingSeek: getPendingSyncMarkerSeek,
-	getVideoTimeForAbsoluteLogTimestamp,
-	isCapturing: isSyncPrototypeCapturing,
-	onPlayerBeforeChange: resetSynchronizationForPlayerChange,
-	onPlayerSeekDispatched: scheduleSynchronizationAfterSeek,
-	onPlayerStateChange: updateSynchronizationPlayerState,
-	onSelectedVideoChange: resetSynchronizationForSelectedVideo,
-	queueSeek: queueSyncMarkerSeek,
-	reportSeekFailure: reportSynchronizationSeekFailure,
-	status: syncPrototypeStatus,
-	statusTone: syncPrototypeStatusTone,
-	updatePlaybackRate: updatePendingSyncMarkerSeekPlaybackRate,
-} = useReviewVideoSynchronization({
+	cancelActiveSeek,
+	cancelPendingSynchronizedSeek,
+	captureReviewSyncMarker,
+	currentFightCursor,
+	dismissReviewSyncStatus,
+	dispatchPlayerSeek,
+	failSynchronizationSeek,
+	isSyncPrototypeCapturing,
+	rememberCurrentFightTime,
+	requestSelectedVideoPlayback,
+	requestVideoTimeSeek,
+	resetSynchronizationForPlayerChange,
+	seekToFightTimestamp,
+	seekToPullTimestamp,
+	syncPrototypeStatus,
+	syncPrototypeStatusTone,
+	updatePendingSyncMarkerSeekPlaybackRate,
+	updateSynchronizationPlayerState,
+} = useReviewPlaybackCoordinator({
+	reviewsStore,
 	player,
 	playerLoaded,
 	playerPlaying: isPlayerPlaying,
+	currentVideoTime,
 	playerStateRevision: youtubePlayerStateRevision,
 	playerSeekRevision: youtubePlayerSeekRevision,
 	videoContainer,
-	getSelectedVideo: () => reviewsStore.selectedVideoInfo,
-	getSelectedVideoID: () => reviewsStore.getSelectedVideoId,
-	seekCoordinator: reviewSeekCoordinator,
-	clampSeekTarget: seconds => {
-		const duration = player.value?.getDuration() || 0;
-		return Math.max(0, Math.min(
-			seconds,
-			duration > 0 ? duration : Number.POSITIVE_INFINITY,
-		));
-	},
-	dispatchPlayerSeek: seconds => dispatchPlayerSeek(seconds),
+	dispatchYoutubePlayerSeek,
+	dispatchYoutubePlayerLoad,
+	clearQueuedSeek: () => clearQueuedHotkeySeek(),
+	resetPlayerOverlay: () => playerOverlay.value?.reset(),
 	keepControlsVisible: () => keepPlayerControlsVisible(),
 	revealControls: () => revealPlayerControls(),
 });
@@ -130,7 +106,7 @@ const {
 });
 
 const {
-	clearQueuedSeek: clearQueuedHotkeySeek,
+	clearQueuedSeek: clearQueuedHotkeySeekHandler,
 	onPlayerDoubleClick,
 	onPlayerTimeUpdate: onHotkeySeekTimeUpdate,
 	queuedSeekDeltaLabel,
@@ -148,9 +124,10 @@ const {
 		void requestVideoTimeSeek(seconds, 'hotkey', false);
 	},
 	dispatchFrameSeek: seconds => dispatchPlayerSeek(seconds),
-	cancelActiveSeek: reason => reviewSeekCoordinator.cancel(reason),
+	cancelActiveSeek,
 	cancelSynchronizedSeek: reason => cancelPendingSynchronizedSeek(reason),
 });
+clearQueuedHotkeySeek = clearQueuedHotkeySeekHandler;
 
 function revealPlayerControls() {
 	playerOverlay.value?.revealControls();
@@ -159,105 +136,6 @@ function revealPlayerControls() {
 function keepPlayerControlsVisible() {
 	playerOverlay.value?.keepControlsVisible();
 }
-
-function dispatchPlayerSeek(seconds: number) {
-	dispatchYoutubePlayerSeek(seconds);
-	scheduleSynchronizationAfterSeek();
-}
-
-function dispatchPlayerLoad(videoID: string, autoplay: boolean, seconds: number) {
-	dispatchYoutubePlayerLoad(videoID, autoplay, seconds);
-}
-
-let lastFightRelativeTime = 0;
-function requestSelectedVideoPlayback(source: ReviewSeekSource = 'video-selection') {
-	const videoID = reviewsStore.getSelectedVideoId;
-	if (!videoID || !player.value || !playerLoaded.value) return;
-
-	const directSeekSeconds = reviewsStore.consumePendingDirectVideoSeekSeconds();
-	if (directSeekSeconds !== null) {
-		void requestVideoTimeSeek(directSeekSeconds, 'deep-link', true, videoID);
-		return;
-	}
-
-	const fightID = reviewsStore.selectedFightID;
-	if (fightID) {
-		void requestFightSeek(fightID, lastFightRelativeTime, source, videoID);
-		return;
-	}
-
-	const reportStartTime = reviewsStore.getSelectedReport?.startTime
-		?? reviewsStore.getReportDetails?.startTime;
-	const reportVideoTime = Number.isFinite(reportStartTime)
-		? Math.max(0, getVideoTimeForAbsoluteLogTimestamp(reportStartTime!))
-		: 0;
-	void requestVideoTimeSeek(reportVideoTime, source, true, videoID);
-}
-
-watch(() => reviewsStore.getSelectedVideoId, (newId) => {
-	resetSynchronizationForSelectedVideo(newId);
-	if (!newId) {
-		internallySelectedVideo = null;
-		reviewSeekCoordinator.cancel('No video selected');
-		playerOverlay.value?.reset();
-		player.value?.stop();
-		return;
-	}
-	if (
-		internallySelectedVideo?.videoID === newId
-		&& reviewSeekCoordinator.state?.requestID === internallySelectedVideo.requestID
-	) {
-		internallySelectedVideo = null;
-		return;
-	}
-	internallySelectedVideo = null;
-	requestSelectedVideoPlayback();
-});
-
-watch(() => reviewsStore.pendingDirectVideoSeekSeconds, () => {
-	if (reviewsStore.pendingDirectVideoSeekSeconds !== null) {
-		requestSelectedVideoPlayback('deep-link');
-	}
-});
-
-watch(() => reviewsStore.selectedFightID, (newVal) => {
-	if (
-		newVal
-		&& internallySelectedFight?.fightID === newVal
-		&& reviewSeekCoordinator.state?.requestID === internallySelectedFight.requestID
-	) {
-		internallySelectedFight = null;
-		return;
-	}
-	internallySelectedFight = null;
-	lastFightRelativeTime = 0;
-	if (newVal) void requestFightSeek(newVal, 0, 'fight-selection');
-	else reviewSeekCoordinator.cancel('No fight selected');
-});
-
-watch(() => reviewsStore.selectedReportCode, async (newVal, oldVal) => {
-	if (newVal !== oldVal) {
-		lastFightRelativeTime = 0;
-		internallySelectedFight = null;
-		internallySelectedVideo = null;
-		reviewSeekCoordinator.cancel('Selected report changed');
-		cancelPendingSynchronizedSeek('Selected report changed');
-		await nextTick();
-		if (reviewsStore.selectedReportCode !== newVal) return;
-		if (newVal && reviewsStore.selectedVideoInfo) {
-			const reportStart = reviewsStore.getSelectedReport?.startTime
-				?? reviewsStore.getReportDetails?.startTime;
-			if (Number.isFinite(reportStart)) {
-				void requestVideoTimeSeek(
-					getVideoTimeForAbsoluteLogTimestamp(reportStart!),
-					'report-selection',
-					true,
-				);
-			}
-		}
-	}
-});
-
 
 function handleYoutubePlayerBeforeChange(): void {
 	clearQueuedHotkeySeek();
@@ -288,258 +166,6 @@ function handleYoutubePlayerStateChange(state: ReviewYoutubePlayerState): void {
 	updateSynchronizationPlayerState(state);
 }
 
-watch(() => reviewsStore.videoList, (newList) => {
-	if (!reviewsStore.selectedVideoInfo && newList.length > 0) {
-		reviewsStore.setSelectedVideoInfo(newList[0]);
-	}
-	// log.info('Filtered video list length:', newList.length);
-	// for (const video of newList) {
-	// 	log.info(`Video ${video.id} ${video.title} (${video.author}) from ${new Date(video.startTime).toLocaleString()} to ${new Date(video.startTime + (video.duration || 0)).toLocaleString()} checkTime: ${new Date(video.checkTime).toLocaleString()}}	`);
-	// }
-});
-
-function videoContainsTimestamp(video: YouTubeVideo, timestampMs: number): boolean {
-	return video.startTime <= timestampMs
-		&& getReviewVideoEndTime(video) >= timestampMs;
-}
-
-function getVideoForFightTimestamp(
-	timestampMs: number,
-	preferredVideoID?: string,
-): YouTubeVideo | null {
-	const candidates = reviewsStore.videoList;
-	const preferred = preferredVideoID
-		? candidates.find(video => video.id === preferredVideoID) || null
-		: null;
-	if (preferredVideoID) {
-		return preferred && videoContainsTimestamp(preferred, timestampMs)
-			? preferred
-			: null;
-	}
-
-	const current = reviewsStore.selectedVideoInfo;
-	if (current && candidates.some(video => video.id === current.id) && videoContainsTimestamp(current, timestampMs)) {
-		return current;
-	}
-
-	return candidates.find(video => videoContainsTimestamp(video, timestampMs)) || null;
-}
-
-async function executeReviewSeek(
-	intent: ReviewSeekIntent,
-	context: ReviewSeekExecutionContext,
-) {
-	const activePlayer = player.value;
-	if (!activePlayer || !playerLoaded.value) {
-		return { phase: 'unavailable' as const, message: 'YouTube player is still loading' };
-	}
-
-	if (intent.kind === 'video-time') {
-		const video = reviewsStore.videoList.find(candidate => candidate.id === intent.videoID)
-			|| reviewsStore.selectedVideoInfo;
-		if (!video || video.id !== intent.videoID) {
-			return { phase: 'unavailable' as const, message: 'The selected stream is no longer available' };
-		}
-		const videoDurationSeconds = video.duration > 0 ? video.duration / 1000 : Number.POSITIVE_INFINITY;
-		if (
-			!Number.isFinite(intent.videoTimeSeconds)
-			|| intent.videoTimeSeconds < 0
-			|| intent.videoTimeSeconds > videoDurationSeconds
-		) {
-			return { phase: 'unavailable' as const, message: 'That timestamp is outside the selected stream' };
-		}
-		if (!context.isCurrent()) return { phase: 'unavailable' as const };
-
-		cancelPendingSynchronizedSeek('Video-time seek');
-		context.setPhase(activePlayer.getVideoId() === video.id ? 'seeking' : 'loading');
-		if (activePlayer.getVideoId() === video.id) {
-			dispatchPlayerSeek(intent.videoTimeSeconds);
-			if (intent.play) activePlayer.play();
-		} else {
-			dispatchPlayerLoad(video.id, intent.play, intent.videoTimeSeconds);
-		}
-		return { phase: 'completed' as const };
-	}
-
-	const reportDetails = reviewsStore.getReportDetails;
-	const fight = reportDetails?.fights?.find(candidate => candidate.id === intent.fightID);
-	const reportStartTime = reviewsStore.getSelectedReport?.startTime ?? reportDetails?.startTime;
-	if (!fight || !Number.isFinite(reportStartTime)) {
-		return { phase: 'unavailable' as const, message: 'The requested pull is no longer available' };
-	}
-
-	const fightDurationSeconds = Math.max(0, (fight.endTime - fight.startTime) / 1000);
-	const fightTimestampSeconds = Math.max(
-		0,
-		Math.min(Number(intent.fightTimestampSeconds) || 0, fightDurationSeconds),
-	);
-	if (reviewsStore.selectedFightID !== fight.id) {
-		internallySelectedFight = { requestID: context.requestID, fightID: fight.id };
-		reviewsStore.selectedFightID = fight.id;
-		await nextTick();
-		if (!context.isCurrent()) return { phase: 'unavailable' as const };
-	}
-
-	const targetMarkerTimestampMs = reportStartTime! + fight.startTime + fightTimestampSeconds * 1000;
-	const targetVideo = getVideoForFightTimestamp(targetMarkerTimestampMs, intent.preferredVideoID);
-	if (!targetVideo) {
-		const loadedVideoID = activePlayer.getVideoId();
-		const loadedVideo = loadedVideoID
-			? reviewsStore.videoList.find(video => video.id === loadedVideoID) || null
-			: null;
-		if (
-			intent.preferredVideoID
-			&& loadedVideo
-			&& reviewsStore.getSelectedVideoId !== loadedVideo.id
-		) {
-			internallySelectedVideo = { requestID: context.requestID, videoID: loadedVideo.id };
-			reviewsStore.setSelectedVideoInfo(loadedVideo);
-			await nextTick();
-		}
-		return {
-			phase: 'unavailable' as const,
-			message: 'No stream contains that point in the pull',
-		};
-	}
-
-	if (reviewsStore.getSelectedVideoId !== targetVideo.id) {
-		internallySelectedVideo = { requestID: context.requestID, videoID: targetVideo.id };
-		reviewsStore.setSelectedVideoInfo(targetVideo);
-		await nextTick();
-		if (!context.isCurrent()) return { phase: 'unavailable' as const };
-	}
-
-	const videoTimeSeconds = getVideoTimeForAbsoluteLogTimestamp(targetMarkerTimestampMs);
-	const videoDurationSeconds = targetVideo.duration > 0
-		? targetVideo.duration / 1000
-		: Number.POSITIVE_INFINITY;
-	if (
-		!Number.isFinite(videoTimeSeconds)
-		|| videoTimeSeconds < 0
-		|| videoTimeSeconds > videoDurationSeconds
-	) {
-		return {
-			phase: 'unavailable' as const,
-			message: 'The synchronized timestamp is outside the selected stream',
-		};
-	}
-	if (!context.isCurrent()) return { phase: 'unavailable' as const };
-
-	lastFightRelativeTime = fightTimestampSeconds;
-	clearQueuedHotkeySeek();
-	cancelPendingSynchronizedSeek('New absolute seek');
-	if (intent.synchronize) {
-		queueSyncMarkerSeek(
-			targetMarkerTimestampMs,
-			videoTimeSeconds,
-			context.requestID,
-			targetVideo.id,
-		);
-	}
-
-	const loadedVideoID = activePlayer.getVideoId();
-	context.setPhase(loadedVideoID === targetVideo.id ? 'seeking' : 'loading');
-	log.info('Dispatching coordinated review seek', {
-		requestID: context.requestID,
-		source: intent.source,
-		fightID: fight.id,
-		fightTimestampSeconds,
-		videoID: targetVideo.id,
-		videoTimeSeconds,
-		loadRequired: loadedVideoID !== targetVideo.id,
-	});
-	if (loadedVideoID === targetVideo.id) {
-		dispatchPlayerSeek(videoTimeSeconds);
-		if (intent.play) activePlayer.play();
-	} else {
-		dispatchPlayerLoad(targetVideo.id, intent.play, videoTimeSeconds);
-	}
-
-	return { phase: intent.synchronize ? 'verifying' as const : 'completed' as const };
-}
-
-function requestVideoTimeSeek(
-	videoTimeSeconds: number,
-	source: ReviewSeekSource,
-	play: boolean,
-	videoID = reviewsStore.getSelectedVideoId,
-) {
-	if (!videoID || !player.value || !playerLoaded.value) return Promise.resolve(null);
-	return reviewSeekCoordinator.request({
-		kind: 'video-time',
-		source,
-		videoID,
-		videoTimeSeconds,
-		play,
-		synchronize: false,
-	});
-}
-
-function requestFightSeek(
-	fightID: number,
-	fightTimestampSeconds: number,
-	source: ReviewSeekSource,
-	preferredVideoID?: string,
-) {
-	if (!player.value || !playerLoaded.value) return Promise.resolve(null);
-	return reviewSeekCoordinator.request({
-		kind: 'fight-time',
-		source,
-		fightID,
-		fightTimestampSeconds,
-		preferredVideoID,
-		play: true,
-		synchronize: true,
-	});
-}
-
-// 0 - fight end, in seconds
-function seekToFightTimestamp(fightTimestamp: number, source: ReviewSeekSource = 'timeline') {
-	const fightID = reviewsStore.selectedFightID;
-	if (!fightID) return;
-	void requestFightSeek(fightID, fightTimestamp, source);
-}
-
-function seekToPullTimestamp(
-	fightID: number,
-	timestampSeconds: number,
-	source: ReviewSeekSource = 'comparison',
-) {
-	if (!reviewsStore.getReportDetails?.fights.some(fight => fight.id === fightID)) return;
-	void requestFightSeek(fightID, timestampSeconds, source);
-}
-
-function rememberCurrentFightTime(): void {
-	if (!reviewsStore.selectedFightID || !reviewsStore.getFightDuration) return;
-	if (player.value?.getVideoId() !== reviewsStore.getSelectedVideoId) return;
-	const pendingSeek = getPendingSyncMarkerSeek();
-	if (
-		pendingSeek
-		&& Date.now() - pendingSeek.seekIssuedAt < 2_000
-		&& Math.abs(currentVideoTime.value - pendingSeek.requestedVideoTimeSeconds) > 2
-	) return;
-	const currentLogTimestamp = getAbsoluteLogTimestampForVideoTime(currentVideoTime.value);
-	const fightRelativeTime = (currentLogTimestamp - reviewsStore.getFightStartTime) / 1000;
-	lastFightRelativeTime = Math.max(
-		0,
-		Math.min(fightRelativeTime, reviewsStore.getFightDuration / 1000),
-	);
-}
-
-const currentFightCursor = computed(() => {
-    if (!player.value || !reviewsStore.getFightDuration) return 0;
-
-	const currentLogTimestamp = getAbsoluteLogTimestampForVideoTime(currentVideoTime.value);
-	const fightRelativeTime = (currentLogTimestamp - reviewsStore.getFightStartTime) / 1000;
-
-    // Clamp between 0 and fightDuration (in seconds)
-    const fightDurationSec = reviewsStore.getFightDuration / 1000;
-    const clamped = Math.max(0, Math.min(fightRelativeTime, fightDurationSec));
-
-    // Return as percent (0 to 1)
-	// log.debug(`Current fight cursor: ${clamped}s / ${fightDurationSec}s = ${(clamped / fightDurationSec * 100).toFixed(2)}%`);
-    return clamped / fightDurationSec;
-});
 const timelinePlayback = createReviewTimelinePlayback(currentFightCursor, isPlayerPlaying);
 
 const phaseTransitions = computed(() => buildReviewPhaseMarkers(
