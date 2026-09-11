@@ -2,8 +2,8 @@
 import log from 'electron-log/renderer';
 import { IPC_EVENTS } from '@/events';
 
-import { ref, computed, watch, onMounted, onBeforeUnmount, useTemplateRef, nextTick } from 'vue';
-import { useIpcOn } from '@/renderer/composables/useIpcOn';
+import { ref, computed, watch, onBeforeUnmount, useTemplateRef, nextTick } from 'vue';
+import { useReviewPlayerFrame } from '@/renderer/composables/useReviewPlayerFrame';
 import { useReviewPlayerHotkeys } from '@/renderer/composables/useReviewPlayerHotkeys';
 import { createReviewTimelinePlayback } from '@/renderer/composables/useReviewTimelinePlayback';
 import { useReviewTimelineWindowBridge } from '@/renderer/composables/useReviewTimelineWindowBridge';
@@ -42,7 +42,6 @@ type ReviewPlayerOverlayHandle = {
 	revealControls: () => void;
 };
 const playerOverlay = useTemplateRef<ReviewPlayerOverlayHandle | null>('playerOverlay');
-const isPlayerFullscreen = ref(false);
 const {
 	currentTime: currentVideoTime,
 	dispatchLoad: dispatchYoutubePlayerLoad,
@@ -117,8 +116,19 @@ const {
 	revealControls: () => revealPlayerControls(),
 });
 
-let fullscreenToggleInProgress = false;
-let playerBoundsResizeObserver: ResizeObserver | null = null;
+const {
+	isFullscreen: isPlayerFullscreen,
+	onPointerEnter: onPlayerPointerEnter,
+	requestFullscreenToggle,
+} = useReviewPlayerFrame({
+	container: videoContainer,
+	playerLoaded,
+	hasSelectedVideo: () => Boolean(reviewsStore.getSelectedVideoId),
+	closeHotkeyGuide: () => {
+		playerOverlay.value?.closeHotkeyGuide();
+	},
+	revealControls: () => revealPlayerControls(),
+});
 
 const {
 	clearQueuedSeek: clearQueuedHotkeySeek,
@@ -143,26 +153,6 @@ const {
 	cancelSynchronizedSeek: reason => cancelPendingSynchronizedSeek(reason),
 });
 
-function publishPlayerPointerBounds() {
-	const rect = videoContainer.value?.getBoundingClientRect();
-	if (!rect || rect.width <= 0 || rect.height <= 0) {
-		ipc.send(IPC_EVENTS.YOUTUBE_PLAYER_POINTER_BOUNDS_SET, null);
-		return;
-	}
-
-	ipc.send(IPC_EVENTS.YOUTUBE_PLAYER_POINTER_BOUNDS_SET, {
-		left: rect.left,
-		top: rect.top,
-		right: rect.right,
-		bottom: rect.bottom,
-	});
-}
-
-function onPlayerPointerEnter() {
-	publishPlayerPointerBounds();
-	revealPlayerControls();
-}
-
 function revealPlayerControls() {
 	playerOverlay.value?.revealControls();
 }
@@ -179,58 +169,6 @@ function dispatchPlayerSeek(seconds: number) {
 function dispatchPlayerLoad(videoID: string, autoplay: boolean, seconds: number) {
 	dispatchYoutubePlayerLoad(videoID, autoplay, seconds);
 }
-
-async function toggleFullscreen() {
-	const fullscreenTarget = videoContainer.value;
-	const enteringFullscreen = !isPlayerFullscreen.value;
-	if (
-		!fullscreenTarget?.isConnected
-		|| fullscreenToggleInProgress
-		|| (enteringFullscreen && (!playerLoaded.value || !reviewsStore.getSelectedVideoId))
-	) return;
-
-	fullscreenToggleInProgress = true;
-	try {
-		isPlayerFullscreen.value = await ipc.invoke(
-			IPC_EVENTS.YOUTUBE_PLAYER_FULLSCREEN_SET,
-			!isPlayerFullscreen.value,
-		) === true;
-	} catch (error) {
-		log.warn('Failed to toggle YouTube player fullscreen', error);
-	} finally {
-		fullscreenToggleInProgress = false;
-	}
-}
-
-function requestFullscreenToggle() {
-	if (fullscreenToggleInProgress) return;
-	playerOverlay.value?.closeHotkeyGuide();
-	void toggleFullscreen();
-}
-
-useIpcOn(IPC_EVENTS.YOUTUBE_PLAYER_POINTER_ACTIVITY_CALLBACK, () => {
-	revealPlayerControls();
-});
-
-useIpcOn(IPC_EVENTS.YOUTUBE_PLAYER_FULLSCREEN_CHANGED, (_event, fullscreen: boolean) => {
-	isPlayerFullscreen.value = fullscreen === true;
-	playerOverlay.value?.closeHotkeyGuide();
-	revealPlayerControls();
-	void nextTick(publishPlayerPointerBounds);
-});
-
-watch(videoContainer, (container) => {
-	playerBoundsResizeObserver?.disconnect();
-	playerBoundsResizeObserver = null;
-	if (!container) {
-		publishPlayerPointerBounds();
-		return;
-	}
-
-	playerBoundsResizeObserver = new ResizeObserver(publishPlayerPointerBounds);
-	playerBoundsResizeObserver.observe(container);
-	void nextTick(publishPlayerPointerBounds);
-});
 
 let lastFightRelativeTime = 0;
 function requestSelectedVideoPlayback(source: ReviewSeekSource = 'video-selection') {
@@ -351,24 +289,7 @@ function handleYoutubePlayerStateChange(state: ReviewYoutubePlayerState): void {
 	updateSynchronizationPlayerState(state);
 }
 
-onMounted(async () => {
-	window.addEventListener('resize', publishPlayerPointerBounds);
-	try {
-		isPlayerFullscreen.value = await ipc.invoke(IPC_EVENTS.YOUTUBE_PLAYER_FULLSCREEN_STATUS_GET) === true;
-	} catch (error) {
-		log.warn('Failed to load YouTube player fullscreen state', error);
-	}
-});
-
 onBeforeUnmount(() => {
-	window.removeEventListener('resize', publishPlayerPointerBounds);
-	playerBoundsResizeObserver?.disconnect();
-	playerBoundsResizeObserver = null;
-	ipc.send(IPC_EVENTS.YOUTUBE_PLAYER_POINTER_BOUNDS_SET, null);
-	isPlayerFullscreen.value = false;
-	void ipc.invoke(IPC_EVENTS.YOUTUBE_PLAYER_FULLSCREEN_SET, false).catch((error) => {
-		log.warn('Failed to leave YouTube player fullscreen while closing Reviews', error);
-	});
 	resetCopyReviewLinkStatus();
 });
 
