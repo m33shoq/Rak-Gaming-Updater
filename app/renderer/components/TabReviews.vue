@@ -7,6 +7,10 @@ import { useIpcOn } from '@/renderer/composables/useIpcOn';
 import { useReviewPlayerHotkeys } from '@/renderer/composables/useReviewPlayerHotkeys';
 import { createReviewTimelinePlayback } from '@/renderer/composables/useReviewTimelinePlayback';
 import { useReviewTimelineWindowBridge } from '@/renderer/composables/useReviewTimelineWindowBridge';
+import {
+	useReviewYoutubePlayer,
+	type ReviewYoutubePlayerState,
+} from '@/renderer/composables/useReviewYoutubePlayer';
 
 import TabContent from '@/renderer/components/TabContent.vue';
 import ReviewCooldownTimeline from '@/renderer/components/ReviewCooldownTimeline.vue';
@@ -18,7 +22,6 @@ import { useReviewsStore } from '@/renderer/store/ReviewsStore';
 
 import { useYoutubeVideoInfo } from '@/renderer/composables/useYoutubeVideoInfo';
 
-import YTPlayer from '@/renderer/yt-player';
 import { decodeReviewSyncMarkerImage } from '@/renderer/reviewSyncMarkerDecoder';
 import type { ReviewSyncMarkerCapture } from '@/reviewSyncMarker';
 import {
@@ -30,9 +33,7 @@ import {
 import { getReviewVideoEndTime } from '@/reviewVideoSelection';
 
 const reviewsStore = useReviewsStore();
-let playerLoaded = false;
 
-const player = ref<YTPlayer | null>(null);
 const playerIframe = useTemplateRef<HTMLIFrameElement | null>('playerIframe');
 const videoContainer = useTemplateRef<HTMLElement | null>('videoContainer');
 type ReviewPlayerOverlayHandle = {
@@ -43,7 +44,28 @@ type ReviewPlayerOverlayHandle = {
 };
 const playerOverlay = useTemplateRef<ReviewPlayerOverlayHandle | null>('playerOverlay');
 const isPlayerFullscreen = ref(false);
-const isPlayerPlaying = ref(false);
+const {
+	currentTime: currentVideoTime,
+	dispatchLoad: dispatchYoutubePlayerLoad,
+	dispatchSeek: dispatchYoutubePlayerSeek,
+	isLoaded: playerLoaded,
+	isPlaying: isPlayerPlaying,
+	player,
+	reloadRevision: playerReloads,
+	seekRevision: youtubePlayerSeekRevision,
+	stateRevision: youtubePlayerStateRevision,
+} = useReviewYoutubePlayer({
+	iframe: playerIframe,
+	onBeforePlayerChange: () => handleYoutubePlayerBeforeChange(),
+	onPlaybackUnavailable: message => handleYoutubePlayerUnavailable(message),
+	onPlaybackError: message => handleYoutubePlayerError(message),
+	onTimeUpdate: seconds => handleYoutubePlayerTimeUpdate(seconds),
+	onReady: () => handleYoutubePlayerReady(),
+	onStateChange: state => handleYoutubePlayerStateChange(state),
+	onPlaybackRateChange: rate => updatePendingSyncMarkerSeekPlaybackRate(rate),
+	revealControls: () => revealPlayerControls(),
+	keepControlsVisible: () => keepPlayerControlsVisible(),
+});
 const syncPrototypeAnchor = ref<{
 	videoId: string;
 	videoTimeSeconds: number;
@@ -53,7 +75,6 @@ const syncPrototypeStatus = ref('');
 const syncPrototypeStatusTone = ref<'success' | 'error' | 'info'>('info');
 const isSyncPrototypeCapturing = ref(false);
 
-const VIDEO_TIME_UPDATE_HZ = 16;
 const SYNC_MARKER_AUTO_READ_INTERVAL_MS = 10_000;
 const SYNC_MARKER_REANCHOR_THRESHOLD_MS = 250;
 const SYNC_MARKER_AUTO_FAILURE_LOG_INTERVAL_MS = 5 * 60_000;
@@ -82,8 +103,6 @@ let syncMarkerAutoReadInterval: number | null = null;
 let syncMarkerScheduledReadTimeout: number | null = null;
 let lastSyncMarkerAutoFailureLogTime = 0;
 let lastSyncMarkerCaptureStartedAt = 0;
-let youtubePlayerStateRevision = 0;
-let youtubePlayerSeekRevision = 0;
 let pendingSyncMarkerReanchor: {
 	videoId: string;
 	kind: 'initial' | 'adjustment';
@@ -185,8 +204,7 @@ function keepPlayerControlsVisible() {
 }
 
 function dispatchPlayerSeek(seconds: number) {
-	youtubePlayerSeekRevision++;
-	player.value?.seek(seconds);
+	dispatchYoutubePlayerSeek(seconds);
 	// The iframe does not consistently emit a state transition for paused or
 	// short seeks. Start the guarded observation loop promptly for synchronized
 	// seeks; ordinary relative seeks only need the slower anchor-maintenance read.
@@ -198,8 +216,7 @@ function dispatchPlayerSeek(seconds: number) {
 }
 
 function dispatchPlayerLoad(videoID: string, autoplay: boolean, seconds: number) {
-	youtubePlayerSeekRevision++;
-	player.value?.load(videoID, autoplay, seconds);
+	dispatchYoutubePlayerLoad(videoID, autoplay, seconds);
 }
 
 async function toggleFullscreen() {
@@ -208,7 +225,7 @@ async function toggleFullscreen() {
 	if (
 		!fullscreenTarget?.isConnected
 		|| fullscreenToggleInProgress
-		|| (enteringFullscreen && (!playerLoaded || !reviewsStore.getSelectedVideoId))
+		|| (enteringFullscreen && (!playerLoaded.value || !reviewsStore.getSelectedVideoId))
 	) return;
 
 	fullscreenToggleInProgress = true;
@@ -262,7 +279,7 @@ watch(videoContainer, (container) => {
 let lastFightRelativeTime = 0;
 function requestSelectedVideoPlayback(source: ReviewSeekSource = 'video-selection') {
 	const videoID = reviewsStore.getSelectedVideoId;
-	if (!videoID || !player.value || !playerLoaded) return;
+	if (!videoID || !player.value || !playerLoaded.value) return;
 
 	const directSeekSeconds = reviewsStore.consumePendingDirectVideoSeekSeconds();
 	if (directSeekSeconds !== null) {
@@ -354,159 +371,76 @@ watch(() => reviewsStore.selectedReportCode, async (newVal, oldVal) => {
 });
 
 
-const playerReloads = ref(0);
-
-function reloadPlayer() {
-  playerReloads.value++;
-  log.info("Reloading YouTube player, reload count:", playerReloads.value);
-}
-
-const currentVideoTime = ref(0);
-
-watch(playerIframe, (el) => {
+function handleYoutubePlayerBeforeChange(): void {
 	clearQueuedHotkeySeek();
 	clearScheduledSyncMarkerRead();
 	reviewSeekCoordinator.cancel('YouTube player instance changed');
 	cancelPendingSynchronizedSeek('YouTube player instance changed');
-	youtubePlayerStateRevision++;
-	isPlayerPlaying.value = false;
-	keepPlayerControlsVisible();
-	if (player.value) {
-		log.info("Destroying existing YouTube player instance");
-		player.value.destroy();
-		player.value = null;
-		playerLoaded = false;
-	}
-	if (el) {
-		log.info("Creating new YouTube player instance");
-		player.value = new YTPlayer(el, {
-			autoplay: true,
-			// Keep YouTube's quality, captions, and settings controls available.
-			controls: true,
-			// Fullscreen is app-owned so YouTube cannot create a competing state.
-			fullscreen: false,
-			height: '100%',
-			host: "https://www.youtube-nocookie.com",
-			keyboard: false,
-			timeupdateFrequency: 1000 / VIDEO_TIME_UPDATE_HZ,
-			width: '100%',
-		});
+}
 
-		player.value.on('unplayable', ({ videoId, errorCode, data }) => {
-			clearQueuedHotkeySeek();
-			const seekState = reviewSeekCoordinator.state;
-			pendingSyncMarkerSeek = null;
-			if (seekState) reviewSeekCoordinator.finish(
-				seekState.requestID,
-				'failed',
-				'YouTube could not play the selected video',
-			);
-			log.info("YouTube video unplayable:", videoId, errorCode);
-			log.info(player.value._player)
-			log.info("playerInfo", player.value?._player?.playerInfo)
-			log.info('data', data)
-			if (player.value?._player?.getVideoData) {
-				log.info("videoData", player.value?._player?.getVideoData())
-			}
-			log.info('debugText', player.value?._player?.getDebugText())
+function failActiveYoutubeSeek(message: string): void {
+	const seekState = reviewSeekCoordinator.state;
+	pendingSyncMarkerSeek = null;
+	if (seekState) reviewSeekCoordinator.finish(seekState.requestID, 'failed', message);
+}
 
-			// alert(`The requested video ${videoId} is unplayable. Error code: ${errorCode}`);
-			if (errorCode === 150) { // noreferrer bug, try reloading the player 153 actually fires with 150 wtf
-				setTimeout(() => {
-					reloadPlayer();
-				}, 1500);
-			}
-		});
+function handleYoutubePlayerUnavailable(message: string): void {
+	clearQueuedHotkeySeek();
+	failActiveYoutubeSeek(message);
+}
 
-		player.value.on('error', (error) => {
-			youtubePlayerStateRevision++;
-			clearScheduledSyncMarkerRead();
-			clearQueuedHotkeySeek();
-			pendingSyncMarkerSeek = null;
-			const seekState = reviewSeekCoordinator.state;
-			if (seekState) reviewSeekCoordinator.finish(
-				seekState.requestID,
-				'failed',
-				'YouTube player error',
-			);
-			log.info("YouTube embed error:", error);
-			alert(`Error embedding video. Error code: ${error}`);
-		});
+function handleYoutubePlayerError(message: string): void {
+	clearScheduledSyncMarkerRead();
+	clearQueuedHotkeySeek();
+	failActiveYoutubeSeek(message);
+}
 
-		player.value.on('timeupdate', (seconds) => {
-			currentVideoTime.value = seconds;
-			onHotkeySeekTimeUpdate(seconds);
-			rememberCurrentFightTime();
-		});
+function handleYoutubePlayerTimeUpdate(seconds: number): void {
+	onHotkeySeekTimeUpdate(seconds);
+	rememberCurrentFightTime();
+}
 
-		player.value.on('unstarted', () => {
-			youtubePlayerStateRevision++;
+function handleYoutubePlayerReady(): void {
+	requestSelectedVideoPlayback();
+	reviewsStore.flushPendingTimelineWindowActions();
+}
+
+function handleYoutubePlayerStateChange(state: ReviewYoutubePlayerState): void {
+	switch (state) {
+		case 'unstarted':
 			markPendingSyncMarkerSeekStopped();
-			isPlayerPlaying.value = false;
 			if (getPendingSyncMarkerSeek()) {
 				scheduleAutomaticSyncMarkerRead(SYNC_MARKER_SEEK_OBSERVATION_INTERVAL_MS);
 			} else {
 				clearScheduledSyncMarkerRead();
 			}
-			keepPlayerControlsVisible();
-		});
-
-		player.value.on('cued', () => {
-			youtubePlayerStateRevision++;
+			break;
+		case 'cued':
 			markPendingSyncMarkerSeekStopped();
-			isPlayerPlaying.value = false;
-			keepPlayerControlsVisible();
 			scheduleAutomaticSyncMarkerRead();
-		});
-
-		player.value.on('ready', () => {
-			youtubePlayerStateRevision++;
-			log.info('YouTube player ready');
-			playerLoaded = true;
-			player.value.mute();
-			requestSelectedVideoPlayback();
-			reviewsStore.flushPendingTimelineWindowActions();
-		});
-
-		player.value.on('playing', () => {
-			youtubePlayerStateRevision++;
-			isPlayerPlaying.value = true;
+			break;
+		case 'playing':
 			markPendingSyncMarkerSeekPlaying();
-			revealPlayerControls();
 			scheduleAutomaticSyncMarkerRead();
-		});
-
-		const keepControlsVisibleWhileStopped = () => {
-			isPlayerPlaying.value = false;
-			keepPlayerControlsVisible();
-		};
-		player.value.on('paused', () => {
-			youtubePlayerStateRevision++;
+			break;
+		case 'paused':
 			markPendingSyncMarkerSeekStopped();
-			keepControlsVisibleWhileStopped();
 			scheduleAutomaticSyncMarkerRead();
-		});
-		player.value.on('buffering', () => {
-			youtubePlayerStateRevision++;
+			break;
+		case 'buffering':
 			markPendingSyncMarkerSeekStopped();
-			keepControlsVisibleWhileStopped();
 			if (getPendingSyncMarkerSeek()) {
 				scheduleAutomaticSyncMarkerRead(SYNC_MARKER_SEEK_OBSERVATION_INTERVAL_MS);
 			} else {
 				clearScheduledSyncMarkerRead();
 			}
-		});
-		player.value.on('ended', () => {
-			youtubePlayerStateRevision++;
+			break;
+		case 'ended':
 			markPendingSyncMarkerSeekStopped();
-			keepControlsVisibleWhileStopped();
 			scheduleAutomaticSyncMarkerRead();
-		});
-		player.value.on('playbackRateChange', (rate) => {
-			updatePendingSyncMarkerSeekPlaybackRate(rate);
-		});
+			break;
 	}
-});
+}
 
 onMounted(async () => {
 	window.addEventListener('resize', publishPlayerPointerBounds);
@@ -610,7 +544,7 @@ async function executeReviewSeek(
 	context: ReviewSeekExecutionContext,
 ) {
 	const activePlayer = player.value;
-	if (!activePlayer || !playerLoaded) {
+	if (!activePlayer || !playerLoaded.value) {
 		return { phase: 'unavailable' as const, message: 'YouTube player is still loading' };
 	}
 
@@ -744,7 +678,7 @@ function requestVideoTimeSeek(
 	play: boolean,
 	videoID = reviewsStore.getSelectedVideoId,
 ) {
-	if (!videoID || !player.value || !playerLoaded) return Promise.resolve(null);
+	if (!videoID || !player.value || !playerLoaded.value) return Promise.resolve(null);
 	return reviewSeekCoordinator.request({
 		kind: 'video-time',
 		source,
@@ -761,7 +695,7 @@ function requestFightSeek(
 	source: ReviewSeekSource,
 	preferredVideoID?: string,
 ) {
-	if (!player.value || !playerLoaded) return Promise.resolve(null);
+	if (!player.value || !playerLoaded.value) return Promise.resolve(null);
 	return reviewSeekCoordinator.request({
 		kind: 'fight-time',
 		source,
@@ -922,7 +856,7 @@ const {
 	cursorPercent: currentFightCursor,
 	isPlaying: isPlayerPlaying,
 	phases: phaseTransitions,
-	isPlayerReady: () => Boolean(player.value && playerLoaded),
+	isPlayerReady: () => Boolean(player.value && playerLoaded.value),
 	seekFight: (timestampSeconds, source) => seekToFightTimestamp(timestampSeconds, source),
 	seekPull: (fightID, timestampSeconds, source) => {
 		seekToPullTimestamp(fightID, timestampSeconds, source);
@@ -935,7 +869,7 @@ function openYoutubeLink(videoId: string, timestampSeconds?: number) {
 }
 
 function getCurrentStreamTimestamp(video: YouTubeVideo): number | undefined {
-	if (!player.value || !playerLoaded) return undefined;
+	if (!player.value || !playerLoaded.value) return undefined;
 	const currentTime = player.value.getCurrentTime();
 	if (!Number.isFinite(currentTime) || currentTime < 0) return undefined;
 
@@ -1399,7 +1333,7 @@ async function captureReviewSyncMarker(trigger: ReviewSyncCaptureTrigger = 'manu
 	}
 	const selectedVideo = reviewsStore.selectedVideoInfo;
 	const container = videoContainer.value;
-	if (!selectedVideo || !player.value || !playerLoaded || !container) {
+	if (!selectedVideo || !player.value || !playerLoaded.value || !container) {
 		if (!automatic) {
 			syncPrototypeStatusTone.value = 'error';
 			syncPrototypeStatus.value = 'Load a YouTube video before reading its sync marker';
@@ -1428,8 +1362,8 @@ async function captureReviewSyncMarker(trigger: ReviewSyncCaptureTrigger = 'manu
 	clearScheduledSyncMarkerRead();
 	isSyncPrototypeCapturing.value = true;
 	lastSyncMarkerCaptureStartedAt = Date.now();
-	const playerStateRevisionAtCaptureStart = youtubePlayerStateRevision;
-	const playerSeekRevisionAtCaptureStart = youtubePlayerSeekRevision;
+	const playerStateRevisionAtCaptureStart = youtubePlayerStateRevision.value;
+	const playerSeekRevisionAtCaptureStart = youtubePlayerSeekRevision.value;
 	const syncMarkerSeekIDAtCaptureStart = getPendingSyncMarkerSeek()?.id ?? null;
 	if (!automatic) {
 		syncPrototypeStatusTone.value = 'info';
@@ -1449,10 +1383,10 @@ async function captureReviewSyncMarker(trigger: ReviewSyncCaptureTrigger = 'manu
 		}) as ReviewSyncMarkerCapture;
 		const videoTimeAfterCapture = player.value.getCurrentTime();
 		const videoTimeAfterCapturedAt = Date.now();
-		if (youtubePlayerStateRevision !== playerStateRevisionAtCaptureStart) {
+		if (youtubePlayerStateRevision.value !== playerStateRevisionAtCaptureStart) {
 			throw new Error('YouTube player state changed while reading the sync marker');
 		}
-		if (youtubePlayerSeekRevision !== playerSeekRevisionAtCaptureStart) {
+		if (youtubePlayerSeekRevision.value !== playerSeekRevisionAtCaptureStart) {
 			throw new Error('Video position changed while reading the sync marker');
 		}
 		if (reviewsStore.getSelectedVideoId !== selectedVideo.id) {
@@ -1502,10 +1436,10 @@ async function captureReviewSyncMarker(trigger: ReviewSyncCaptureTrigger = 'manu
 			capture.markerBounds,
 			approximateTimestampMs,
 		);
-		if (youtubePlayerStateRevision !== playerStateRevisionAtCaptureStart) {
+		if (youtubePlayerStateRevision.value !== playerStateRevisionAtCaptureStart) {
 			throw new Error('YouTube player state changed while decoding the sync marker');
 		}
-		if (youtubePlayerSeekRevision !== playerSeekRevisionAtCaptureStart) {
+		if (youtubePlayerSeekRevision.value !== playerSeekRevisionAtCaptureStart) {
 			throw new Error('Video position changed while decoding the sync marker');
 		}
 		if (reviewsStore.getSelectedVideoId !== selectedVideo.id) {
