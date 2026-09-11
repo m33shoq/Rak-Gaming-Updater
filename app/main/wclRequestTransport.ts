@@ -1,9 +1,11 @@
 import type { Socket } from 'socket.io-client';
 import { SOCKET_EVENTS } from '@/events';
-import type { FightReplayData } from '@/replay';
+import { REVIEW_REPLAY_VERSION, type FightReplayData } from '@/replay';
 import type { WclRequestResult } from '@/wclRequests';
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 15_000;
+const FIGHT_REPLAY_CACHE_TTL_MS = 30 * 60 * 1000;
+const FIGHT_REPLAY_CACHE_LIMIT = 8;
 
 type WclRequestTransportLogger = {
 	info: (...args: any[]) => void;
@@ -76,6 +78,10 @@ function responseErrorMessage(error: unknown): string | null {
 }
 
 export default class WclRequestTransport {
+	private readonly fightReplayCache = new Map<string, { cachedAt: number; data: FightReplayData }>();
+	private readonly fightReplayRequests = new Map<string, Promise<WclRequestResult<FightReplayData>>>();
+	private fightReplayCacheEpoch = 0;
+
 	constructor(
 		private readonly socket: Socket,
 		private readonly isWclReady: () => boolean,
@@ -103,6 +109,12 @@ export default class WclRequestTransport {
 			requiresReady: false,
 			logContext: {},
 		});
+	}
+
+	invalidateFightReplayCache(): void {
+		this.fightReplayCache.clear();
+		this.fightReplayRequests.clear();
+		this.fightReplayCacheEpoch++;
 	}
 
 	requestReports(endTime?: number): Promise<WclRequestResult<unknown[]>> {
@@ -189,21 +201,58 @@ export default class WclRequestTransport {
 		});
 	}
 
-	requestFightReplay(reportCode: string, fightID: number): Promise<WclRequestResult<FightReplayData>> {
-		return this.request({
+	requestFightReplay(
+		reportCode: string,
+		fightID: number,
+		force = false,
+	): Promise<WclRequestResult<FightReplayData>> {
+		const cacheKey = `${reportCode}:${fightID}:${REVIEW_REPLAY_VERSION}`;
+		const cached = this.fightReplayCache.get(cacheKey);
+		if (!force && cached && Date.now() - cached.cachedAt < FIGHT_REPLAY_CACHE_TTL_MS) {
+			// Refresh insertion order so the cap behaves as an LRU rather than FIFO.
+			this.fightReplayCache.delete(cacheKey);
+			this.fightReplayCache.set(cacheKey, cached);
+			return Promise.resolve({ success: true, data: cached.data });
+		}
+
+		const pending = this.fightReplayRequests.get(cacheKey);
+		if (pending) return pending;
+
+		const requestEpoch = this.fightReplayCacheEpoch;
+		const request = this.request({
 			eventName: SOCKET_EVENTS.WCL_REQUEST_FIGHT_REPLAY,
 			payload: { reportCode, fightID },
-			readData: response => (
-				response.replayData
+			readData: response => {
+				const replay = response.replayData as FightReplayData | undefined;
+				return replay
 				&& typeof response.replayData === 'object'
 				&& !Array.isArray(response.replayData)
-					? response.replayData as FightReplayData
-					: undefined
-			),
+				&& replay.version === REVIEW_REPLAY_VERSION
+				&& Array.isArray(replay.actors)
+				&& Array.isArray(replay.casts)
+				&& Array.isArray(replay.uiMapIDs)
+				&& Array.isArray(replay.overlays)
+					? replay
+					: undefined;
+			},
 			requestLabel: 'WCL fight replay',
 			timeoutMs: 90_000,
 			logContext: { reportCode, fightID },
 		});
+		this.fightReplayRequests.set(cacheKey, request);
+		void request.then(result => {
+			if (result.success !== true || requestEpoch !== this.fightReplayCacheEpoch) return;
+			this.fightReplayCache.delete(cacheKey);
+			this.fightReplayCache.set(cacheKey, { cachedAt: Date.now(), data: result.data });
+			while (this.fightReplayCache.size > FIGHT_REPLAY_CACHE_LIMIT) {
+				this.fightReplayCache.delete(this.fightReplayCache.keys().next().value!);
+			}
+		}).finally(() => {
+			if (this.fightReplayRequests.get(cacheKey) === request) {
+				this.fightReplayRequests.delete(cacheKey);
+			}
+		});
+		return request;
 	}
 
 	private request<T>({

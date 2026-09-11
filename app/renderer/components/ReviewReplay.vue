@@ -1,27 +1,22 @@
 <script setup lang="ts">
-import log from 'electron-log/renderer';
-import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue';
-import { IPC_EVENTS } from '@/events';
+import { computed, onMounted, ref, watch } from 'vue';
 import ReviewReplayActor from '@/renderer/components/ReviewReplayActor.vue';
 import ReviewReplayMapBackground from '@/renderer/components/ReviewReplayMapBackground.vue';
-import { useIpcOn } from '@/renderer/composables/useIpcOn';
 import { useReviewTimelinePlayback } from '@/renderer/composables/useReviewTimelinePlayback';
 import { useReplayViewport } from '@/renderer/composables/useReplayViewport';
 import { getReplayExtensionRenderer } from '@/renderer/replay/replayExtensions';
-import { resolveReplayMapDefinition } from '@/replayMaps';
+import { useReviewsStore } from '@/renderer/store/ReviewsStore';
+import { projectReplayMapPosition, resolveReplayMapDefinition } from '@/replayMaps';
 import {
 	activeReplayCast,
 	isReplayActorActive,
-	REVIEW_REPLAY_VERSION,
 	replayActorIconURLs,
 	sampleReplayPosition,
-	type FightReplayData,
 	type ReplayActor,
 	type ReplayActorKind,
 	type ReplayCast,
 	type SampledReplayPosition,
 } from '@/replay';
-import type { WclRequestResult } from '@/wclRequests';
 
 const props = defineProps<{
 	reportCode: string;
@@ -33,10 +28,11 @@ const emit = defineEmits<{
 	togglePlayback: [];
 }>();
 
-const replay = shallowRef<FightReplayData | null>(null);
+const reviewsStore = useReviewsStore();
+const replay = computed(() => reviewsStore.getFightReplayDataFor(props.reportCode, props.fightID));
 const playback = useReviewTimelinePlayback();
-const loading = ref(false);
-const error = ref('');
+const loading = computed(() => reviewsStore.isFightReplayLoadingFor(props.reportCode, props.fightID));
+const error = computed(() => reviewsStore.getFightReplayErrorFor(props.reportCode, props.fightID) || '');
 const previewTimestamp = ref<number | null>(null);
 const scrubbing = ref(false);
 const selectedActorKey = ref<string | null>(null);
@@ -44,7 +40,6 @@ const showNames = ref(true);
 const showMap = ref(true);
 const visibleKinds = ref<Set<ReplayActorKind>>(new Set(['player', 'boss', 'add', 'mechanic']));
 const replayCanvas = ref<SVGSVGElement | null>(null);
-let requestRevision = 0;
 
 const actorKindOptions = computed<ReadonlyArray<{ kind: ReplayActorKind; label: string }>>(() => [
 	{ kind: 'player', label: 'Players' },
@@ -73,65 +68,10 @@ watch(() => playback.cursorPercent.value, () => {
 });
 
 async function loadReplay(): Promise<void> {
-	const revision = ++requestRevision;
-	loading.value = true;
-	error.value = '';
-
-	try {
-		const response = await ipc.invoke(IPC_EVENTS.WCL_REQUEST_FIGHT_REPLAY, {
-			reportCode: props.reportCode,
-			fightID: props.fightID,
-		}) as WclRequestResult<FightReplayData>;
-
-		if (revision !== requestRevision) return;
-		if (
-			!response
-			|| response.success !== true
-			|| response.data.version !== REVIEW_REPLAY_VERSION
-			|| !Array.isArray(response.data.actors)
-			|| !Array.isArray(response.data.casts)
-			|| !Array.isArray(response.data.uiMapIDs)
-			|| !Array.isArray(response.data.overlays)
-		) {
-			throw new Error(
-				response && response.success === false
-					? response.error
-					: 'Replay data is unavailable',
-			);
-		}
-
-		replay.value = response.data;
-	} catch (cause) {
-		if (revision === requestRevision) {
-			error.value = cause instanceof Error ? cause.message : 'Failed to load replay';
-			log.error('Failed to load fight replay', {
-				reportCode: props.reportCode,
-				fightID: props.fightID,
-				error: String(cause),
-			});
-		}
-	} finally {
-		if (revision === requestRevision) loading.value = false;
-	}
+	await reviewsStore.ensureFightReplay(props.reportCode, props.fightID);
 }
 
 onMounted(() => {
-	void loadReplay();
-});
-
-onBeforeUnmount(() => {
-	++requestRevision;
-});
-
-watch(() => [props.reportCode, props.fightID] as const, () => {
-	replay.value = null;
-	selectedActorKey.value = null;
-	previewTimestamp.value = null;
-	void loadReplay();
-});
-
-useIpcOn(IPC_EVENTS.SOCKET_WCL_READY_CALLBACK, () => {
-	replay.value = null;
 	void loadReplay();
 });
 
@@ -169,7 +109,7 @@ function maxPositionAge(actor: ReplayActor): number {
 	return Number.POSITIVE_INFINITY;
 }
 
-const sampledActors = computed(() => (replay.value?.actors || []).flatMap(actor => {
+const rawSampledActors = computed(() => (replay.value?.actors || []).flatMap(actor => {
 	if (!visibleKinds.value.has(actor.kind) || !isReplayActorActive(actor, timestamp.value)) return [];
 
 	const position = sampleReplayPosition(actor.positions, timestamp.value, maxPositionAge(actor));
@@ -184,7 +124,7 @@ const sampledActors = computed(() => (replay.value?.actors || []).flatMap(actor 
 
 const primaryMapID = computed(() => {
 	const counts = new Map<number, number>();
-	for (const entry of sampledActors.value) {
+	for (const entry of rawSampledActors.value) {
 		const weight = entry.actor.kind === 'player' ? 2 : 1;
 		counts.set(entry.position.mapID, (counts.get(entry.position.mapID) || 0) + weight);
 	}
@@ -203,7 +143,14 @@ const primaryMapID = computed(() => {
 const mapDefinition = computed(() => resolveReplayMapDefinition(
 	primaryMapID.value,
 	replay.value?.uiMapIDs || [],
+	rawSampledActors.value.map(entry => entry.position),
 ));
+const sampledActors = computed(() => rawSampledActors.value.map(entry => ({
+	...entry,
+	position: mapDefinition.value
+		? projectReplayMapPosition(mapDefinition.value, entry.position)
+		: entry.position,
+})));
 const visibleActors = computed(() => (
 	sampledActors.value
 		.filter(entry => entry.position.mapID === primaryMapID.value)
@@ -220,7 +167,12 @@ const allPoints = computed(() => (replay.value?.actors || []).flatMap(actor => (
 	visibleKinds.value.has(actor.kind)
 		? actor.positions
 			.filter(position => position.mapID === primaryMapID.value)
-			.map(({ x, y }) => ({ x, y }))
+			.map(position => {
+				const point = mapDefinition.value
+					? projectReplayMapPosition(mapDefinition.value, position)
+					: position;
+				return { x: point.x, y: point.y };
+			})
 		: []
 )));
 
@@ -232,6 +184,14 @@ const focusPoints = computed(() => {
 });
 
 const viewport = useReplayViewport(allPoints, focusPoints, replayCanvas);
+
+watch(() => [props.reportCode, props.fightID] as const, () => {
+	viewport.reset();
+	selectedActorKey.value = null;
+	previewTimestamp.value = null;
+	void loadReplay();
+});
+
 const mapViewport = computed(() => ({
 	x: viewport.view.value.x - viewport.viewWidth.value / 2,
 	y: viewport.view.value.y - viewport.view.value.height / 2,
@@ -350,6 +310,7 @@ function formatTime(timestampMs: number): string {
 						v-if="showMap && mapDefinition"
 						:definition="mapDefinition"
 						:viewport="mapViewport"
+						:world-units-per-pixel="unit"
 					/>
 					<line
 						v-for="x in verticalGrid"

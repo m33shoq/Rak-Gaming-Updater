@@ -74,6 +74,7 @@ export const useReviewsStore = defineStore('Reviews', () => {
 		ensureFightBossCasts,
 		ensureFightCooldowns,
 		ensureFightEvents,
+		ensureFightReplay,
 		fightBossCastCacheEpoch,
 		fightCooldownCacheEpoch,
 		getFightBossCastData,
@@ -90,6 +91,10 @@ export const useReviewsStore = defineStore('Reviews', () => {
 		getFightEventsError,
 		getFightEventsErrorFor,
 		getFightEventsFor,
+		getFightReplayData,
+		getFightReplayDataFor,
+		getFightReplayError,
+		getFightReplayErrorFor,
 		invalidate: invalidateFightData,
 		isFightBossCastsLoading,
 		isFightBossCastsLoadingFor,
@@ -97,6 +102,8 @@ export const useReviewsStore = defineStore('Reviews', () => {
 		isFightCooldownsLoadingFor,
 		isFightEventsLoading,
 		isFightEventsLoadingFor,
+		isFightReplayLoading,
+		isFightReplayLoadingFor,
 		mergeTimelineWindowDataSnapshot,
 		requestFightBossCasts,
 		requestFightCooldowns,
@@ -104,6 +111,7 @@ export const useReviewsStore = defineStore('Reviews', () => {
 		savedFightBossCasts,
 		savedFightCooldowns,
 		savedFightEvents,
+		savedFightReplays,
 		timelineWindowDataRevision,
 		timelineWindowUpdatedFight,
 	} = useReviewFightData({
@@ -173,6 +181,9 @@ export const useReviewsStore = defineStore('Reviews', () => {
 		void ensureFightEvents(reportCode, fightID, true, getSelectedFight.value?.encounterID);
 		void ensureFightCooldowns(reportCode, fightID, true);
 		void ensureFightBossCasts(reportCode, fightID, true, getSelectedFight.value?.encounterID);
+		if (timelineViewMode.value === 'replay' || getFightReplayDataFor(reportCode, fightID)) {
+			void ensureFightReplay(reportCode, fightID, true);
+		}
 	});
 
 	return {
@@ -202,6 +213,7 @@ export const useReviewsStore = defineStore('Reviews', () => {
 		savedFightEvents,
 		savedFightCooldowns,
 		savedFightBossCasts,
+		savedFightReplays,
 		fightCooldownCacheEpoch,
 		fightBossCastCacheEpoch,
 		bossCastVisibilityOverrides,
@@ -239,6 +251,12 @@ export const useReviewsStore = defineStore('Reviews', () => {
 		isFightBossCastsLoadingFor,
 		getFightBossCastError,
 		getFightBossCastErrorFor,
+		getFightReplayData,
+		getFightReplayDataFor,
+		isFightReplayLoading,
+		isFightReplayLoadingFor,
+		getFightReplayError,
+		getFightReplayErrorFor,
 		getReportTimeOffset,
 		getFightStartTimeOffset,
 		getFightStartTime,
@@ -257,6 +275,7 @@ export const useReviewsStore = defineStore('Reviews', () => {
 		ensureFightEvents,
 		ensureFightCooldowns,
 		ensureFightBossCasts,
+		ensureFightReplay,
 		ensureBossCastPreferencesLoaded,
 		reloadBossCastPreferences,
 		setBossCastDisplayMode,

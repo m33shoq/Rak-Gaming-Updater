@@ -104,6 +104,13 @@ export default defineConfig(({ command }) => {
 		base: './',
 		server: {
 			hmr: true,
+			watch: {
+				// The offline map builder replaces many pyramid tiles at once. Watching
+				// those generated files remounts the replay once per tile and can queue
+				// hundreds of otherwise identical WCL requests. Restart the dev renderer
+				// after rebuilding map assets instead of hot-reloading the pyramid.
+				ignored: ['**/assets/replay-maps/uimap/**'],
+			},
 		},
 		build: {
 			outDir: path.resolve(__dirname, 'dist'),

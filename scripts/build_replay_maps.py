@@ -1,224 +1,515 @@
-"""Build bundled replay minimap tiles from the WoW client assets.
+"""Build bundled, zoom-aware replay maps from WoW's UiMap floor art.
 
-Development-only requirements: Python 3 and Pillow. Tile FileDataIDs come from
-the wowdev community listfile (or a local wow.tools.local listfile) and the BLP
-payloads are downloaded from Wago's CASC endpoint for the pinned Retail build.
+The development-only builder follows the same client DB relationships used by
+WoW's map UI: UiMap -> UiMapXMapArt -> UiMapArtTile. UiMapAssignment provides
+the terrain or WMO-local coordinate rectangle used to place the finished art
+behind WCL positions. Source DB2 rows and BLP payloads are downloaded from Wago
+for a pinned Retail build; the shipped application only reads local WebP assets.
+
+Pillow 11.3.0 or newer is recommended. Rebuild all configured raid floors with:
+
+    python scripts/build_replay_maps.py
+
+Or rebuild selected UiMap IDs with:
+
+    python scripts/build_replay_maps.py 2610
 """
 
+from __future__ import annotations
+
 import argparse
+import csv
+import json
+import shutil
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
-from io import BytesIO
+from io import BytesIO, StringIO
 from pathlib import Path
+from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
-from PIL import Image, ImageChops
+from PIL import Image
+
+
+SOURCE_BUILD = "12.1.0.69587"
+DEFAULT_UI_MAP_IDS = (2606, 2607, 2608, 2609, 2610, 2632)
+DEFAULT_LEVELS = (1, 2, 4, 8)
+OUTPUT_TILE_PIXELS = 1024
+WEBP_QUALITY = 90
+OUTPUT_DIRECTORY = Path(__file__).parents[1] / "app" / "assets" / "replay-maps" / "uimap"
+MANIFEST_PATH = OUTPUT_DIRECTORY / "manifest.json"
+WAGO_DB2_URL = "https://wago.tools/db2/{table}/csv"
+WAGO_CASC_URL = "https://wago.tools/api/casc/{file_data_id}"
 
 
 @dataclass(frozen=True)
-class MinimapTileSource:
-    x: int
-    y: int
+class UiMapArtTileSource:
+    row: int
+    column: int
     file_data_id: int
 
 
 @dataclass(frozen=True)
-class LightArtifactRepair:
-    """Softly attenuate a baked minimap light effect in replay-oriented pixels."""
-
-    tile_x: int
-    tile_y: int
-    center_x: float
-    center_y: float
-    radius_x: float
-    radius_y: float
-    strength: float
-
-
-@dataclass(frozen=True)
-class MinimapSource:
-    tile_size: tuple[int, int]
-    empty_color: tuple[int, int, int] | None
-    tiles: tuple[MinimapTileSource, ...]
-    light_artifact_repairs: tuple[LightArtifactRepair, ...] = ()
+class UiMapSource:
+    ui_map_id: int
+    world_map_id: int
+    name: str
+    art_id: int
+    width: int
+    height: int
+    source_tile_width: int
+    source_tile_height: int
+    left: float
+    top: float
+    right: float
+    bottom: float
+    coordinate_transform: str
+    tiles: tuple[UiMapArtTileSource, ...]
 
 
-def minimap_source(
-    entries: tuple[tuple[int, int, int], ...],
-    *,
-    light_artifact_repairs: tuple[LightArtifactRepair, ...] = (),
-) -> MinimapSource:
-    return MinimapSource(
-        tile_size=(512, 512),
-        empty_color=(109, 112, 109),
-        tiles=tuple(MinimapTileSource(*entry) for entry in entries),
-        light_artifact_repairs=light_artifact_repairs,
-    )
+def fetch_bytes(url: str) -> bytes:
+    request = Request(url, headers={"User-Agent": "RG-Updater replay map builder"})
+    with urlopen(request, timeout=45) as response:
+        return response.read()
 
 
-# Only tiles containing raid geometry are needed. The first build used the full
-# 26..34 by 24..32 listfile rectangle; fully empty tiles were then pruned here.
-MAP_SOURCES = {
-    3004: minimap_source(
-        (
-            (31, 28, 7296861),
-            (32, 28, 7296893),
-            (31, 29, 7296867),
-            (32, 29, 7296899),
-            (30, 30, 7296961),
-            (31, 30, 7296963),
-            (32, 30, 7296995),
-            (33, 30, 7296997),
-            (30, 31, 7296967),
-            (31, 31, 7296969),
-            (32, 31, 7297001),
-            (33, 31, 7297003),
-            (31, 32, 7296975),
-            (32, 32, 7297007),
-        ),
-        # Blizzard's Coiled Altar minimap capture contains a tall white light
-        # bloom across the 31/32 seam that is not part of the room in-game.
-        # Keep the repair in asset generation: a runtime SVG overlay would move
-        # with neither the minimap pixels nor future tile transforms reliably.
-        light_artifact_repairs=(
-            LightArtifactRepair(32, 29, 512, 78, 36, 100, 0.55),
-            LightArtifactRepair(31, 29, 0, 78, 36, 100, 0.55),
-        ),
-    ),
-}
-SOURCE_BUILD = "12.1.0.69587"
-OUTPUT_DIRECTORY = Path(__file__).parents[1] / "app" / "assets" / "replay-maps" / "minimap"
+def fetch_db2_table(table: str, build: str) -> list[dict[str, str]]:
+    query = urlencode({"build": build})
+    body = fetch_bytes(f"{WAGO_DB2_URL.format(table=table)}?{query}")
+    return list(csv.DictReader(StringIO(body.decode("utf-8-sig"))))
 
 
-def load_tile(source: MinimapTileSource) -> tuple[MinimapTileSource, Image.Image]:
-    request = Request(
-        f"https://wago.tools/api/casc/{source.file_data_id}?version={SOURCE_BUILD}",
-        headers={"User-Agent": "Mozilla/5.0"},
-    )
-    with urlopen(request, timeout=30) as response:
-        return source, Image.open(BytesIO(response.read())).convert("RGB")
+def require_one(items: list[object], description: str) -> object:
+    if len(items) != 1:
+        raise ValueError(f"Expected one {description}, found {len(items)}")
+    return items[0]
 
 
-def repair_light_artifacts(
-    images: dict[tuple[int, int], Image.Image],
-    repairs: tuple[LightArtifactRepair, ...],
-) -> None:
-    for repair in repairs:
-        key = (repair.tile_x, repair.tile_y)
-        image = images.get(key)
-        if image is None:
-            raise ValueError(f"Light artifact repair references missing tile {key}")
-
-        repaired = image.convert("RGBA")
-        pixels = repaired.load()
-        min_x = max(0, int(repair.center_x - repair.radius_x))
-        max_x = min(repaired.width - 1, int(repair.center_x + repair.radius_x))
-        min_y = max(0, int(repair.center_y - repair.radius_y))
-        max_y = min(repaired.height - 1, int(repair.center_y + repair.radius_y))
-
-        for y in range(min_y, max_y + 1):
-            dy = (y - repair.center_y) / repair.radius_y
-            for x in range(min_x, max_x + 1):
-                dx = (x - repair.center_x) / repair.radius_x
-                distance_squared = dx * dx + dy * dy
-                if distance_squared >= 1:
-                    continue
-
-                falloff = 1 - distance_squared
-                falloff = falloff * falloff * (3 - 2 * falloff)
-                factor = 1 - repair.strength * falloff
-                red, green, blue, alpha = pixels[x, y]
-                luminance = 0.2126 * red + 0.7152 * green + 0.0722 * blue
-                desaturation = 0.7 * falloff
-                pixels[x, y] = (
-                    round((red * (1 - desaturation) + luminance * desaturation) * factor),
-                    round((green * (1 - desaturation) + luminance * desaturation) * factor),
-                    round((blue * (1 - desaturation) + luminance * desaturation) * factor),
-                    alpha,
-                )
-
-        images[key] = repaired
+def fetch_db2_tables(build: str) -> dict[str, list[dict[str, str]]]:
+    return {
+        table: fetch_db2_table(table, build)
+        for table in (
+            "UiMap",
+            "UiMapArt",
+            "UiMapArtStyleLayer",
+            "UiMapArtTile",
+            "UiMapAssignment",
+            "UiMapXMapArt",
+        )
+    }
 
 
-def build_map(world_map_id: int, source: MinimapSource) -> None:
-    output = OUTPUT_DIRECTORY / str(world_map_id)
-    output.mkdir(parents=True, exist_ok=True)
-    expected_names: set[str] = set()
-    processed_images: dict[tuple[int, int], Image.Image] = {}
+def coordinate_mapping(
+    _wmo_doodad_placement_id: int,
+    region_0: float,
+    region_1: float,
+    region_3: float,
+    region_4: float,
+) -> tuple[dict[str, float], str]:
+    # WCL exposes both WMO and terrain positions in map-oriented axes: replay X
+    # is negative world/Region Y and replay Y is world/Region X. UiMapAssignment
+    # stores the unmodified world axes, so negate Region Y when constructing the
+    # horizontal bounds. The authored image's vertical axis still runs opposite
+    # to replay Y and is reflected by the renderer.
+    bounds = {
+        "left": min(-region_1, -region_4),
+        "top": min(region_0, region_3),
+        "right": max(-region_1, -region_4),
+        "bottom": max(region_0, region_3),
+    }
+    return bounds, "flipY"
 
-    with ThreadPoolExecutor(max_workers=8) as executor:
-        tiles = list(executor.map(load_tile, source.tiles))
 
-    for tile_source, image in tiles:
-        if image.size != source.tile_size:
-            raise ValueError(
-                f"Map {world_map_id} tile {tile_source.x}_{tile_source.y} is "
-                f"{image.size}, expected {source.tile_size}"
-            )
+def resolve_sources(
+    ui_map_ids: tuple[int, ...],
+    tables: dict[str, list[dict[str, str]]],
+) -> list[UiMapSource]:
+    sources: list[UiMapSource] = []
 
-        if source.empty_color is not None:
-            background = Image.new("RGB", image.size, source.empty_color)
-            difference = ImageChops.difference(image, background)
-            red, green, blue = difference.split()
-            alpha = ImageChops.lighter(ImageChops.lighter(red, green), blue)
-            alpha = alpha.point(lambda value: 0 if value == 0 else 255)
-            image = image.convert("RGBA")
-            image.putalpha(alpha)
-
-        if image.getbbox() is None:
-            continue
-
-        # Minimap pixels run opposite to WCL world coordinates on both axes.
-        # Bake the fixed 180-degree transform once so the renderer can place
-        # every tile as a plain SVG image without per-frame SVG transforms.
-        image = image.transpose(Image.Transpose.ROTATE_180)
-
-        processed_images[(tile_source.x, tile_source.y)] = image
-
-    repair_light_artifacts(processed_images, source.light_artifact_repairs)
-
-    for tile_source, _image in tiles:
-        image = processed_images.get((tile_source.x, tile_source.y))
-        if image is None:
-            continue
-
-        asset_name = f"{tile_source.x}_{tile_source.y}.webp"
-        expected_names.add(asset_name)
-
-        # The source minimaps already contain real close-range terrain detail.
-        # Lossless WebP preserves it and is considerably smaller than decoded
-        # RGBA. Keep tiles separate so Chromium only decodes the current view.
-        image.save(
-            output / asset_name,
-            "WEBP",
-            lossless=True,
-            quality=100,
-            method=6,
+    for ui_map_id in ui_map_ids:
+        ui_map = require_one(
+            [row for row in tables["UiMap"] if int(row["ID"]) == ui_map_id],
+            f"UiMap row for {ui_map_id}",
+        )
+        art_link_candidates = [
+            row for row in tables["UiMapXMapArt"]
+            if int(row["UiMapID"]) == ui_map_id and int(row["PhaseID"]) == 0
+        ]
+        if not art_link_candidates:
+            raise ValueError(f"UiMap {ui_map_id} has no phase-independent art")
+        art_link = min(art_link_candidates, key=lambda row: int(row["ID"]))
+        art_id = int(art_link["UiMapArtID"])
+        art = require_one(
+            [row for row in tables["UiMapArt"] if int(row["ID"]) == art_id],
+            f"UiMapArt row for {ui_map_id}",
+        )
+        style_id = int(art["UiMapArtStyleID"])
+        layer = require_one(
+            [
+                row for row in tables["UiMapArtStyleLayer"]
+                if int(row["UiMapArtStyleID"]) == style_id
+                and int(row["LayerIndex"]) == 0
+            ],
+            f"base art layer for UiMap {ui_map_id}",
         )
 
-    for stale_asset in output.glob("*.webp"):
-        if stale_asset.name not in expected_names:
-            stale_asset.unlink()
+        # Phase/order variants commonly duplicate an assignment. Reject truly
+        # different rectangles because selecting one silently would misalign a
+        # replay and be much harder to diagnose than a failed build.
+        assignments = [
+            row for row in tables["UiMapAssignment"]
+            if int(row["UiMapID"]) == ui_map_id
+            and float(row["UiMin_0"]) == 0
+            and float(row["UiMin_1"]) == 0
+            and float(row["UiMax_0"]) == 1
+            and float(row["UiMax_1"]) == 1
+        ]
+        distinct_assignments = {
+            (
+                int(row["MapID"]),
+                int(row["WMODoodadPlacementID"]),
+                float(row["Region_0"]),
+                float(row["Region_1"]),
+                float(row["Region_3"]),
+                float(row["Region_4"]),
+            )
+            for row in assignments
+        }
+        assignment = require_one(
+            list(distinct_assignments),
+            f"world assignment for UiMap {ui_map_id}",
+        )
+        (
+            world_map_id,
+            wmo_doodad_placement_id,
+            region_0,
+            region_1,
+            region_3,
+            region_4,
+        ) = assignment
+
+        bounds, coordinate_transform = coordinate_mapping(
+            wmo_doodad_placement_id,
+            region_0,
+            region_1,
+            region_3,
+            region_4,
+        )
+
+        tiles = tuple(
+            sorted(
+                (
+                    UiMapArtTileSource(
+                        row=int(row["RowIndex"]),
+                        column=int(row["ColIndex"]),
+                        file_data_id=int(row["FileDataID"]),
+                    )
+                    for row in tables["UiMapArtTile"]
+                    if int(row["UiMapArtID"]) == art_id
+                    and int(row["LayerIndex"]) == 0
+                ),
+                key=lambda tile: (tile.row, tile.column),
+            )
+        )
+        if not tiles:
+            raise ValueError(f"UiMap {ui_map_id} art {art_id} has no base-layer tiles")
+
+        sources.append(UiMapSource(
+            ui_map_id=ui_map_id,
+            world_map_id=world_map_id,
+            name=ui_map["Name_lang"],
+            art_id=art_id,
+            width=int(layer["LayerWidth"]),
+            height=int(layer["LayerHeight"]),
+            source_tile_width=int(layer["TileWidth"]),
+            source_tile_height=int(layer["TileHeight"]),
+            left=bounds["left"],
+            top=bounds["top"],
+            right=bounds["right"],
+            bottom=bounds["bottom"],
+            coordinate_transform=coordinate_transform,
+            tiles=tiles,
+        ))
+
+    return sources
+
+
+def resolve_fallback_maps(
+    tables: dict[str, list[dict[str, str]]],
+    bundled_ui_map_ids: set[int],
+) -> list[dict[str, object]]:
+    """Build a compact index for remote, low-resolution best-effort maps.
+
+    Only a unique full-floor assignment is safe to use without encounter-level
+    knowledge. Partial and ambiguous assignments intentionally fall back to the
+    replay grid instead of rendering plausible-looking but misaligned art.
+    """
+    names = {int(row["ID"]): row["Name_lang"] for row in tables["UiMap"]}
+    assignments_by_ui_map: dict[int, set[tuple[int, int, int, float, float, float, float]]] = {}
+
+    for row in tables["UiMapAssignment"]:
+        ui_map_id = int(row["UiMapID"])
+        area_id = int(row["AreaID"])
+        if ui_map_id in bundled_ui_map_ids or area_id <= 0:
+            continue
+        if (
+            float(row["UiMin_0"]) != 0
+            or float(row["UiMin_1"]) != 0
+            or float(row["UiMax_0"]) != 1
+            or float(row["UiMax_1"]) != 1
+        ):
+            continue
+
+        assignment = (
+            int(row["MapID"]),
+            area_id,
+            int(row["WMODoodadPlacementID"]),
+            float(row["Region_0"]),
+            float(row["Region_1"]),
+            float(row["Region_3"]),
+            float(row["Region_4"]),
+        )
+        assignments_by_ui_map.setdefault(ui_map_id, set()).add(assignment)
+
+    fallback_maps: list[dict[str, object]] = []
+    for ui_map_id, assignments in assignments_by_ui_map.items():
+        if len(assignments) != 1 or ui_map_id not in names:
+            continue
+        (
+            world_map_id,
+            area_id,
+            wmo_doodad_placement_id,
+            region_0,
+            region_1,
+            region_3,
+            region_4,
+        ) = next(iter(assignments))
+        bounds, coordinate_transform = coordinate_mapping(
+            wmo_doodad_placement_id,
+            region_0,
+            region_1,
+            region_3,
+            region_4,
+        )
+        if bounds["left"] == bounds["right"] or bounds["top"] == bounds["bottom"]:
+            continue
+
+        fallback_maps.append({
+            "uiMapID": ui_map_id,
+            "worldMapID": world_map_id,
+            "areaID": area_id,
+            "name": names[ui_map_id],
+            "coordinateTransform": coordinate_transform,
+            "bounds": bounds,
+        })
+
+    return sorted(fallback_maps, key=lambda entry: int(entry["uiMapID"]))
+
+
+def download_art_tile(tile: UiMapArtTileSource, build: str) -> tuple[UiMapArtTileSource, Image.Image]:
+    query = urlencode({"version": build})
+    payload = fetch_bytes(f"{WAGO_CASC_URL.format(file_data_id=tile.file_data_id)}?{query}")
+    return tile, Image.open(BytesIO(payload)).convert("RGB")
+
+
+def load_source_art(source: UiMapSource, build: str) -> Image.Image:
+    image = Image.new("RGB", (source.width, source.height))
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        downloaded = list(executor.map(
+            lambda tile: download_art_tile(tile, build),
+            source.tiles,
+        ))
+
+    for tile, tile_image in downloaded:
+        expected_size = (source.source_tile_width, source.source_tile_height)
+        if tile_image.size != expected_size:
+            raise ValueError(
+                f"UiMap {source.ui_map_id} tile {tile.row}_{tile.column} is "
+                f"{tile_image.size}, expected {expected_size}"
+            )
+        image.paste(
+            tile_image,
+            (tile.column * source.source_tile_width, tile.row * source.source_tile_height),
+        )
+
+    return image
+
+
+def save_level_tiles(
+    source_image: Image.Image,
+    destination: Path,
+    scale: int,
+    tile_pixels: int,
+    quality: int,
+) -> dict[str, int]:
+    width = source_image.width * scale
+    height = source_image.height * scale
+    image = source_image if scale == 1 else source_image.resize(
+        (width, height),
+        Image.Resampling.LANCZOS,
+    )
+    columns = (width + tile_pixels - 1) // tile_pixels
+    rows = (height + tile_pixels - 1) // tile_pixels
+    destination.mkdir(parents=True, exist_ok=True)
+
+    for row in range(rows):
+        for column in range(columns):
+            left = column * tile_pixels
+            top = row * tile_pixels
+            tile = image.crop((
+                left,
+                top,
+                min(left + tile_pixels, width),
+                min(top + tile_pixels, height),
+            ))
+            tile.save(
+                destination / f"{row}_{column}.webp",
+                "WEBP",
+                quality=quality,
+                method=6,
+            )
+
+    return {
+        "scale": scale,
+        "pixelWidth": width,
+        "pixelHeight": height,
+        "columns": columns,
+        "rows": rows,
+    }
+
+
+def build_map(
+    source: UiMapSource,
+    build: str,
+    levels: tuple[int, ...],
+    tile_pixels: int,
+    quality: int,
+) -> dict[str, object]:
+    source_image = load_source_art(source, build)
+    staging_root = OUTPUT_DIRECTORY / f".staging-{source.ui_map_id}"
+    if staging_root.exists():
+        shutil.rmtree(staging_root)
+    staging_root.mkdir(parents=True)
+    try:
+        level_manifests = [
+            save_level_tiles(
+                source_image,
+                staging_root / str(scale),
+                scale,
+                tile_pixels,
+                quality,
+            )
+            for scale in levels
+        ]
+        output = OUTPUT_DIRECTORY / str(source.ui_map_id)
+        if output.exists():
+            shutil.rmtree(output)
+        shutil.move(str(staging_root), str(output))
+    except Exception:
+        shutil.rmtree(staging_root, ignore_errors=True)
+        raise
+
+    return {
+        "uiMapID": source.ui_map_id,
+        "worldMapID": source.world_map_id,
+        "name": source.name,
+        "artID": source.art_id,
+        "coordinateTransform": source.coordinate_transform,
+        "bounds": {
+            "left": source.left,
+            "top": source.top,
+            "right": source.right,
+            "bottom": source.bottom,
+        },
+        "levels": level_manifests,
+    }
+
+
+def load_manifest() -> dict[str, object] | None:
+    if not MANIFEST_PATH.exists():
+        return None
+    return json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "map_ids",
-        metavar="WORLD_MAP_ID",
+        "ui_map_ids",
+        metavar="UI_MAP_ID",
         type=int,
         nargs="*",
-        help="only rebuild these configured terrain maps (default: all)",
+        help="only rebuild these UiMap floors (default: all configured raid floors)",
     )
-    requested = parser.parse_args().map_ids
-    unknown = sorted(set(requested) - MAP_SOURCES.keys())
-    if unknown:
-        parser.error(f"unconfigured world map IDs: {', '.join(map(str, unknown))}")
+    parser.add_argument("--build", default=SOURCE_BUILD, help="Retail build used by Wago CASC/DB2")
+    parser.add_argument(
+        "--levels",
+        type=int,
+        nargs="+",
+        default=DEFAULT_LEVELS,
+        help="positive integer upscale levels (default: 1 2 4 8)",
+    )
+    parser.add_argument("--tile-pixels", type=int, default=OUTPUT_TILE_PIXELS)
+    parser.add_argument("--quality", type=int, default=WEBP_QUALITY)
+    args = parser.parse_args()
 
-    selected = requested or MAP_SOURCES.keys()
-    for world_map_id in selected:
-        build_map(world_map_id, MAP_SOURCES[world_map_id])
-        print(f"Built minimap tiles for {world_map_id}")
+    partial_build = bool(args.ui_map_ids)
+    ui_map_ids = tuple(dict.fromkeys(args.ui_map_ids or DEFAULT_UI_MAP_IDS))
+    levels = tuple(sorted(set(args.levels)))
+    if not levels or any(level < 1 for level in levels):
+        parser.error("levels must be positive integers")
+    if args.tile_pixels < 256:
+        parser.error("tile-pixels must be at least 256")
+    if not 1 <= args.quality <= 100:
+        parser.error("quality must be between 1 and 100")
+
+    OUTPUT_DIRECTORY.mkdir(parents=True, exist_ok=True)
+    previous_manifest = load_manifest()
+    if partial_build and previous_manifest and (
+        previous_manifest.get("version") != 3
+        or previous_manifest.get("sourceBuild") != args.build
+        or previous_manifest.get("tilePixels") != args.tile_pixels
+    ):
+        parser.error(
+            "a partial build cannot mix source builds, manifest versions, or tile sizes; "
+            "rebuild all configured floors"
+        )
+
+    tables = fetch_db2_tables(args.build)
+    sources = resolve_sources(ui_map_ids, tables)
+    manifest_maps = {
+        int(entry["uiMapID"]): entry
+        for entry in (previous_manifest or {}).get("maps", [])
+    } if partial_build else {}
+    for source in sources:
+        manifest_maps[source.ui_map_id] = build_map(
+            source,
+            args.build,
+            levels,
+            args.tile_pixels,
+            args.quality,
+        )
+        print(f"Built UiMap {source.ui_map_id}: {source.name}")
+
+    if not partial_build:
+        for stale_output in OUTPUT_DIRECTORY.iterdir():
+            if (
+                stale_output.is_dir()
+                and stale_output.name.isdigit()
+                and int(stale_output.name) not in manifest_maps
+            ):
+                shutil.rmtree(stale_output)
+
+    manifest = {
+        "version": 3,
+        "sourceBuild": args.build,
+        "tilePixels": args.tile_pixels,
+        "maps": [manifest_maps[key] for key in sorted(manifest_maps)],
+        "fallbackMaps": resolve_fallback_maps(tables, set(manifest_maps)),
+    }
+    MANIFEST_PATH.write_text(
+        json.dumps(manifest, ensure_ascii=False, indent="\t") + "\n",
+        encoding="utf-8",
+    )
 
 
 if __name__ == "__main__":

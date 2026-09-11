@@ -109,6 +109,7 @@ function notifyRenderersWclReady(connectionID?: string) {
 	// disconnected or reconnected with a different identity.
 	if (!connectionID || !socket.connected || socket.id !== connectionID) return;
 	isWclSocketReady = true;
+	wclRequestTransport.invalidateFightReplayCache();
 	BrowserWindow.getAllWindows().forEach(window => {
 		if (!window.isDestroyed() && !window.webContents.isDestroyed()) {
 			window.webContents.send(IPC_EVENTS.SOCKET_WCL_READY_CALLBACK);
@@ -1563,10 +1564,11 @@ ipcMain.handle(IPC_EVENTS.WCL_REQUEST_FIGHT_COOLDOWNS, async (_event, payload: u
 	return wclRequestTransport.requestFightCooldowns(request.reportCode, request.fightID);
 });
 
-ipcMain.handle(IPC_EVENTS.WCL_REQUEST_FIGHT_REPLAY, async (_event, payload) => {
+ipcMain.handle(IPC_EVENTS.WCL_REQUEST_FIGHT_REPLAY, async (_event, payload: unknown) => {
 	const request = normalizeWclFightRequest(payload);
 	if (!request) return { success: false, error: 'Invalid report code or fight ID' };
-	return wclRequestTransport.requestFightReplay(request.reportCode, request.fightID);
+	const force = Boolean(payload && typeof payload === 'object' && (payload as { force?: unknown }).force === true);
+	return wclRequestTransport.requestFightReplay(request.reportCode, request.fightID, force);
 });
 
 ipcMain.handle(IPC_EVENTS.WCL_REQUEST_FIGHT_BOSS_CASTS, async (

@@ -2,11 +2,13 @@ import log from 'electron-log/renderer';
 import { computed, ref, shallowRef, type ComputedRef, type Ref } from 'vue';
 
 import { IPC_EVENTS } from '@/events';
+import { REVIEW_REPLAY_VERSION, type FightReplayData } from '@/replay';
 import { useIpcOn } from '@/renderer/composables/useIpcOn';
 import type { ReviewTimelineWindowDataSnapshot } from '@/timelineWindow';
 import type { WclRequestResult } from '@/wclRequests';
 
 const FIGHT_DATA_CACHE_TTL_MS = 30 * 60 * 1000;
+const FIGHT_REPLAY_CACHE_LIMIT = 8;
 
 type ReviewFightDataOptions = {
 	selectedReportCode: Ref<string | null>;
@@ -31,12 +33,20 @@ export function useReviewFightData(options: ReviewFightDataOptions) {
 	const fightBossCastCacheEpoch = ref(0);
 	const fightBossCastRequests = ref<Record<string, boolean>>({});
 	const fightBossCastErrors = ref<Record<string, string | null>>({});
+	// Replay payloads contain thousands of position objects. Keep them shallow so
+	// Vue does not recursively proxy immutable WCL data every time the view opens.
+	const savedFightReplays = shallowRef<Record<string, FightReplayData>>({});
+	const fightReplayCachedAt = ref<Record<string, number>>({});
+	const fightReplayRequests = ref<Record<string, boolean>>({});
+	const fightReplayErrors = ref<Record<string, string | null>>({});
 	const fightEventPromises = new Map<string, Promise<fightEvent[]>>();
 	const fightCooldownPromises = new Map<string, Promise<reviewFightCooldownData>>();
 	const fightBossCastPromises = new Map<string, Promise<reviewFightBossCastData>>();
+	const fightReplayPromises = new Map<string, Promise<FightReplayData | null>>();
 	let fightEventRequestEpoch = 0;
 	let fightCooldownRequestEpoch = 0;
 	let fightBossCastRequestEpoch = 0;
+	let fightReplayRequestEpoch = 0;
 	let fightCooldownInvalidatedAt = 0;
 	let fightBossCastInvalidatedAt = 0;
 
@@ -202,6 +212,10 @@ export function useReviewFightData(options: ReviewFightDataOptions) {
 		return savedFightBossCasts.value[getFightCooldownCacheKey(reportCode, fightID)] || null;
 	}
 
+	function getFightReplayDataFor(reportCode: string, fightID: number) {
+		return savedFightReplays.value[getFightCooldownCacheKey(reportCode, fightID)] || null;
+	}
+
 	function isFightEventsLoadingFor(reportCode: string, fightID: number) {
 		return Boolean(fightEventRequests.value[getFightCooldownCacheKey(reportCode, fightID)]);
 	}
@@ -224,6 +238,14 @@ export function useReviewFightData(options: ReviewFightDataOptions) {
 
 	function getFightBossCastErrorFor(reportCode: string, fightID: number) {
 		return fightBossCastErrors.value[getFightCooldownCacheKey(reportCode, fightID)] || null;
+	}
+
+	function isFightReplayLoadingFor(reportCode: string, fightID: number) {
+		return Boolean(fightReplayRequests.value[getFightCooldownCacheKey(reportCode, fightID)]);
+	}
+
+	function getFightReplayErrorFor(reportCode: string, fightID: number) {
+		return fightReplayErrors.value[getFightCooldownCacheKey(reportCode, fightID)] || null;
 	}
 
 	function isFresh(cachedAt: Record<string, number>, cacheKey: string) {
@@ -277,6 +299,18 @@ export function useReviewFightData(options: ReviewFightDataOptions) {
 	const getFightBossCastError = computed(() => {
 		const cacheKey = getSelectedFightCooldownCacheKey.value;
 		return cacheKey ? fightBossCastErrors.value[cacheKey] || null : null;
+	});
+	const getFightReplayData = computed<FightReplayData | null>(() => {
+		const cacheKey = getSelectedFightCooldownCacheKey.value;
+		return cacheKey ? savedFightReplays.value[cacheKey] || null : null;
+	});
+	const isFightReplayLoading = computed(() => {
+		const cacheKey = getSelectedFightCooldownCacheKey.value;
+		return cacheKey ? Boolean(fightReplayRequests.value[cacheKey]) : false;
+	});
+	const getFightReplayError = computed(() => {
+		const cacheKey = getSelectedFightCooldownCacheKey.value;
+		return cacheKey ? fightReplayErrors.value[cacheKey] || null : null;
 	});
 
 	async function ensureFightEvents(reportCode: string, fightID: number, force = false, encounterID?: number): Promise<fightEvent[]> {
@@ -442,6 +476,75 @@ export function useReviewFightData(options: ReviewFightDataOptions) {
 		return request;
 	}
 
+	async function ensureFightReplay(
+		reportCode: string,
+		fightID: number,
+		force = false,
+	): Promise<FightReplayData | null> {
+		const cacheKey = getFightCooldownCacheKey(reportCode, fightID);
+		const cached = savedFightReplays.value[cacheKey];
+		if (!force && cached && isFresh(fightReplayCachedAt.value, cacheKey)) return cached;
+
+		const pending = fightReplayPromises.get(cacheKey);
+		if (pending) return pending;
+
+		fightReplayRequests.value[cacheKey] = true;
+		fightReplayErrors.value[cacheKey] = null;
+		const requestEpoch = fightReplayRequestEpoch;
+		const request = (async () => {
+			try {
+				const response = await ipc.invoke(
+					IPC_EVENTS.WCL_REQUEST_FIGHT_REPLAY,
+					{ reportCode, fightID, force },
+				) as WclRequestResult<FightReplayData>;
+				const replay = response && response.success === true ? response.data : null;
+				if (
+					!replay
+					|| replay.version !== REVIEW_REPLAY_VERSION
+					|| !Array.isArray(replay.actors)
+					|| !Array.isArray(replay.casts)
+					|| !Array.isArray(replay.uiMapIDs)
+					|| !Array.isArray(replay.overlays)
+				) {
+					throw new Error(
+						response && response.success === false
+							? response.error
+							: 'Replay data is unavailable',
+					);
+				}
+				if (requestEpoch !== fightReplayRequestEpoch) {
+					return savedFightReplays.value[cacheKey] || replay;
+				}
+				const nextReplays = { ...savedFightReplays.value };
+				// Reinsert the entry so object order acts as a small LRU. Replay payloads
+				// are considerably larger than the other fight-data responses.
+				delete nextReplays[cacheKey];
+				nextReplays[cacheKey] = replay;
+				while (Object.keys(nextReplays).length > FIGHT_REPLAY_CACHE_LIMIT) {
+					const oldestKey = Object.keys(nextReplays)[0];
+					delete nextReplays[oldestKey];
+					delete fightReplayCachedAt.value[oldestKey];
+					delete fightReplayErrors.value[oldestKey];
+				}
+				savedFightReplays.value = nextReplays;
+				fightReplayCachedAt.value[cacheKey] = Date.now();
+				return replay;
+			} catch (error) {
+				const message = error instanceof Error ? error.message : 'Failed to request fight replay';
+				if (requestEpoch === fightReplayRequestEpoch) fightReplayErrors.value[cacheKey] = message;
+				log.error('Failed to request WCL fight replay', { reportCode, fightID, error });
+				return savedFightReplays.value[cacheKey] || null;
+			}
+		})();
+		fightReplayPromises.set(cacheKey, request);
+		void request.finally(() => {
+			if (fightReplayPromises.get(cacheKey) !== request) return;
+			fightReplayRequests.value[cacheKey] = false;
+			fightReplayPromises.delete(cacheKey);
+		});
+		return request;
+	}
+
 	async function requestFightEvents(force = false) {
 		const reportCode = options.selectedReportCode.value;
 		const fightID = options.selectedFightID.value;
@@ -485,6 +588,11 @@ export function useReviewFightData(options: ReviewFightDataOptions) {
 		fightBossCastRequestEpoch++;
 		fightBossCastPromises.clear();
 		fightBossCastCacheEpoch.value++;
+		fightReplayCachedAt.value = {};
+		fightReplayRequests.value = {};
+		fightReplayErrors.value = {};
+		fightReplayRequestEpoch++;
+		fightReplayPromises.clear();
 	}
 
 	useIpcOn(
@@ -499,6 +607,7 @@ export function useReviewFightData(options: ReviewFightDataOptions) {
 		ensureFightBossCasts,
 		ensureFightCooldowns,
 		ensureFightEvents,
+		ensureFightReplay,
 		fightBossCastCacheEpoch,
 		fightCooldownCacheEpoch,
 		getFightBossCastData,
@@ -515,6 +624,10 @@ export function useReviewFightData(options: ReviewFightDataOptions) {
 		getFightEventsError,
 		getFightEventsErrorFor,
 		getFightEventsFor,
+		getFightReplayData,
+		getFightReplayDataFor,
+		getFightReplayError,
+		getFightReplayErrorFor,
 		invalidate,
 		isFightBossCastsLoading,
 		isFightBossCastsLoadingFor,
@@ -522,6 +635,8 @@ export function useReviewFightData(options: ReviewFightDataOptions) {
 		isFightCooldownsLoadingFor,
 		isFightEventsLoading,
 		isFightEventsLoadingFor,
+		isFightReplayLoading,
+		isFightReplayLoadingFor,
 		mergeTimelineWindowDataSnapshot,
 		requestFightBossCasts,
 		requestFightCooldowns,
@@ -529,6 +644,7 @@ export function useReviewFightData(options: ReviewFightDataOptions) {
 		savedFightBossCasts,
 		savedFightCooldowns,
 		savedFightEvents,
+		savedFightReplays,
 		timelineWindowDataRevision,
 		timelineWindowUpdatedFight,
 	};

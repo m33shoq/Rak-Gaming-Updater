@@ -19,6 +19,10 @@ interface ReplayDrag {
 	unitsPerPixel: number;
 }
 
+// Keep roughly 18% of the fitted actor extent visible on every edge. Expressed
+// as a total scale so tightly stacked raids also get a meaningful zoom-out.
+const AUTO_FIT_MARGIN_SCALE = 1.36;
+
 function fitReplayView(
 	points: readonly ReplayPoint[],
 	minimumHeight: number,
@@ -40,7 +44,8 @@ function fitReplayView(
 	return {
 		x: (minX + maxX) / 2,
 		y: (minY + maxY) / 2,
-		height: Math.max(minimumHeight, requiredHeight, requiredWidth / aspectRatio),
+		height: Math.max(minimumHeight, requiredHeight, requiredWidth / aspectRatio)
+			* AUTO_FIT_MARGIN_SCALE,
 	};
 }
 
@@ -198,6 +203,17 @@ export function useReplayViewport(
 		dragging.value = false;
 	}
 
+	/** Return to an uninitialized follow view when the replay source changes. */
+	function reset(): void {
+		if (drag && canvas.value?.hasPointerCapture(drag.id)) {
+			canvas.value.releasePointerCapture(drag.id);
+		}
+		drag = null;
+		dragging.value = false;
+		manual.value = { x: 0, y: 0, height: 60 };
+		follow.value = true;
+	}
+
 	return {
 		view,
 		viewWidth,
@@ -213,5 +229,6 @@ export function useReplayViewport(
 		endPan,
 		showWholePull,
 		followActors,
+		reset,
 	};
 }
