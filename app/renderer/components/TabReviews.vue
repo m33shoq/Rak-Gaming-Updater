@@ -9,6 +9,7 @@ import { createReviewTimelinePlayback } from '@/renderer/composables/useReviewTi
 
 import TabContent from '@/renderer/components/TabContent.vue';
 import ReviewCooldownTimeline from '@/renderer/components/ReviewCooldownTimeline.vue';
+import ReviewPlayerOverlay from '@/renderer/components/ReviewPlayerOverlay.vue';
 import ReviewVideoList from '@/renderer/components/ReviewVideoList.vue';
 import ReviewWclSelectors from '@/renderer/components/ReviewWclSelectors.vue';
 
@@ -44,14 +45,15 @@ let playerLoaded = false;
 const player = ref<YTPlayer | null>(null);
 const playerIframe = useTemplateRef<HTMLIFrameElement | null>('playerIframe');
 const videoContainer = useTemplateRef<HTMLElement | null>('videoContainer');
-const hotkeyGuide = useTemplateRef<HTMLElement | null>('hotkeyGuide');
-const hotkeyGuideButton = useTemplateRef<HTMLButtonElement | null>('hotkeyGuideButton');
+type ReviewPlayerOverlayHandle = {
+	closeHotkeyGuide: () => boolean;
+	keepControlsVisible: () => void;
+	reset: () => void;
+	revealControls: () => void;
+};
+const playerOverlay = useTemplateRef<ReviewPlayerOverlayHandle | null>('playerOverlay');
 const isPlayerFullscreen = ref(false);
-const isHotkeyGuideOpen = ref(false);
-const arePlayerControlsVisible = ref(true);
 const isPlayerPlaying = ref(false);
-const isPlayerControlDockHovered = ref(false);
-const isPlayerControlDockFocused = ref(false);
 const queuedSeekDeltaSeconds = ref<number | null>(null);
 const syncPrototypeAnchor = ref<{
 	videoId: string;
@@ -68,7 +70,6 @@ const ALT_SEEK_SECONDS = 1;
 const CTRL_SEEK_SECONDS = 60;
 const TEN_SECOND_SEEK_SECONDS = 10;
 const FRAME_SEEK_SECONDS = 1 / 30;
-const PLAYER_CONTROLS_IDLE_MS = 2200;
 const HOTKEY_SEEK_DEBOUNCE_MS = 80;
 const HOTKEY_SEEK_RETRY_MS = 1200;
 const HOTKEY_SEEK_MAX_PENDING_MS = 30_000;
@@ -153,19 +154,6 @@ const reviewSeekCoordinator = new ReviewSeekCoordinator(
 	},
 );
 
-const PLAYER_SHORTCUTS = [
-	{ keys: 'Space / K', action: 'Play or pause' },
-	{ keys: 'M', action: 'Mute or unmute' },
-	{ keys: 'F', action: 'Enter or exit fullscreen' },
-	{ keys: '← / →', action: 'Seek 5 seconds' },
-	{ keys: 'Alt + ← / →', action: 'Seek 1 second' },
-	{ keys: 'Shift + ← / →', action: 'Seek 3 seconds' },
-	{ keys: 'Ctrl/Cmd + ← / →', action: 'Seek 60 seconds' },
-	{ keys: 'J / L', action: 'Seek 10 seconds' },
-	{ keys: ', / .', action: 'Previous or next frame' },
-	{ keys: 'Double-click', action: 'Enter or exit fullscreen' },
-];
-
 type PlayerHotkeyPayload = {
 	key: string;
 	code: string;
@@ -181,7 +169,6 @@ type PlayerMouseDownPayload = {
 };
 
 let fullscreenToggleInProgress = false;
-let playerControlsHideTimeout: number | null = null;
 let playerBoundsResizeObserver: ResizeObserver | null = null;
 let hotkeySeekDispatchTimeout: number | null = null;
 let hotkeySeekRetryTimeout: number | null = null;
@@ -248,58 +235,12 @@ function onPlayerPointerEnter() {
 	revealPlayerControls();
 }
 
-function clearPlayerControlsHideTimeout() {
-	if (playerControlsHideTimeout === null) return;
-	window.clearTimeout(playerControlsHideTimeout);
-	playerControlsHideTimeout = null;
-}
-
 function revealPlayerControls() {
-	clearPlayerControlsHideTimeout();
-	arePlayerControlsVisible.value = true;
-	if (
-		!isPlayerPlaying.value
-		|| isHotkeyGuideOpen.value
-		|| isPlayerControlDockHovered.value
-		|| isPlayerControlDockFocused.value
-	) return;
-
-	playerControlsHideTimeout = window.setTimeout(() => {
-		playerControlsHideTimeout = null;
-		if (
-			!isHotkeyGuideOpen.value
-			&& !isPlayerControlDockHovered.value
-			&& !isPlayerControlDockFocused.value
-		) arePlayerControlsVisible.value = false;
-	}, PLAYER_CONTROLS_IDLE_MS);
+	playerOverlay.value?.revealControls();
 }
 
 function keepPlayerControlsVisible() {
-	clearPlayerControlsHideTimeout();
-	arePlayerControlsVisible.value = true;
-}
-
-function onPlayerControlDockPointerEnter() {
-	isPlayerControlDockHovered.value = true;
-	keepPlayerControlsVisible();
-}
-
-function onPlayerControlDockPointerLeave() {
-	isPlayerControlDockHovered.value = false;
-	revealPlayerControls();
-}
-
-function onPlayerControlDockFocusIn() {
-	isPlayerControlDockFocused.value = true;
-	keepPlayerControlsVisible();
-}
-
-function onPlayerControlDockFocusOut(event: FocusEvent) {
-	const nextTarget = event.relatedTarget;
-	if (nextTarget instanceof Node && (event.currentTarget as HTMLElement).contains(nextTarget)) return;
-
-	isPlayerControlDockFocused.value = false;
-	revealPlayerControls();
+	playerOverlay.value?.keepControlsVisible();
 }
 
 function playVideo() {
@@ -642,34 +583,13 @@ function isPlayerHotkeyContext() {
 
 function requestFullscreenToggle() {
 	if (fullscreenToggleInProgress) return;
-	isHotkeyGuideOpen.value = false;
+	playerOverlay.value?.closeHotkeyGuide();
 	void toggleFullscreen();
-}
-
-function toggleHotkeyGuide(event: MouseEvent) {
-	if (event.detail > 1) return;
-	isHotkeyGuideOpen.value = !isHotkeyGuideOpen.value;
-}
-
-function closeHotkeyGuide() {
-	isHotkeyGuideOpen.value = false;
-}
-
-function closeHotkeyGuideOnOutsidePointer(event: PointerEvent) {
-	if (!isHotkeyGuideOpen.value || !(event.target instanceof Node)) return;
-	if (hotkeyGuide.value?.contains(event.target) || hotkeyGuideButton.value?.contains(event.target)) return;
-	isHotkeyGuideOpen.value = false;
 }
 
 function onReviewsVisibilityChange() {
 	if (document.visibilityState !== 'visible') return;
 	if (getPendingSyncMarkerSeek()) scheduleAutomaticSyncMarkerRead(0);
-}
-
-function onFullscreenButtonClick(event: MouseEvent) {
-	// A double-click emits two click events; only the first should toggle the window.
-	if (event.detail > 1) return;
-	requestFullscreenToggle();
 }
 
 function onPlayerDoubleClick() {
@@ -759,10 +679,9 @@ function handlePlayerHotkey(input: PlayerHotkeyPayload | KeyboardEvent) {
 
 function onPlayerKeyDown(event: KeyboardEvent) {
 	if (event.defaultPrevented) return;
-	if (event.code === 'Escape' && isHotkeyGuideOpen.value) {
+	if (event.code === 'Escape' && playerOverlay.value?.closeHotkeyGuide()) {
 		event.preventDefault();
 		event.stopPropagation();
-		isHotkeyGuideOpen.value = false;
 		return;
 	}
 	if (isPlayerHotkeyExcludedTarget(event.target)) return;
@@ -784,17 +703,9 @@ useIpcOn(IPC_EVENTS.YOUTUBE_PLAYER_POINTER_ACTIVITY_CALLBACK, () => {
 
 useIpcOn(IPC_EVENTS.YOUTUBE_PLAYER_FULLSCREEN_CHANGED, (_event, fullscreen: boolean) => {
 	isPlayerFullscreen.value = fullscreen === true;
-	isHotkeyGuideOpen.value = false;
+	playerOverlay.value?.closeHotkeyGuide();
 	revealPlayerControls();
 	void nextTick(publishPlayerPointerBounds);
-});
-
-watch(isHotkeyGuideOpen, (isOpen) => {
-	if (isOpen) {
-		keepPlayerControlsVisible();
-	} else {
-		revealPlayerControls();
-	}
 });
 
 watch(videoContainer, (container) => {
@@ -845,10 +756,7 @@ watch(() => reviewsStore.getSelectedVideoId, (newId) => {
 	if (!newId) {
 		internallySelectedVideo = null;
 		reviewSeekCoordinator.cancel('No video selected');
-		isPlayerControlDockHovered.value = false;
-		isPlayerControlDockFocused.value = false;
-		isHotkeyGuideOpen.value = false;
-		keepPlayerControlsVisible();
+		playerOverlay.value?.reset();
 		player.value?.stop();
 		return;
 	}
@@ -1064,9 +972,7 @@ watch(playerIframe, (el) => {
 
 onMounted(async () => {
 	window.addEventListener('keydown', onPlayerKeyDown);
-	window.addEventListener('blur', closeHotkeyGuide);
 	window.addEventListener('resize', publishPlayerPointerBounds);
-	document.addEventListener('pointerdown', closeHotkeyGuideOnOutsidePointer);
 	document.addEventListener('visibilitychange', onReviewsVisibilityChange);
 	syncMarkerAutoReadInterval = window.setInterval(() => {
 		void captureReviewSyncMarker('periodic');
@@ -1093,9 +999,7 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
 	window.removeEventListener('keydown', onPlayerKeyDown);
-	window.removeEventListener('blur', closeHotkeyGuide);
 	window.removeEventListener('resize', publishPlayerPointerBounds);
-	document.removeEventListener('pointerdown', closeHotkeyGuideOnOutsidePointer);
 	document.removeEventListener('visibilitychange', onReviewsVisibilityChange);
 	clearScheduledSyncMarkerRead();
 	cancelPendingSynchronizedSeek('Reviews closed');
@@ -1107,7 +1011,6 @@ onBeforeUnmount(() => {
 	playerBoundsResizeObserver?.disconnect();
 	playerBoundsResizeObserver = null;
 	ipc.send(IPC_EVENTS.YOUTUBE_PLAYER_POINTER_BOUNDS_SET, null);
-	clearPlayerControlsHideTimeout();
 	clearQueuedHotkeySeek();
 	isPlayerFullscreen.value = false;
 	void ipc.invoke(IPC_EVENTS.YOUTUBE_PLAYER_FULLSCREEN_SET, false).catch((error) => {
@@ -2334,10 +2237,7 @@ function dismissReviewSyncStatus(): void {
 					<div
 						ref="videoContainer"
 						class="youtube-player-container relative bg-gray-200 aspect-video max-w-[min(100%,80vw)] h-[calc(100%-85px)] rounded-md mt-2"
-						:class="{
-							'youtube-player-container--fullscreen': isPlayerFullscreen,
-							'youtube-player-controls--hidden': !arePlayerControlsVisible,
-						}"
+						:class="{ 'youtube-player-container--fullscreen': isPlayerFullscreen }"
 						@pointerenter="onPlayerPointerEnter"
 						@pointermove="revealPlayerControls"
 						@dblclick="onPlayerDoubleClick"
@@ -2350,118 +2250,22 @@ function dismissReviewSyncStatus(): void {
 								class="rounded-md w-full h-full z-50"
 							></div>
 						</div>
-						<Transition name="youtube-player-seek-queue">
-							<div
-								v-if="queuedSeekDeltaSeconds !== null"
-								class="youtube-player-seek-queue"
-								:class="queuedSeekDirectionClass"
-								role="status"
-								aria-live="polite"
-								aria-atomic="true"
-							>
-								<strong>{{ queuedSeekDeltaLabel }}</strong>
-							</div>
-						</Transition>
-						<div
-							v-if="reviewsStore.selectedVideoInfo"
-							class="youtube-player-control-dock"
-							@pointerenter="onPlayerControlDockPointerEnter"
-							@pointerleave="onPlayerControlDockPointerLeave"
-							@focusin="onPlayerControlDockFocusIn"
-							@focusout="onPlayerControlDockFocusOut"
-							@dblclick.stop
-						>
-							<button
-								type="button"
-								class="youtube-player-control-button"
-								:title="isSyncPrototypeCapturing ? 'Reading RG sync marker...' : 'Read RG sync marker now (automatic synchronization is enabled)'"
-								aria-label="Read RG sync marker from the video"
-								:disabled="isSyncPrototypeCapturing"
-								@click.stop="captureReviewSyncMarker('manual')"
-								@dblclick.stop
-							>
-								<svg viewBox="0 0 24 24" aria-hidden="true">
-									<path d="M8 3H3v5M16 3h5v5M8 21H3v-5M16 21h5v-5M7 10h10v4H7z" />
-								</svg>
-							</button>
-							<button
-								type="button"
-								class="youtube-player-control-button"
-								title="Open video on YouTube"
-								aria-label="Open current video on YouTube"
-								@click.stop="openSelectedYoutubeVideo"
-							>
-								<svg viewBox="0 0 24 24" aria-hidden="true">
-									<path d="M14 4h6v6M20 4l-9 9M18 13v5a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h5" />
-								</svg>
-							</button>
-							<button
-								ref="hotkeyGuideButton"
-								type="button"
-								class="youtube-player-control-button"
-								title="Video keyboard shortcuts"
-								aria-label="Show video keyboard shortcuts"
-								aria-controls="youtube-player-hotkey-guide"
-								:aria-expanded="isHotkeyGuideOpen"
-								@click.stop="toggleHotkeyGuide"
-								@dblclick.stop
-							>
-								<svg viewBox="0 0 24 24" aria-hidden="true">
-									<rect x="2.5" y="5" width="19" height="14" rx="1" />
-									<path d="M6 9h.01M9 9h.01M12 9h.01M15 9h.01M18 9h.01M6 12h.01M9 12h.01M12 12h.01M15 12h3M6 15h12" />
-								</svg>
-							</button>
-							<button
-								type="button"
-								class="youtube-player-control-button"
-								:title="isPlayerFullscreen ? 'Exit fullscreen (F)' : 'Fullscreen (F)'"
-								:aria-label="isPlayerFullscreen ? 'Exit video fullscreen' : 'Enter video fullscreen'"
-								@click.stop="onFullscreenButtonClick"
-								@dblclick.stop
-							>
-								<svg v-if="isPlayerFullscreen" viewBox="0 0 24 24" aria-hidden="true">
-									<path d="M8 3v5H3M16 3v5h5M8 21v-5H3M16 21v-5h5" />
-								</svg>
-								<svg v-else viewBox="0 0 24 24" aria-hidden="true">
-									<path d="M8 3H3v5M16 3h5v5M8 21H3v-5M16 21h5v-5" />
-								</svg>
-							</button>
-						</div>
-						<div
-							v-if="syncPrototypeStatus"
-							class="youtube-player-sync-prototype"
-							:class="`youtube-player-sync-prototype--${syncPrototypeStatusTone}`"
-							role="status"
-							@dblclick.stop
-						>
-							<span>{{ syncPrototypeStatus }}</span>
-							<button
-								type="button"
-								@click.stop="dismissReviewSyncStatus"
-							>Close</button>
-						</div>
-						<section
-							v-if="isHotkeyGuideOpen"
-							id="youtube-player-hotkey-guide"
-							ref="hotkeyGuide"
-							class="youtube-player-hotkey-guide"
-							aria-label="Video keyboard shortcuts"
-							@dblclick.stop
-						>
-							<div class="youtube-player-hotkey-guide__header">
-								<div>
-									<div class="youtube-player-hotkey-guide__title">Video shortcuts</div>
-									<div class="youtube-player-hotkey-guide__hint">Available while reviewing a video</div>
-								</div>
-								<button type="button" aria-label="Close video shortcuts" @click="isHotkeyGuideOpen = false">×</button>
-							</div>
-							<div class="youtube-player-hotkey-guide__grid">
-								<div v-for="shortcut in PLAYER_SHORTCUTS" :key="shortcut.keys" class="youtube-player-hotkey-guide__item">
-									<kbd>{{ shortcut.keys }}</kbd>
-									<span>{{ shortcut.action }}</span>
-								</div>
-							</div>
-						</section>
+						<ReviewPlayerOverlay
+							ref="playerOverlay"
+							:selected-video="Boolean(reviewsStore.selectedVideoInfo)"
+							:playing="isPlayerPlaying"
+							:fullscreen="isPlayerFullscreen"
+							:queued-seek-delta-seconds="queuedSeekDeltaSeconds"
+							:queued-seek-delta-label="queuedSeekDeltaLabel"
+							:queued-seek-direction-class="queuedSeekDirectionClass"
+							:sync-status="syncPrototypeStatus"
+							:sync-status-tone="syncPrototypeStatusTone"
+							:sync-capturing="isSyncPrototypeCapturing"
+							@read-sync-marker="captureReviewSyncMarker('manual')"
+							@open-video="openSelectedYoutubeVideo"
+							@toggle-fullscreen="requestFullscreenToggle"
+							@dismiss-sync-status="dismissReviewSyncStatus"
+						/>
 					</div>
 				</div>
 				<ReviewVideoList @open-stream="openStreamInBrowser" />
@@ -2586,7 +2390,7 @@ function dismissReviewSyncStatus(): void {
 	transition: border-color 80ms linear, opacity 220ms ease-out;
 }
 
-.youtube-player-controls--hidden .youtube-player-control-dock {
+.youtube-player-control-dock--hidden {
 	opacity: 0;
 	pointer-events: none;
 }
