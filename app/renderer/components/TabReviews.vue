@@ -1,12 +1,12 @@
 <script setup lang="ts">
 import log from 'electron-log/renderer';
 import { IPC_EVENTS } from '@/events';
-import type { ReviewTimelineWindowAction, ReviewTimelineWindowContext } from '@/timelineWindow';
 
 import { ref, computed, watch, onMounted, onBeforeUnmount, useTemplateRef, nextTick } from 'vue';
 import { useIpcOn } from '@/renderer/composables/useIpcOn';
 import { useReviewPlayerHotkeys } from '@/renderer/composables/useReviewPlayerHotkeys';
 import { createReviewTimelinePlayback } from '@/renderer/composables/useReviewTimelinePlayback';
+import { useReviewTimelineWindowBridge } from '@/renderer/composables/useReviewTimelineWindowBridge';
 
 import TabContent from '@/renderer/components/TabContent.vue';
 import ReviewCooldownTimeline from '@/renderer/components/ReviewCooldownTimeline.vue';
@@ -519,19 +519,6 @@ onMounted(async () => {
 	} catch (error) {
 		log.warn('Failed to load YouTube player fullscreen state', error);
 	}
-	try {
-		const status = await ipc.invoke(IPC_EVENTS.TIMELINE_WINDOW_STATUS_GET) as { detached?: boolean };
-		const wasDetached = reviewsStore.timelineWindowDetached;
-		reviewsStore.timelineWindowDetached = status?.detached === true;
-		if (reviewsStore.timelineWindowDetached) {
-			sendTimelineWindowContext();
-		} else if (wasDetached) {
-			reviewsStore.timelineExpanded = true;
-			void reviewsStore.reloadBossCastPreferences();
-		}
-	} catch (error) {
-		log.error('Failed to load detached timeline status', error);
-	}
 });
 
 onBeforeUnmount(() => {
@@ -926,142 +913,21 @@ const phaseTransitions = computed(() => {
 		.filter(phase => phase.percent > 0 && phase.percent < 1); // exclude start and end
 });
 
-function openWCLDeath(deathID: number) {
-	if (!reviewsStore.selectedReportCode || !reviewsStore.selectedFightID) return;
-	openWCLPullDeath(reviewsStore.selectedFightID, deathID);
-}
-
-function openWCLFight(fightID?: number) {
-	const targetFightID = fightID || reviewsStore.selectedFightID;
-	if (!reviewsStore.selectedReportCode || !targetFightID) return;
-	ipc.send(IPC_EVENTS.WCL_OPEN_FIGHT, {
-		reportCode: reviewsStore.selectedReportCode,
-		fightID: targetFightID,
-	});
-}
-
-function openWCLPullDeath(fightID: number, deathID: number) {
-	if (!reviewsStore.selectedReportCode) return;
-	ipc.send(IPC_EVENTS.WCL_OPEN_DEATH, {
-		reportCode: reviewsStore.selectedReportCode,
-		fightID,
-		deathID: deathID,
-	});
-}
-
-function buildTimelineWindowContext(includeAllCachedPulls = false): ReviewTimelineWindowContext | null {
-	const reportCode = reviewsStore.selectedReportCode;
-	const fightID = reviewsStore.selectedFightID;
-	const reportDetails = reviewsStore.getReportDetails;
-	const fight = reviewsStore.getSelectedFight;
-	if (!reportCode || !fightID || !reportDetails || !fight) return null;
-
-	const context: ReviewTimelineWindowContext = {
-		reportCode,
-		fightID,
-		reportDetails,
-		dataSnapshot: reviewsStore.createTimelineWindowDataSnapshot(
-			reportCode,
-			includeAllCachedPulls ? undefined : [fightID],
-		),
-		phases: phaseTransitions.value,
-		fightStartTime: reviewsStore.getFightStartTimeOffset,
-		fightDuration: reviewsStore.getFightDuration,
-		cursorPercent: currentFightCursor.value,
-		playing: isPlayerPlaying.value,
-		viewMode: reviewsStore.timelineViewMode,
-		title: `${fight.name} · Fight #${fight.id}`,
-	};
-
-	// Pinia wraps nested report data in Vue proxies. Build a plain snapshot before
-	// crossing the isolated renderer boundary.
-	return JSON.parse(JSON.stringify(context)) as ReviewTimelineWindowContext;
-}
-
-async function detachTimeline() {
-	const context = buildTimelineWindowContext(true);
-	if (!context) return;
-	try {
-		const response = await ipc.invoke(IPC_EVENTS.TIMELINE_WINDOW_OPEN, context) as { success?: boolean; error?: string };
-		if (!response?.success) throw new Error(response?.error || 'Timeline window could not be opened.');
-		const status = await ipc.invoke(IPC_EVENTS.TIMELINE_WINDOW_STATUS_GET) as { detached?: boolean };
-		reviewsStore.timelineWindowDetached = status?.detached === true;
-		reviewsStore.timelineExpanded = true;
-	} catch (error) {
-		log.error('Failed to detach review timeline', error);
-	}
-}
-
-function sendTimelineWindowContext() {
-	if (!reviewsStore.timelineWindowDetached) return;
-	const context = buildTimelineWindowContext();
-	if (!context) {
-		ipc.send(IPC_EVENTS.TIMELINE_WINDOW_REATTACH, { reason: 'context-unavailable' });
-		return;
-	}
-	ipc.send(IPC_EVENTS.TIMELINE_WINDOW_CONTEXT_SET, context);
-}
-
-function handleTimelineWindowAction(action: ReviewTimelineWindowAction): boolean {
-	switch (action.type) {
-		case 'seek':
-			if (!player.value || !playerLoaded) return false;
-			seekToFightTimestamp(action.timestampSeconds, 'detached-timeline');
-			return true;
-		case 'seek-pull':
-			if (!player.value || !playerLoaded) return false;
-			seekToPullTimestamp(action.fightID, action.timestampSeconds, 'detached-timeline');
-			return true;
-		case 'open-fight':
-			openWCLFight(action.fightID);
-			return true;
-		case 'open-death':
-			openWCLDeath(action.deathID);
-			return true;
-		case 'open-pull-death':
-			openWCLPullDeath(action.fightID, action.deathID);
-			return true;
-		case 'toggle-playback':
-			if (!player.value || !playerLoaded) return false;
-			togglePlayPause();
-			return true;
-		case 'view-mode':
-			reviewsStore.timelineViewMode = action.viewMode;
-			return true;
-	}
-}
-
-let unregisterTimelineWindowActionHandler: (() => void) | null = null;
-onMounted(() => {
-	unregisterTimelineWindowActionHandler = reviewsStore.registerTimelineWindowActionHandler(handleTimelineWindowAction);
-});
-onBeforeUnmount(() => {
-	unregisterTimelineWindowActionHandler?.();
-	unregisterTimelineWindowActionHandler = null;
-});
-
-watch(
-	[
-		() => reviewsStore.selectedReportCode,
-		() => reviewsStore.selectedFightID,
-		() => reviewsStore.getReportDetails,
-		() => reviewsStore.getFightEvents,
-		() => reviewsStore.getFightCooldownData,
-		() => reviewsStore.getFightBossCastData,
-		() => reviewsStore.isFightCooldownsLoading,
-		() => reviewsStore.getFightCooldownError,
-		phaseTransitions,
-		() => reviewsStore.timelineViewMode,
-	],
-	sendTimelineWindowContext,
-);
-
-watch(currentFightCursor, (cursorPercent) => {
-	if (reviewsStore.timelineWindowDetached) ipc.send(IPC_EVENTS.TIMELINE_WINDOW_CURSOR_SET, cursorPercent);
-});
-
-watch(isPlayerPlaying, (playing) => {
-	if (reviewsStore.timelineWindowDetached) ipc.send(IPC_EVENTS.TIMELINE_WINDOW_PLAYBACK_SET, playing);
+const {
+	detachTimeline,
+	openWCLDeath,
+	openWCLFight,
+	openWCLPullDeath,
+} = useReviewTimelineWindowBridge({
+	cursorPercent: currentFightCursor,
+	isPlaying: isPlayerPlaying,
+	phases: phaseTransitions,
+	isPlayerReady: () => Boolean(player.value && playerLoaded),
+	seekFight: (timestampSeconds, source) => seekToFightTimestamp(timestampSeconds, source),
+	seekPull: (fightID, timestampSeconds, source) => {
+		seekToPullTimestamp(fightID, timestampSeconds, source);
+	},
+	togglePlayback: () => togglePlayPause(),
 });
 
 function openYoutubeLink(videoId: string, timestampSeconds?: number) {
