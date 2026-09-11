@@ -12,19 +12,27 @@ import { reviewVideoOverlapsWindow } from '@/reviewVideoSelection';
 import type { WclRequestResult } from '@/wclRequests';
 
 import { useYoutubeVideoInfo } from '@/renderer/composables/useYoutubeVideoInfo';
+import { useReviewBossCastPreferences } from '@/renderer/composables/useReviewBossCastPreferences';
 
 const FIGHT_DATA_CACHE_TTL_MS = 30 * 60 * 1000;
 const REPORT_LIST_CACHE_TTL_MS = 15 * 1000;
 const REPORT_DETAILS_CACHE_TTL_MS = 15 * 1000;
-const BOSS_CAST_PREFERENCES_STORE_KEY = 'reviewBossCastVisibilityOverrides';
-const BOSS_CAST_DISPLAY_MODE_STORE_KEY = 'reviewBossCastDisplayMode';
-type BossCastVisibilityOverrides = Record<string, Record<string, boolean>>;
-type BossCastDisplayMode = 'full' | 'collapsed';
 type TimelineWindowActionHandler = (action: ReviewTimelineWindowAction) => boolean;
 type LoadStatus = 'idle' | 'loading' | 'refreshing' | 'ready' | 'error';
 
 export const useReviewsStore = defineStore('Reviews', () => {
 	const { youtubeVideoInfo, refreshYoutubeVideoInfo } = useYoutubeVideoInfo();
+	const {
+		displayMode: bossCastDisplayMode,
+		ensurePreferencesLoaded: ensureBossCastPreferencesLoaded,
+		isAbilityEnabled: isBossCastAbilityEnabled,
+		preferencesLoaded: bossCastPreferencesLoaded,
+		reloadPreferences: reloadBossCastPreferences,
+		resetAbilityPreferences: resetBossCastAbilityPreferences,
+		setAbilityEnabled: setBossCastAbilityEnabled,
+		setDisplayMode: setBossCastDisplayMode,
+		visibilityOverrides: bossCastVisibilityOverrides,
+	} = useReviewBossCastPreferences();
 	const selectedVideoInfo = ref<YouTubeVideo | null>(null);
 	const timelineWindowDetached = ref(false);
 	const timelineExpanded = ref(false);
@@ -73,9 +81,6 @@ export const useReviewsStore = defineStore('Reviews', () => {
 	const fightBossCastCacheEpoch = ref(0);
 	const fightBossCastRequests = ref<Record<string, boolean>>({});
 	const fightBossCastErrors = ref<Record<string, string | null>>({});
-	const bossCastVisibilityOverrides = ref<BossCastVisibilityOverrides>({});
-	const bossCastDisplayMode = ref<BossCastDisplayMode>('collapsed');
-	const bossCastPreferencesLoaded = ref(false);
 	const fightEventPromises = new Map<string, Promise<fightEvent[]>>();
 	const fightCooldownPromises = new Map<string, Promise<reviewFightCooldownData>>();
 	const fightBossCastPromises = new Map<string, Promise<reviewFightBossCastData>>();
@@ -87,7 +92,6 @@ export const useReviewsStore = defineStore('Reviews', () => {
 	let reportSelectionGeneration = 0;
 	let fightCooldownInvalidatedAt = 0;
 	let fightBossCastInvalidatedAt = 0;
-	let bossCastPreferencesPromise: Promise<void> | null = null;
 	let timelineContextHydrationGeneration = 0;
 	let timelineContextHydrating = false;
 	let reportListRequested = false;
@@ -449,110 +453,6 @@ export const useReviewsStore = defineStore('Reviews', () => {
 		const cacheKey = getSelectedFightCooldownCacheKey.value;
 		return cacheKey ? fightBossCastErrors.value[cacheKey] || null : null;
 	});
-
-	function getBossCastPreferenceScope(encounterID: number, difficulty: number) {
-		return `${encounterID}:${difficulty}`;
-	}
-
-	function parseBossCastVisibilityOverrides(value: unknown): BossCastVisibilityOverrides {
-		if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
-		const parsed: BossCastVisibilityOverrides = {};
-		Object.entries(value).forEach(([scope, overrides]) => {
-			if (!scope || !overrides || typeof overrides !== 'object' || Array.isArray(overrides)) return;
-			const scopeOverrides: Record<string, boolean> = {};
-			Object.entries(overrides).forEach(([spellID, enabled]) => {
-				if (/^\d+$/.test(spellID) && typeof enabled === 'boolean') {
-					scopeOverrides[spellID] = enabled;
-				}
-			});
-			parsed[scope] = scopeOverrides;
-		});
-		return parsed;
-	}
-
-	function getPersistableBossCastVisibilityOverrides() {
-		// Values stored in a normal ref are deeply wrapped by Vue. Electron IPC cannot
-		// structured-clone those proxies, so rebuild a plain object before crossing it.
-		return parseBossCastVisibilityOverrides(bossCastVisibilityOverrides.value);
-	}
-
-	function ensureBossCastPreferencesLoaded() {
-		if (bossCastPreferencesLoaded.value) return Promise.resolve();
-		if (bossCastPreferencesPromise) return bossCastPreferencesPromise;
-		bossCastPreferencesPromise = (async () => {
-			try {
-				const [storedOverrides, storedDisplayMode] = await Promise.all([
-					store.get(BOSS_CAST_PREFERENCES_STORE_KEY),
-					store.get(BOSS_CAST_DISPLAY_MODE_STORE_KEY),
-				]);
-				bossCastVisibilityOverrides.value = parseBossCastVisibilityOverrides(
-					storedOverrides,
-				);
-				bossCastDisplayMode.value = storedDisplayMode === 'full' ? 'full' : 'collapsed';
-			} catch (error) {
-				log.error('Failed to load boss cast visibility preferences', error);
-				bossCastVisibilityOverrides.value = {};
-				bossCastDisplayMode.value = 'collapsed';
-			} finally {
-				bossCastPreferencesLoaded.value = true;
-				bossCastPreferencesPromise = null;
-			}
-		})();
-		return bossCastPreferencesPromise;
-	}
-
-	async function reloadBossCastPreferences() {
-		if (bossCastPreferencesPromise) await bossCastPreferencesPromise;
-		bossCastPreferencesLoaded.value = false;
-		bossCastPreferencesPromise = null;
-		await ensureBossCastPreferencesLoaded();
-	}
-
-	async function setBossCastDisplayMode(mode: BossCastDisplayMode) {
-		await ensureBossCastPreferencesLoaded();
-		bossCastDisplayMode.value = mode;
-		try {
-			await store.set(BOSS_CAST_DISPLAY_MODE_STORE_KEY, mode);
-		} catch (error) {
-			log.error('Failed to persist boss cast display mode', error);
-		}
-	}
-
-	function isBossCastAbilityEnabled(encounterID: number, difficulty: number, ability: reviewBossCastAbility) {
-		const scope = getBossCastPreferenceScope(encounterID, difficulty);
-		const override = bossCastVisibilityOverrides.value[scope]?.[String(ability.spellID)];
-		return typeof override === 'boolean' ? override : ability.defaultEnabled;
-	}
-
-	async function setBossCastAbilityEnabled(encounterID: number, difficulty: number, spellID: number, enabled: boolean) {
-		await ensureBossCastPreferencesLoaded();
-		const scope = getBossCastPreferenceScope(encounterID, difficulty);
-		bossCastVisibilityOverrides.value = {
-			...bossCastVisibilityOverrides.value,
-			[scope]: {
-				...bossCastVisibilityOverrides.value[scope],
-				[String(spellID)]: enabled,
-			},
-		};
-		try {
-			await store.set(BOSS_CAST_PREFERENCES_STORE_KEY, getPersistableBossCastVisibilityOverrides());
-		} catch (error) {
-			log.error('Failed to persist boss cast visibility preferences', error);
-		}
-	}
-
-	async function resetBossCastAbilityPreferences(encounterID: number, difficulty: number) {
-		await ensureBossCastPreferencesLoaded();
-		const scope = getBossCastPreferenceScope(encounterID, difficulty);
-		bossCastVisibilityOverrides.value = Object.fromEntries(
-			Object.entries(bossCastVisibilityOverrides.value).filter(([key]) => key !== scope),
-		);
-		try {
-			await store.set(BOSS_CAST_PREFERENCES_STORE_KEY, getPersistableBossCastVisibilityOverrides());
-		} catch (error) {
-			log.error('Failed to reset boss cast visibility preferences', error);
-		}
-	}
 
 	const getReportTimeOffset = computed(() => {
 		return getSelectedReport.value?.startTime ?? getReportDetails.value?.startTime ?? 0;
