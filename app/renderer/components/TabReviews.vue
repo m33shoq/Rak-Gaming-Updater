@@ -30,6 +30,7 @@ import {
 	type ReviewSeekSource,
 } from '@/renderer/reviewSeekCoordinator';
 import { getReviewVideoEndTime } from '@/reviewVideoSelection';
+import { buildReviewPhaseMarkers } from '@/reviewPhaseTransitions';
 
 const reviewsStore = useReviewsStore();
 
@@ -596,47 +597,11 @@ const currentFightCursor = computed(() => {
 });
 const timelinePlayback = createReviewTimelinePlayback(currentFightCursor, isPlayerPlaying);
 
-const phaseTransitions = computed(() => {
-	const selectedReportDetails = reviewsStore.getReportDetails;
-	const selectedFight = reviewsStore.getSelectedFight;
-
-	if (!selectedReportDetails?.phases || !selectedFight?.phaseTransitions || !reviewsStore.getFightDuration) return [];
-	const phaseIdToText = new Map<number, string>();
-	let phasesCount = 0;
-	let intermissionCount = 0;
-	const phases = selectedReportDetails.phases?.find(p => p.encounterID === selectedFight.encounterID)?.phases || [];
-	phases.forEach(phase => {
-		// Shorten phase names:
-		// "Stage Two: Some name" -> p2
-		// "Intermission One: Some name" - i1
-		let name
-		if (phase.isIntermission) {
-			intermissionCount += 1;
-			name = `I${intermissionCount}`;
-		} else {
-			phasesCount += 1;
-			name = `P${phasesCount}`;
-		}
-
-		if (name) {
-			phaseIdToText.set(phase.id, name);
-		}
-	});
-
-	const fightStartTime = reviewsStore.getFightStartTimeOffset; // in ms
-
-	return reviewsStore.getSelectedFight.phaseTransitions
-		.map(phase => {
-			const phaseId = phase.id;
-			const phaseStart = phase.startTime; // in ms
-			const percent = (phaseStart - fightStartTime) / reviewsStore.getFightDuration;
-			return {
-				name: phaseIdToText.get(phaseId) || phaseId,
-				percent,
-			};
-		})
-		.filter(phase => phase.percent > 0 && phase.percent < 1); // exclude start and end
-});
+const phaseTransitions = computed(() => buildReviewPhaseMarkers(
+	reviewsStore.getReportDetails?.phases,
+	reviewsStore.getSelectedFight,
+	reviewsStore.getFightDuration,
+));
 
 const {
 	detachTimeline,
