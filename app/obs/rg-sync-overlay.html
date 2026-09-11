@@ -5,10 +5,10 @@
 	- Add this file as a local Browser Source.
 	- Use a 1920x1080 browser viewport and place it at canvas position 0,0.
 	- Do not crop the source. Keep it visible for the whole broadcast.
-	The encoded strip records wall-clock time in the video itself. The app can
-	inject a Windows Time correction through OBS Custom CSS; without one, this
-	file deliberately falls back to the browser's Date.now(). The overlay itself
-	does not contact WCL or a remote service.
+	The encoded strip records the streaming PC's wall-clock time using Date.now().
+	Keeping that clock uncorrected makes it share the same clock domain as a WoW
+	combat log recorded on the same PC. The overlay does not contact WCL or any
+	other remote service.
 -->
 <html lang="en">
 <head>
@@ -16,11 +16,6 @@
 	<meta name="viewport" content="width=device-width, initial-scale=1">
 	<title>RG stream sync marker</title>
 	<style>
-		:root {
-			/* The app overrides this through the dedicated OBS source's Custom CSS. */
-			--rg-clock-offset-ms: 0;
-		}
-
 		html, body {
 			width: 100%;
 			height: 100%;
@@ -54,14 +49,6 @@
 		const MODULO_TIMESTAMP_TICKS = 1 << 16;
 		const CALIBRATION_SYMBOLS = [0, 3, 1, 2];
 		const SYMBOL_LEVELS = ['#101820', '#566068', '#9da7ae', '#eef7fb'];
-
-		function getClockOffsetMs() {
-			const value = getComputedStyle(document.documentElement)
-				.getPropertyValue('--rg-clock-offset-ms')
-				.trim();
-			const offsetMs = Number(value);
-			return Number.isFinite(offsetMs) ? -offsetMs : 0;
-		}
 
 		function crc8(bytes) {
 			let crc = 0;
@@ -97,10 +84,8 @@
 		}
 
 		function render() {
-			// Invalid or absent injected CSS resolves to zero, preserving the original
-			// raw Date.now() behavior whenever clock calibration is unavailable.
-			const correctedNowMs = Date.now() + getClockOffsetMs();
-			const timestampMs = Math.floor(correctedNowMs / 100) * 100;
+			const nowMs = Date.now();
+			const timestampMs = Math.floor(nowMs / 100) * 100;
 			const symbols = encode(timestampMs);
 			context.fillStyle = '#05080b';
 			context.fillRect(0, 0, canvas.width, canvas.height);
@@ -109,7 +94,7 @@
 				context.fillStyle = SYMBOL_LEVELS[symbols[index]];
 				context.fillRect(0, index * CELL_HEIGHT, CELL_WIDTH, CELL_HEIGHT);
 			}
-			const tickProgressMs = ((correctedNowMs % 100) + 100) % 100;
+			const tickProgressMs = ((nowMs % 100) + 100) % 100;
 			setTimeout(render, Math.max(20, 100 - tickProgressMs));
 		}
 

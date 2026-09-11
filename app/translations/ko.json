@@ -49,8 +49,6 @@
 	"obs.install_sync_marker": "현재 장면에 동기화 마커 추가",
 	"obs.sync_marker_ready": "“{scene}” 장면에 RG 동기화 마커가 준비되었습니다.",
 	"obs.sync_marker_failed": "OBS에 RG 동기화 마커를 추가하지 못했습니다.",
-	"obs.sync_marker_clock_corrected": "시계 보정: {offset}.",
-	"obs.sync_marker_clock_fallback": "시계 보정을 사용할 수 없어 PC 시계를 사용합니다.",
 	"obs.settings_saved": "OBS 설정이 저장되었습니다.",
 	"obs.settings_save_failed": "OBS 설정 저장에 실패했습니다.",
 	"obs.connection": "연결",

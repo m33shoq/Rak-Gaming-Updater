@@ -48,8 +48,6 @@
 	"obs.install_sync_marker": "Добавить маркер синхронизации в текущую сцену",
 	"obs.sync_marker_ready": "Маркер синхронизации RG готов в сцене «{scene}».",
 	"obs.sync_marker_failed": "Не удалось добавить маркер синхронизации RG в OBS.",
-	"obs.sync_marker_clock_corrected": "Коррекция часов: {offset}.",
-	"obs.sync_marker_clock_fallback": "Калибровка часов недоступна; используются часы ПК.",
 	"obs.settings_saved": "Настройки OBS сохранены.",
 	"obs.settings_save_failed": "Не удалось сохранить настройки OBS.",
 	"obs.connection": "Соединение",

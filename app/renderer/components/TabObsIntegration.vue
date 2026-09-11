@@ -93,12 +93,7 @@ async function installSyncMarker() {
 	syncMarkerStatusIsError.value = false;
 	try {
 		const response = await ipc.invoke(IPC_EVENTS.REVIEW_SYNC_OVERLAY_INSTALL);
-		const clockStatus = response.clockCalibration?.applied
-			? t('obs.sync_marker_clock_corrected', {
-				offset: `${response.clockCalibration.offsetMs >= 0 ? '+' : ''}${response.clockCalibration.offsetMs} ms`,
-			})
-			: t('obs.sync_marker_clock_fallback');
-		syncMarkerStatus.value = `${t('obs.sync_marker_ready', { scene: response.sceneName })} ${clockStatus}`;
+		syncMarkerStatus.value = t('obs.sync_marker_ready', { scene: response.sceneName });
 	} catch (error) {
 		syncMarkerStatusIsError.value = true;
 		syncMarkerStatus.value = error instanceof Error

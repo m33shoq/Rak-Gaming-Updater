@@ -29,7 +29,6 @@ export type ObsBrowserSourceInstallOptions = {
 	localFile: string;
 	sourceWidth: number;
 	sourceHeight: number;
-	customCss?: string;
 };
 
 export type ObsBrowserSourceInstallResult = {
@@ -184,7 +183,7 @@ export default class ObsWebsocketService {
 			local_file: options.localFile,
 			width: options.sourceWidth,
 			height: options.sourceHeight,
-			css: options.customCss ?? '',
+			css: '',
 			shutdown: false,
 			restart_when_active: false,
 			reroute_audio: false,
@@ -289,36 +288,6 @@ export default class ObsWebsocketService {
 			createdSceneItem,
 		});
 		return { inputName: options.inputName, sceneName, createdInput, createdSceneItem };
-	}
-
-	async updateBrowserSourceCustomCss(inputName: string, customCss: string): Promise<boolean> {
-		if (!this.status.connected) return false;
-
-		if (!await this.hasBrowserSource(inputName)) return false;
-		await this.obs.call('SetInputSettings', {
-			inputName,
-			inputSettings: { css: customCss },
-			overlay: true,
-		});
-		return true;
-	}
-
-	async hasBrowserSource(inputName: string): Promise<boolean> {
-		if (!this.status.connected) return false;
-
-		const inputList = await this.obs.call('GetInputList');
-		const existingInput = (inputList.inputs as Array<{
-			inputKind?: unknown;
-			inputName?: unknown;
-		}>).find(input => input.inputName === inputName);
-		if (!existingInput) return false;
-		if (
-			typeof existingInput.inputKind !== 'string'
-			|| !existingInput.inputKind.startsWith('browser_source')
-		) {
-			throw new Error(`An OBS source named "${inputName}" already exists and is not a Browser Source.`);
-		}
-		return true;
 	}
 
 	async dispose() {
