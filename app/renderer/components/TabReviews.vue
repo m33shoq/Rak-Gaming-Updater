@@ -7,6 +7,7 @@ import { useIpcOn } from '@/renderer/composables/useIpcOn';
 import { useReviewPlayerHotkeys } from '@/renderer/composables/useReviewPlayerHotkeys';
 import { createReviewTimelinePlayback } from '@/renderer/composables/useReviewTimelinePlayback';
 import { useReviewTimelineWindowBridge } from '@/renderer/composables/useReviewTimelineWindowBridge';
+import { useReviewVideoSynchronization } from '@/renderer/composables/useReviewVideoSynchronization';
 import {
 	useReviewYoutubePlayer,
 	type ReviewYoutubePlayerState,
@@ -22,8 +23,6 @@ import { useReviewsStore } from '@/renderer/store/ReviewsStore';
 
 import { useYoutubeVideoInfo } from '@/renderer/composables/useYoutubeVideoInfo';
 
-import { decodeReviewSyncMarkerImage } from '@/renderer/reviewSyncMarkerDecoder';
-import type { ReviewSyncMarkerCapture } from '@/reviewSyncMarker';
 import {
 	ReviewSeekCoordinator,
 	type ReviewSeekExecutionContext,
@@ -66,75 +65,6 @@ const {
 	revealControls: () => revealPlayerControls(),
 	keepControlsVisible: () => keepPlayerControlsVisible(),
 });
-const syncPrototypeAnchor = ref<{
-	videoId: string;
-	videoTimeSeconds: number;
-	timestampMs: number;
-} | null>(null);
-const syncPrototypeStatus = ref('');
-const syncPrototypeStatusTone = ref<'success' | 'error' | 'info'>('info');
-const isSyncPrototypeCapturing = ref(false);
-
-const SYNC_MARKER_AUTO_READ_INTERVAL_MS = 10_000;
-const SYNC_MARKER_REANCHOR_THRESHOLD_MS = 250;
-const SYNC_MARKER_AUTO_FAILURE_LOG_INTERVAL_MS = 5 * 60_000;
-const SYNC_MARKER_STATE_CHANGE_READ_DELAY_MS = 500;
-const SYNC_MARKER_SEEK_SETTLE_READ_DELAY_MS = 750;
-const SYNC_MARKER_MIN_AUTO_READ_GAP_MS = 2_000;
-const SYNC_MARKER_REANCHOR_CONFIRMATION_TOLERANCE_MS = 250;
-const SYNC_MARKER_REANCHOR_CONFIRMATION_MAX_AGE_MS = 30_000;
-const SYNC_MARKER_SEEK_FIRST_READ_DELAY_MS = 150;
-const SYNC_MARKER_SEEK_OBSERVATION_INTERVAL_MS = 250;
-const SYNC_MARKER_SEEK_OBSERVATION_MIN_SEPARATION_MS = 175;
-const SYNC_MARKER_SEEK_OBSERVATION_TOLERANCE_MS = 175;
-const SYNC_MARKER_SEEK_API_TIME_MAX_DISTANCE_SECONDS = 60;
-const SYNC_MARKER_SEEK_LANDING_EARLY_TOLERANCE_MS = 250;
-const SYNC_MARKER_SEEK_LANDING_LATE_TOLERANCE_MS = 350;
-const SYNC_MARKER_SEEK_VERIFICATION_ORIGIN_TOLERANCE_MS = 1_000;
-const SYNC_MARKER_SEEK_CORRECTION_TOLERANCE_MS = 250;
-const SYNC_MARKER_SEEK_CORRECTION_MAX_MS = 60_000;
-const SYNC_MARKER_SEEK_CORRECTION_MAX_AGE_MS = 30_000;
-const SYNC_MARKER_SEEK_CORRECTION_MAX_ATTEMPTS = 2;
-const SYNC_MARKER_SEEK_MAX_OBSERVATION_ATTEMPTS = 16;
-const SYNC_MARKER_SEEK_MAX_READ_FAILURES = 6;
-const SYNC_MARKER_SEEK_READ_FAILURE_BACKOFF_MAX_MS = 2_000;
-
-let syncMarkerAutoReadInterval: number | null = null;
-let syncMarkerScheduledReadTimeout: number | null = null;
-let lastSyncMarkerAutoFailureLogTime = 0;
-let lastSyncMarkerCaptureStartedAt = 0;
-let pendingSyncMarkerReanchor: {
-	videoId: string;
-	kind: 'initial' | 'adjustment';
-	measurementMs: number;
-	observedAt: number;
-} | null = null;
-type SyncMarkerSeekObservation = {
-	markerTimestampMs: number;
-	videoTimeSeconds: number;
-	timelineOriginMs: number;
-	observedAt: number;
-};
-
-let nextSyncMarkerSeekID = 0;
-let pendingSyncMarkerSeek: {
-	id: number;
-	videoId: string;
-	targetMarkerTimestampMs: number;
-	startedAt: number;
-	seekIssuedAt: number;
-	requestedVideoTimeSeconds: number;
-	phase: 'initial' | 'verification';
-	correctionAttempts: number;
-	observations: SyncMarkerSeekObservation[];
-	playedSinceSeekMs: number;
-	playingSince: number | null;
-	playbackRateAtStart: number;
-	observationAttempts: number;
-	readFailures: number;
-	seekRequestID: number;
-} | null = null;
-
 let internallySelectedFight: { requestID: number; fightID: number } | null = null;
 let internallySelectedVideo: { requestID: number; videoID: string } | null = null;
 
@@ -142,17 +72,55 @@ const reviewSeekCoordinator = new ReviewSeekCoordinator(
 	executeReviewSeek,
 	state => {
 		if (state?.phase === 'failed' || state?.phase === 'unavailable') {
-			syncPrototypeStatusTone.value = 'error';
-			syncPrototypeStatus.value = state.message || 'Video seek is unavailable';
+			reportSynchronizationSeekFailure(state.message || 'Video seek is unavailable');
 		}
 	},
 );
+
+const {
+	cancelPendingSeek: cancelPendingSynchronizedSeek,
+	capture: captureReviewSyncMarker,
+	dismissStatus: dismissReviewSyncStatus,
+	failActiveSeek: failSynchronizationSeek,
+	getAbsoluteLogTimestampForVideoTime,
+	getPendingSeek: getPendingSyncMarkerSeek,
+	getVideoTimeForAbsoluteLogTimestamp,
+	isCapturing: isSyncPrototypeCapturing,
+	onPlayerBeforeChange: resetSynchronizationForPlayerChange,
+	onPlayerSeekDispatched: scheduleSynchronizationAfterSeek,
+	onPlayerStateChange: updateSynchronizationPlayerState,
+	onSelectedVideoChange: resetSynchronizationForSelectedVideo,
+	queueSeek: queueSyncMarkerSeek,
+	reportSeekFailure: reportSynchronizationSeekFailure,
+	status: syncPrototypeStatus,
+	statusTone: syncPrototypeStatusTone,
+	updatePlaybackRate: updatePendingSyncMarkerSeekPlaybackRate,
+} = useReviewVideoSynchronization({
+	player,
+	playerLoaded,
+	playerPlaying: isPlayerPlaying,
+	playerStateRevision: youtubePlayerStateRevision,
+	playerSeekRevision: youtubePlayerSeekRevision,
+	videoContainer,
+	getSelectedVideo: () => reviewsStore.selectedVideoInfo,
+	getSelectedVideoID: () => reviewsStore.getSelectedVideoId,
+	seekCoordinator: reviewSeekCoordinator,
+	clampSeekTarget: seconds => {
+		const duration = player.value?.getDuration() || 0;
+		return Math.max(0, Math.min(
+			seconds,
+			duration > 0 ? duration : Number.POSITIVE_INFINITY,
+		));
+	},
+	dispatchPlayerSeek: seconds => dispatchPlayerSeek(seconds),
+	keepControlsVisible: () => keepPlayerControlsVisible(),
+	revealControls: () => revealPlayerControls(),
+});
 
 let fullscreenToggleInProgress = false;
 let playerBoundsResizeObserver: ResizeObserver | null = null;
 
 const {
-	clampSeekTarget,
 	clearQueuedSeek: clearQueuedHotkeySeek,
 	onPlayerDoubleClick,
 	onPlayerTimeUpdate: onHotkeySeekTimeUpdate,
@@ -205,14 +173,7 @@ function keepPlayerControlsVisible() {
 
 function dispatchPlayerSeek(seconds: number) {
 	dispatchYoutubePlayerSeek(seconds);
-	// The iframe does not consistently emit a state transition for paused or
-	// short seeks. Start the guarded observation loop promptly for synchronized
-	// seeks; ordinary relative seeks only need the slower anchor-maintenance read.
-	scheduleAutomaticSyncMarkerRead(
-		getPendingSyncMarkerSeek()
-			? SYNC_MARKER_SEEK_FIRST_READ_DELAY_MS
-			: SYNC_MARKER_SEEK_SETTLE_READ_DELAY_MS,
-	);
+	scheduleSynchronizationAfterSeek();
 }
 
 function dispatchPlayerLoad(videoID: string, autoplay: boolean, seconds: number) {
@@ -245,11 +206,6 @@ function requestFullscreenToggle() {
 	if (fullscreenToggleInProgress) return;
 	playerOverlay.value?.closeHotkeyGuide();
 	void toggleFullscreen();
-}
-
-function onReviewsVisibilityChange() {
-	if (document.visibilityState !== 'visible') return;
-	if (getPendingSyncMarkerSeek()) scheduleAutomaticSyncMarkerRead(0);
 }
 
 useIpcOn(IPC_EVENTS.YOUTUBE_PLAYER_POINTER_ACTIVITY_CALLBACK, () => {
@@ -302,12 +258,7 @@ function requestSelectedVideoPlayback(source: ReviewSeekSource = 'video-selectio
 }
 
 watch(() => reviewsStore.getSelectedVideoId, (newId) => {
-	if (syncPrototypeAnchor.value && syncPrototypeAnchor.value.videoId !== newId) {
-		syncPrototypeAnchor.value = null;
-		syncPrototypeStatus.value = '';
-	}
-	pendingSyncMarkerReanchor = null;
-	cancelPendingSynchronizedSeek('Selected video changed');
+	resetSynchronizationForSelectedVideo(newId);
 	if (!newId) {
 		internallySelectedVideo = null;
 		reviewSeekCoordinator.cancel('No video selected');
@@ -373,26 +324,17 @@ watch(() => reviewsStore.selectedReportCode, async (newVal, oldVal) => {
 
 function handleYoutubePlayerBeforeChange(): void {
 	clearQueuedHotkeySeek();
-	clearScheduledSyncMarkerRead();
-	reviewSeekCoordinator.cancel('YouTube player instance changed');
-	cancelPendingSynchronizedSeek('YouTube player instance changed');
-}
-
-function failActiveYoutubeSeek(message: string): void {
-	const seekState = reviewSeekCoordinator.state;
-	pendingSyncMarkerSeek = null;
-	if (seekState) reviewSeekCoordinator.finish(seekState.requestID, 'failed', message);
+	resetSynchronizationForPlayerChange();
 }
 
 function handleYoutubePlayerUnavailable(message: string): void {
 	clearQueuedHotkeySeek();
-	failActiveYoutubeSeek(message);
+	failSynchronizationSeek(message);
 }
 
 function handleYoutubePlayerError(message: string): void {
-	clearScheduledSyncMarkerRead();
 	clearQueuedHotkeySeek();
-	failActiveYoutubeSeek(message);
+	failSynchronizationSeek(message, true);
 }
 
 function handleYoutubePlayerTimeUpdate(seconds: number): void {
@@ -406,48 +348,11 @@ function handleYoutubePlayerReady(): void {
 }
 
 function handleYoutubePlayerStateChange(state: ReviewYoutubePlayerState): void {
-	switch (state) {
-		case 'unstarted':
-			markPendingSyncMarkerSeekStopped();
-			if (getPendingSyncMarkerSeek()) {
-				scheduleAutomaticSyncMarkerRead(SYNC_MARKER_SEEK_OBSERVATION_INTERVAL_MS);
-			} else {
-				clearScheduledSyncMarkerRead();
-			}
-			break;
-		case 'cued':
-			markPendingSyncMarkerSeekStopped();
-			scheduleAutomaticSyncMarkerRead();
-			break;
-		case 'playing':
-			markPendingSyncMarkerSeekPlaying();
-			scheduleAutomaticSyncMarkerRead();
-			break;
-		case 'paused':
-			markPendingSyncMarkerSeekStopped();
-			scheduleAutomaticSyncMarkerRead();
-			break;
-		case 'buffering':
-			markPendingSyncMarkerSeekStopped();
-			if (getPendingSyncMarkerSeek()) {
-				scheduleAutomaticSyncMarkerRead(SYNC_MARKER_SEEK_OBSERVATION_INTERVAL_MS);
-			} else {
-				clearScheduledSyncMarkerRead();
-			}
-			break;
-		case 'ended':
-			markPendingSyncMarkerSeekStopped();
-			scheduleAutomaticSyncMarkerRead();
-			break;
-	}
+	updateSynchronizationPlayerState(state);
 }
 
 onMounted(async () => {
 	window.addEventListener('resize', publishPlayerPointerBounds);
-	document.addEventListener('visibilitychange', onReviewsVisibilityChange);
-	syncMarkerAutoReadInterval = window.setInterval(() => {
-		void captureReviewSyncMarker('periodic');
-	}, SYNC_MARKER_AUTO_READ_INTERVAL_MS);
 	try {
 		isPlayerFullscreen.value = await ipc.invoke(IPC_EVENTS.YOUTUBE_PLAYER_FULLSCREEN_STATUS_GET) === true;
 	} catch (error) {
@@ -457,14 +362,6 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
 	window.removeEventListener('resize', publishPlayerPointerBounds);
-	document.removeEventListener('visibilitychange', onReviewsVisibilityChange);
-	clearScheduledSyncMarkerRead();
-	cancelPendingSynchronizedSeek('Reviews closed');
-	reviewSeekCoordinator.cancel('Reviews closed');
-	if (syncMarkerAutoReadInterval !== null) {
-		window.clearInterval(syncMarkerAutoReadInterval);
-		syncMarkerAutoReadInterval = null;
-	}
 	playerBoundsResizeObserver?.disconnect();
 	playerBoundsResizeObserver = null;
 	ipc.send(IPC_EVENTS.YOUTUBE_PLAYER_POINTER_BOUNDS_SET, null);
@@ -484,33 +381,6 @@ watch(() => reviewsStore.videoList, (newList) => {
 	// 	log.info(`Video ${video.id} ${video.title} (${video.author}) from ${new Date(video.startTime).toLocaleString()} to ${new Date(video.startTime + (video.duration || 0)).toLocaleString()} checkTime: ${new Date(video.checkTime).toLocaleString()}}	`);
 	// }
 });
-
-const YOUTUBE_DELAY_OFFSET = 5;
-
-function getActiveSyncPrototypeAnchor() {
-	const anchor = syncPrototypeAnchor.value;
-	return anchor?.videoId === reviewsStore.getSelectedVideoId ? anchor : null;
-}
-
-function getVideoTimeForAbsoluteLogTimestamp(timestampMs: number): number {
-	const anchor = getActiveSyncPrototypeAnchor();
-	if (anchor) {
-		return anchor.videoTimeSeconds + (timestampMs - anchor.timestampMs) / 1000;
-	}
-
-	const videoStartTime = reviewsStore.selectedVideoInfo?.startTime || 0;
-	return (timestampMs - videoStartTime) / 1000 + YOUTUBE_DELAY_OFFSET;
-}
-
-function getAbsoluteLogTimestampForVideoTime(videoTimeSeconds: number): number {
-	const anchor = getActiveSyncPrototypeAnchor();
-	if (anchor) {
-		return anchor.timestampMs + (videoTimeSeconds - anchor.videoTimeSeconds) * 1000;
-	}
-
-	const videoStartTime = reviewsStore.selectedVideoInfo?.startTime || 0;
-	return videoStartTime + (videoTimeSeconds - YOUTUBE_DELAY_OFFSET) * 1000;
-}
 
 function videoContainsTimestamp(video: YouTubeVideo, timestampMs: number): boolean {
 	return video.startTime <= timestampMs
@@ -888,677 +758,6 @@ function openSelectedYoutubeVideo(event: MouseEvent) {
 	if (event.detail > 1) return;
 	const selectedVideo = reviewsStore.selectedVideoInfo;
 	if (selectedVideo) openStreamInBrowser(selectedVideo);
-}
-
-function formatSyncVideoTime(seconds: number): string {
-	const safeSeconds = Math.max(0, seconds);
-	const hours = Math.floor(safeSeconds / 3600);
-	const minutes = Math.floor((safeSeconds % 3600) / 60);
-	const wholeSeconds = Math.floor(safeSeconds % 60);
-	const deciseconds = Math.floor((safeSeconds % 1) * 10);
-	return hours > 0
-		? `${hours}:${minutes.toString().padStart(2, '0')}:${wholeSeconds.toString().padStart(2, '0')}.${deciseconds}`
-		: `${minutes}:${wholeSeconds.toString().padStart(2, '0')}.${deciseconds}`;
-}
-
-function formatSignedSeconds(seconds: number): string {
-	return `${seconds >= 0 ? '+' : ''}${seconds.toFixed(1)}s`;
-}
-
-type ReviewSyncCaptureTrigger = 'manual' | 'periodic' | 'player-state';
-
-function clearScheduledSyncMarkerRead(): void {
-	if (syncMarkerScheduledReadTimeout === null) return;
-	window.clearTimeout(syncMarkerScheduledReadTimeout);
-	syncMarkerScheduledReadTimeout = null;
-}
-
-function cancelPendingSynchronizedSeek(reason: string): void {
-	const pending = pendingSyncMarkerSeek;
-	pendingSyncMarkerSeek = null;
-	if (pending) reviewSeekCoordinator.finish(pending.seekRequestID, 'unverified', reason);
-}
-
-function queueSyncMarkerSeek(
-	targetMarkerTimestampMs: number,
-	requestedVideoTimeSeconds: number,
-	seekRequestID: number,
-	videoId: string,
-): void {
-	pendingSyncMarkerSeek = null;
-	if (
-		!videoId
-		|| !Number.isFinite(targetMarkerTimestampMs)
-		|| !Number.isFinite(requestedVideoTimeSeconds)
-	) return;
-
-	const now = Date.now();
-	pendingSyncMarkerSeek = {
-		id: ++nextSyncMarkerSeekID,
-		videoId,
-		targetMarkerTimestampMs: targetMarkerTimestampMs!,
-		startedAt: now,
-		seekIssuedAt: now,
-		requestedVideoTimeSeconds,
-		phase: 'initial',
-		correctionAttempts: 0,
-		observations: [],
-		playedSinceSeekMs: 0,
-		playingSince: isPlayerPlaying.value && player.value?.getVideoId() === videoId ? now : null,
-		playbackRateAtStart: player.value?.getPlaybackRate() || 1,
-		observationAttempts: 0,
-		readFailures: 0,
-		seekRequestID,
-	};
-}
-
-function getPendingSyncMarkerSeek() {
-	const pending = pendingSyncMarkerSeek;
-	if (!pending) return null;
-	const expired = Date.now() - pending.startedAt > SYNC_MARKER_SEEK_CORRECTION_MAX_AGE_MS;
-	if (
-		pending.videoId !== reviewsStore.getSelectedVideoId
-		|| !reviewSeekCoordinator.isCurrent(pending.seekRequestID)
-		|| expired
-	) {
-		pendingSyncMarkerSeek = null;
-		if (expired) {
-			syncPrototypeStatusTone.value = 'error';
-			syncPrototypeStatus.value = 'Seek completed, but synchronization timed out';
-			reviewSeekCoordinator.finish(
-				pending.seekRequestID,
-				'unverified',
-				'Sync marker verification timed out',
-			);
-		}
-		return null;
-	}
-	return pending;
-}
-
-function markPendingSyncMarkerSeekPlaying(): void {
-	const pending = getPendingSyncMarkerSeek();
-	if (
-		!pending
-		|| pending.playingSince !== null
-		|| player.value?.getVideoId() !== pending.videoId
-	) return;
-	pending.playingSince = Date.now();
-	pending.playbackRateAtStart = player.value?.getPlaybackRate() || 1;
-}
-
-function updatePendingSyncMarkerSeekPlaybackRate(rate: number): void {
-	const pending = getPendingSyncMarkerSeek();
-	if (!pending || !Number.isFinite(rate) || rate <= 0) return;
-	const wasPlaying = pending.playingSince !== null;
-	if (wasPlaying) markPendingSyncMarkerSeekStopped();
-	pending.playbackRateAtStart = rate;
-	if (wasPlaying) pending.playingSince = Date.now();
-}
-
-function markPendingSyncMarkerSeekStopped(): void {
-	const pending = getPendingSyncMarkerSeek();
-	if (!pending || pending.playingSince === null) return;
-	pending.playedSinceSeekMs += (
-		Date.now() - pending.playingSince
-	) * pending.playbackRateAtStart;
-	pending.playingSince = null;
-}
-
-function getPendingSyncMarkerSeekPlaybackMs(
-	pending: NonNullable<typeof pendingSyncMarkerSeek>,
-	observedAt: number,
-): number {
-	if (pending.playingSince === null) return pending.playedSinceSeekMs;
-	return pending.playedSinceSeekMs + Math.max(
-		0,
-		observedAt - pending.playingSince,
-	) * pending.playbackRateAtStart;
-}
-
-function scheduleAutomaticSyncMarkerRead(
-	delayMilliseconds?: number,
-): void {
-	clearScheduledSyncMarkerRead();
-	const delay = delayMilliseconds ?? (
-		getPendingSyncMarkerSeek()
-			? SYNC_MARKER_SEEK_FIRST_READ_DELAY_MS
-			: SYNC_MARKER_STATE_CHANGE_READ_DELAY_MS
-	);
-	syncMarkerScheduledReadTimeout = window.setTimeout(() => {
-		syncMarkerScheduledReadTimeout = null;
-		void captureReviewSyncMarker('player-state');
-	}, Math.max(0, delay));
-}
-
-function shouldApplySyncMarkerAnchor(
-	automatic: boolean,
-	videoId: string,
-	differenceMs: number | null,
-	markerTimelineOriginMs: number,
-): boolean {
-	if (!automatic) {
-		pendingSyncMarkerReanchor = null;
-		return differenceMs === null || Math.abs(differenceMs) >= SYNC_MARKER_REANCHOR_THRESHOLD_MS;
-	}
-
-	const now = Date.now();
-	const pending = pendingSyncMarkerReanchor;
-	const kind = differenceMs === null ? 'initial' : 'adjustment';
-	const measurementMs = differenceMs ?? markerTimelineOriginMs;
-	if (
-		pending?.videoId === videoId
-		&& pending.kind === kind
-		&& now - pending.observedAt <= SYNC_MARKER_REANCHOR_CONFIRMATION_MAX_AGE_MS
-		&& Math.abs(pending.measurementMs - measurementMs)
-			<= SYNC_MARKER_REANCHOR_CONFIRMATION_TOLERANCE_MS
-	) {
-		const averageMeasurementMs = (pending.measurementMs + measurementMs) / 2;
-		pendingSyncMarkerReanchor = null;
-		return kind === 'initial'
-			|| Math.abs(averageMeasurementMs) >= SYNC_MARKER_REANCHOR_THRESHOLD_MS;
-	}
-
-	if (kind === 'initial' || Math.abs(measurementMs) >= SYNC_MARKER_REANCHOR_THRESHOLD_MS) {
-		pendingSyncMarkerReanchor = { videoId, kind, measurementMs, observedAt: now };
-		// Confirm a potentially disruptive adjustment promptly instead of waiting
-		// for the next periodic pass.
-		scheduleAutomaticSyncMarkerRead(SYNC_MARKER_MIN_AUTO_READ_GAP_MS);
-	} else {
-		pendingSyncMarkerReanchor = null;
-	}
-	return false;
-}
-
-function isSyncMarkerSeekLandingPlausible(
-	pending: NonNullable<typeof pendingSyncMarkerSeek>,
-	videoTimeSeconds: number,
-	observedAt: number,
-): boolean {
-	const elapsedSeconds = Math.max(0, (observedAt - pending.seekIssuedAt) / 1000);
-	const earliestPlausibleTime = pending.requestedVideoTimeSeconds
-		- SYNC_MARKER_SEEK_API_TIME_MAX_DISTANCE_SECONDS;
-	// YouTube can play at up to 2x while we wait for the rendered frame.
-	const latestPlausibleTime = pending.requestedVideoTimeSeconds
-		+ elapsedSeconds * 2
-		+ SYNC_MARKER_SEEK_API_TIME_MAX_DISTANCE_SECONDS;
-	return videoTimeSeconds >= earliestPlausibleTime
-		&& videoTimeSeconds <= latestPlausibleTime;
-}
-
-function isSyncMarkerSeekTargetReached(
-	pending: NonNullable<typeof pendingSyncMarkerSeek>,
-	markerTimestampMs: number,
-	observedAt: number,
-): boolean {
-	const playbackSinceSeekMs = getPendingSyncMarkerSeekPlaybackMs(pending, observedAt);
-	const landingErrorMs = markerTimestampMs - pending.targetMarkerTimestampMs;
-	return landingErrorMs >= -SYNC_MARKER_SEEK_LANDING_EARLY_TOLERANCE_MS
-		&& landingErrorMs <= playbackSinceSeekMs + SYNC_MARKER_SEEK_LANDING_LATE_TOLERANCE_MS;
-}
-
-function applyConfirmedSyncMarkerOrigin(
-	videoId: string,
-	videoTimeSeconds: number,
-	timelineOriginMs: number,
-): void {
-	syncPrototypeAnchor.value = {
-		videoId,
-		videoTimeSeconds,
-		timestampMs: timelineOriginMs + videoTimeSeconds * 1000,
-	};
-	pendingSyncMarkerReanchor = null;
-}
-
-function processPendingSyncMarkerSeek(
-	markerTimestampMs: number,
-	videoTimeSeconds: number,
-	observedAt: number,
-): boolean {
-	const pending = getPendingSyncMarkerSeek();
-	if (!pending) return false;
-	pending.observationAttempts++;
-	pending.readFailures = 0;
-	if (pending.observationAttempts > SYNC_MARKER_SEEK_MAX_OBSERVATION_ATTEMPTS) {
-		pendingSyncMarkerSeek = null;
-		reviewSeekCoordinator.finish(
-			pending.seekRequestID,
-			'unverified',
-			'Rendered video frame did not stabilize',
-		);
-		syncPrototypeStatusTone.value = 'error';
-		syncPrototypeStatus.value = 'Seek sync stopped · rendered frame did not stabilize';
-		log.warn('Could not obtain coherent RG sync marker frames after YouTube seek', {
-			videoId: pending.videoId,
-			phase: pending.phase,
-			correctionAttempts: pending.correctionAttempts,
-		});
-		return true;
-	}
-
-	if (!isSyncMarkerSeekLandingPlausible(pending, videoTimeSeconds, observedAt)) {
-		log.debug('Ignored RG sync marker from a frame outside the active seek landing', {
-			videoId: pending.videoId,
-			phase: pending.phase,
-			requestedVideoTimeSeconds: pending.requestedVideoTimeSeconds,
-			videoTimeSeconds,
-		});
-		scheduleAutomaticSyncMarkerRead(SYNC_MARKER_SEEK_OBSERVATION_INTERVAL_MS);
-		return true;
-	}
-
-	const observation: SyncMarkerSeekObservation = {
-		markerTimestampMs,
-		videoTimeSeconds,
-		timelineOriginMs: markerTimestampMs - videoTimeSeconds * 1000,
-		observedAt,
-	};
-	const expectedTimelineOriginMs = pending.targetMarkerTimestampMs
-		- pending.requestedVideoTimeSeconds * 1000;
-	if (
-		pending.phase === 'verification'
-		&& Math.abs(observation.timelineOriginMs - expectedTimelineOriginMs)
-			> SYNC_MARKER_SEEK_VERIFICATION_ORIGIN_TOLERANCE_MS
-	) {
-		// The iframe API may expose the corrected time before Chromium replaces
-		// the pre-correction frame. Never feed that mixed observation back into
-		// another correction.
-		log.debug('Ignored stale RG sync marker frame while verifying corrected seek', {
-			videoId: pending.videoId,
-			originDifferenceMs: observation.timelineOriginMs - expectedTimelineOriginMs,
-		});
-		scheduleAutomaticSyncMarkerRead(SYNC_MARKER_SEEK_OBSERVATION_INTERVAL_MS);
-		return true;
-	}
-	const previousObservation = pending.observations.at(-1);
-	if (!previousObservation) {
-		pending.observations.push(observation);
-		scheduleAutomaticSyncMarkerRead(SYNC_MARKER_SEEK_OBSERVATION_INTERVAL_MS);
-		return true;
-	}
-
-	const observationSeparationMs = observation.observedAt - previousObservation.observedAt;
-	if (observationSeparationMs < SYNC_MARKER_SEEK_OBSERVATION_MIN_SEPARATION_MS) {
-		scheduleAutomaticSyncMarkerRead(
-			SYNC_MARKER_SEEK_OBSERVATION_MIN_SEPARATION_MS - observationSeparationMs,
-		);
-		return true;
-	}
-
-	const markerProgressMs = observation.markerTimestampMs
-		- previousObservation.markerTimestampMs;
-	const videoProgressMs = (
-		observation.videoTimeSeconds - previousObservation.videoTimeSeconds
-	) * 1000;
-	const progressionDifferenceMs = markerProgressMs - videoProgressMs;
-	if (Math.abs(progressionDifferenceMs) > SYNC_MARKER_SEEK_OBSERVATION_TOLERANCE_MS) {
-		// A seek may update the iframe API before Chromium paints the new video
-		// frame. Start the pair again from the newest observation in that case.
-		pending.observations = [observation];
-		log.debug('Waiting for two coherent RG sync marker frames after seek', {
-			videoId: pending.videoId,
-			phase: pending.phase,
-			progressionDifferenceMs,
-		});
-		scheduleAutomaticSyncMarkerRead(SYNC_MARKER_SEEK_OBSERVATION_INTERVAL_MS);
-		return true;
-	}
-
-	const confirmedTimelineOriginMs = (
-		previousObservation.timelineOriginMs + observation.timelineOriginMs
-	) / 2;
-	const mappingErrorMs = confirmedTimelineOriginMs - expectedTimelineOriginMs;
-	const targetReached = isSyncMarkerSeekTargetReached(
-		pending,
-		observation.markerTimestampMs,
-		observation.observedAt,
-	);
-	if (Math.abs(mappingErrorMs) > SYNC_MARKER_SEEK_CORRECTION_MAX_MS) {
-		pendingSyncMarkerSeek = null;
-		reviewSeekCoordinator.finish(
-			pending.seekRequestID,
-			'unverified',
-			'RG sync marker implied an implausible mapping change',
-		);
-		syncPrototypeStatusTone.value = 'error';
-		syncPrototypeStatus.value = `Seek sync stopped · implausible ${formatSignedSeconds(mappingErrorMs / 1000)} mapping change`;
-		log.warn('Rejected an implausible RG sync marker mapping after YouTube seek', {
-			videoId: pending.videoId,
-			phase: pending.phase,
-			mappingErrorMs,
-		});
-		return true;
-	}
-	applyConfirmedSyncMarkerOrigin(
-		pending.videoId,
-		observation.videoTimeSeconds,
-		confirmedTimelineOriginMs,
-	);
-
-	if (
-		Math.abs(mappingErrorMs) <= SYNC_MARKER_SEEK_CORRECTION_TOLERANCE_MS
-		&& targetReached
-	) {
-		pendingSyncMarkerSeek = null;
-		reviewSeekCoordinator.finish(pending.seekRequestID, 'completed');
-		syncPrototypeStatusTone.value = 'success';
-		syncPrototypeStatus.value = `Seek synchronized · ${formatSignedSeconds(mappingErrorMs / 1000)} residual`;
-		log.info('Verified YouTube seek against coherent RG sync marker frames', {
-			videoId: pending.videoId,
-			phase: pending.phase,
-			mappingErrorMs,
-			landingErrorMs: observation.markerTimestampMs - pending.targetMarkerTimestampMs,
-			correctionAttempts: pending.correctionAttempts,
-		});
-		return true;
-	}
-
-	if (
-		Math.abs(observation.markerTimestampMs - pending.targetMarkerTimestampMs)
-			> SYNC_MARKER_SEEK_CORRECTION_MAX_MS
-		|| pending.correctionAttempts >= SYNC_MARKER_SEEK_CORRECTION_MAX_ATTEMPTS
-	) {
-		pendingSyncMarkerSeek = null;
-		reviewSeekCoordinator.finish(
-			pending.seekRequestID,
-			'unverified',
-			'RG sync marker correction did not converge',
-		);
-		syncPrototypeStatusTone.value = 'error';
-		syncPrototypeStatus.value = `Seek sync stopped · ${formatSignedSeconds(mappingErrorMs / 1000)} residual`;
-		log.warn('Could not safely converge YouTube seek with RG sync marker', {
-			videoId: pending.videoId,
-			phase: pending.phase,
-			mappingErrorMs,
-			landingErrorMs: observation.markerTimestampMs - pending.targetMarkerTimestampMs,
-			correctionAttempts: pending.correctionAttempts,
-		});
-		return true;
-	}
-
-	const correctedVideoTimeSeconds = clampSeekTarget(
-		(pending.targetMarkerTimestampMs - confirmedTimelineOriginMs) / 1000,
-	);
-	const correctionDeltaMs = (
-		correctedVideoTimeSeconds - observation.videoTimeSeconds
-	) * 1000;
-	pending.phase = 'verification';
-	pending.correctionAttempts++;
-	pending.requestedVideoTimeSeconds = correctedVideoTimeSeconds;
-	pending.seekIssuedAt = Date.now();
-	pending.observations = [];
-	pending.playedSinceSeekMs = 0;
-	pending.playingSince = isPlayerPlaying.value ? pending.seekIssuedAt : null;
-	pending.playbackRateAtStart = player.value?.getPlaybackRate() || 1;
-	pending.observationAttempts = 0;
-	pending.readFailures = 0;
-	syncPrototypeStatusTone.value = 'info';
-	syncPrototypeStatus.value = `Correcting seek · ${formatSignedSeconds(correctionDeltaMs / 1000)}`;
-	log.info('Correcting YouTube seek from confirmed RG sync marker mapping', {
-		videoId: pending.videoId,
-		mappingErrorMs,
-		landingErrorMs: observation.markerTimestampMs - pending.targetMarkerTimestampMs,
-		toVideoTimeSeconds: correctedVideoTimeSeconds,
-		attempt: pending.correctionAttempts,
-	});
-	dispatchPlayerSeek(correctedVideoTimeSeconds);
-	return true;
-}
-
-async function captureReviewSyncMarker(trigger: ReviewSyncCaptureTrigger = 'manual'): Promise<void> {
-	const automatic = trigger !== 'manual';
-	if (isSyncPrototypeCapturing.value) {
-		if (trigger === 'player-state') scheduleAutomaticSyncMarkerRead(250);
-		return;
-	}
-	const millisecondsSinceLastCapture = Date.now() - lastSyncMarkerCaptureStartedAt;
-	if (
-		automatic
-		&& (
-			(trigger === 'periodic' && !isPlayerPlaying.value)
-			|| document.visibilityState !== 'visible'
-		)
-	) return;
-	if (
-		automatic
-		&& !getPendingSyncMarkerSeek()
-		&& millisecondsSinceLastCapture < SYNC_MARKER_MIN_AUTO_READ_GAP_MS
-	) {
-		if (trigger === 'player-state') {
-			scheduleAutomaticSyncMarkerRead(
-				SYNC_MARKER_MIN_AUTO_READ_GAP_MS - millisecondsSinceLastCapture,
-			);
-		}
-		return;
-	}
-	const selectedVideo = reviewsStore.selectedVideoInfo;
-	const container = videoContainer.value;
-	if (!selectedVideo || !player.value || !playerLoaded.value || !container) {
-		if (!automatic) {
-			syncPrototypeStatusTone.value = 'error';
-			syncPrototypeStatus.value = 'Load a YouTube video before reading its sync marker';
-		}
-		return;
-	}
-	if (player.value.getVideoId() !== selectedVideo.id) {
-		if (getPendingSyncMarkerSeek()) {
-			scheduleAutomaticSyncMarkerRead(SYNC_MARKER_SEEK_OBSERVATION_INTERVAL_MS);
-		} else if (!automatic) {
-			syncPrototypeStatusTone.value = 'info';
-			syncPrototypeStatus.value = 'Waiting for the selected YouTube video to load';
-		}
-		return;
-	}
-	if (['unstarted', 'buffering'].includes(player.value.getState())) {
-		if (getPendingSyncMarkerSeek()) {
-			scheduleAutomaticSyncMarkerRead(SYNC_MARKER_SEEK_OBSERVATION_INTERVAL_MS);
-		} else if (!automatic) {
-			syncPrototypeStatusTone.value = 'info';
-			syncPrototypeStatus.value = 'Waiting for the YouTube frame to finish loading';
-		}
-		return;
-	}
-
-	clearScheduledSyncMarkerRead();
-	isSyncPrototypeCapturing.value = true;
-	lastSyncMarkerCaptureStartedAt = Date.now();
-	const playerStateRevisionAtCaptureStart = youtubePlayerStateRevision.value;
-	const playerSeekRevisionAtCaptureStart = youtubePlayerSeekRevision.value;
-	const syncMarkerSeekIDAtCaptureStart = getPendingSyncMarkerSeek()?.id ?? null;
-	if (!automatic) {
-		syncPrototypeStatusTone.value = 'info';
-		syncPrototypeStatus.value = 'Reading RG sync marker...';
-		keepPlayerControlsVisible();
-	}
-
-	try {
-		const bounds = container.getBoundingClientRect();
-		const videoTimeBeforeCapture = player.value.getCurrentTime();
-		const videoTimeBeforeCapturedAt = Date.now();
-		const capture = await ipc.invoke(IPC_EVENTS.REVIEW_SYNC_CAPTURE_VIDEO_FRAME, {
-			x: bounds.left,
-			y: bounds.top,
-			width: bounds.width,
-			height: bounds.height,
-		}) as ReviewSyncMarkerCapture;
-		const videoTimeAfterCapture = player.value.getCurrentTime();
-		const videoTimeAfterCapturedAt = Date.now();
-		if (youtubePlayerStateRevision.value !== playerStateRevisionAtCaptureStart) {
-			throw new Error('YouTube player state changed while reading the sync marker');
-		}
-		if (youtubePlayerSeekRevision.value !== playerSeekRevisionAtCaptureStart) {
-			throw new Error('Video position changed while reading the sync marker');
-		}
-		if (reviewsStore.getSelectedVideoId !== selectedVideo.id) {
-			throw new Error('The selected video changed while reading the marker');
-		}
-		if (player.value.getVideoId() !== selectedVideo.id) {
-			throw new Error('YouTube displayed a different video while reading the marker');
-		}
-		if (!capture?.dataUrl || typeof capture.dataUrl !== 'string') {
-			throw new Error('Electron did not return a captured YouTube frame');
-		}
-		if (
-			!Number.isFinite(capture.captureStartedAtMs)
-			|| !Number.isFinite(capture.captureFinishedAtMs)
-			|| capture.captureFinishedAtMs < capture.captureStartedAtMs
-		) {
-			throw new Error('Electron returned invalid sync marker capture timing');
-		}
-		const frameCapturedAt = (
-			capture.captureStartedAtMs + capture.captureFinishedAtMs
-		) / 2;
-		const sampleDurationMs = Math.max(1, videoTimeAfterCapturedAt - videoTimeBeforeCapturedAt);
-		const allowedVideoMovementSeconds = sampleDurationMs / 1000
-			* (player.value.getPlaybackRate() || 1)
-			+ 0.5;
-		if (
-			!Number.isFinite(videoTimeBeforeCapture)
-			|| !Number.isFinite(videoTimeAfterCapture)
-			|| Math.abs(videoTimeAfterCapture - videoTimeBeforeCapture) > allowedVideoMovementSeconds
-		) {
-			throw new Error('Video moved too far while the marker was being captured');
-		}
-
-		const captureProgress = Math.max(0, Math.min(
-			1,
-			(frameCapturedAt - videoTimeBeforeCapturedAt) / sampleDurationMs,
-		));
-		const videoTimeSeconds = videoTimeBeforeCapture
-			+ (videoTimeAfterCapture - videoTimeBeforeCapture) * captureProgress;
-		const anchorAtCaptureStart = getActiveSyncPrototypeAnchor();
-		const approximateTimestampMs = anchorAtCaptureStart
-			? anchorAtCaptureStart.timestampMs
-				+ (videoTimeSeconds - anchorAtCaptureStart.videoTimeSeconds) * 1000
-			: selectedVideo.startTime + videoTimeSeconds * 1000;
-		const marker = await decodeReviewSyncMarkerImage(
-			capture.dataUrl,
-			capture.markerBounds,
-			approximateTimestampMs,
-		);
-		if (youtubePlayerStateRevision.value !== playerStateRevisionAtCaptureStart) {
-			throw new Error('YouTube player state changed while decoding the sync marker');
-		}
-		if (youtubePlayerSeekRevision.value !== playerSeekRevisionAtCaptureStart) {
-			throw new Error('Video position changed while decoding the sync marker');
-		}
-		if (reviewsStore.getSelectedVideoId !== selectedVideo.id) {
-			throw new Error('The selected video changed while decoding the sync marker');
-		}
-		if (player.value.getVideoId() !== selectedVideo.id) {
-			throw new Error('YouTube changed videos while decoding the sync marker');
-		}
-		if ((getPendingSyncMarkerSeek()?.id ?? null) !== syncMarkerSeekIDAtCaptureStart) {
-			throw new Error('A newer video seek started while decoding the sync marker');
-		}
-		const previousAnchor = getActiveSyncPrototypeAnchor();
-		const anchorDifferenceMs = previousAnchor
-			? marker.timestampMs - (
-				previousAnchor.timestampMs
-					+ (videoTimeSeconds - previousAnchor.videoTimeSeconds) * 1000
-			)
-			: null;
-		const handledBySeekSynchronization = processPendingSyncMarkerSeek(
-			marker.timestampMs,
-			videoTimeSeconds,
-			frameCapturedAt,
-		);
-		const shouldApplyAnchor = !handledBySeekSynchronization && shouldApplySyncMarkerAnchor(
-			automatic,
-			selectedVideo.id,
-			anchorDifferenceMs,
-			marker.timestampMs - videoTimeSeconds * 1000,
-		);
-		if (shouldApplyAnchor) {
-			applyConfirmedSyncMarkerOrigin(
-				selectedVideo.id,
-				videoTimeSeconds,
-				marker.timestampMs - videoTimeSeconds * 1000,
-			);
-		}
-
-		const markerOffsetSeconds = videoTimeSeconds - (marker.timestampMs - selectedVideo.startTime) / 1000;
-		const correctionSeconds = markerOffsetSeconds - YOUTUBE_DELAY_OFFSET;
-		const markerTime = new Date(marker.timestampMs).toISOString().slice(11, 23);
-		if (!handledBySeekSynchronization && shouldApplyAnchor) {
-			syncPrototypeStatusTone.value = 'success';
-			const status = automatic
-				? previousAnchor ? 'Sync adjusted' : 'Sync active'
-				: 'Prototype active';
-			syncPrototypeStatus.value = `${status} · ${markerTime}Z at ${formatSyncVideoTime(videoTimeSeconds)} · offset ${formatSignedSeconds(markerOffsetSeconds)} · correction ${formatSignedSeconds(correctionSeconds)} · ${Math.round(marker.confidence * 100)}% contrast`;
-		} else if (!handledBySeekSynchronization && !automatic) {
-			syncPrototypeStatusTone.value = 'success';
-			syncPrototypeStatus.value = `Sync stable · measured change ${formatSignedSeconds((anchorDifferenceMs || 0) / 1000)} · ${Math.round(marker.confidence * 100)}% contrast`;
-		}
-		if (!handledBySeekSynchronization && (shouldApplyAnchor || !automatic)) {
-			log[shouldApplyAnchor ? 'info' : 'debug'](
-				shouldApplyAnchor ? 'Applied prototype review sync marker' : 'Kept existing prototype review sync marker',
-				{
-					videoId: selectedVideo.id,
-					videoTimeSeconds,
-					markerTimestampMs: marker.timestampMs,
-					markerOffsetSeconds,
-					correctionSeconds,
-					anchorDifferenceMs,
-					automatic,
-					confidence: marker.confidence,
-				},
-			);
-		}
-		lastSyncMarkerAutoFailureLogTime = 0;
-	} catch (error) {
-		if (automatic) {
-			const now = Date.now();
-			if (now - lastSyncMarkerAutoFailureLogTime >= SYNC_MARKER_AUTO_FAILURE_LOG_INTERVAL_MS) {
-				lastSyncMarkerAutoFailureLogTime = now;
-				log.debug('Automatic review sync marker capture skipped after a failed read', error);
-			}
-		} else {
-			syncPrototypeStatusTone.value = 'error';
-			syncPrototypeStatus.value = error instanceof Error
-				? `Sync marker not read: ${error.message}`
-				: 'Sync marker could not be read';
-			log.warn('Prototype review sync marker capture failed', error);
-		}
-		const pendingSeek = getPendingSyncMarkerSeek();
-		if (pendingSeek) {
-			if (pendingSeek.id !== syncMarkerSeekIDAtCaptureStart) {
-				scheduleAutomaticSyncMarkerRead(SYNC_MARKER_SEEK_FIRST_READ_DELAY_MS);
-			} else {
-				pendingSeek.readFailures++;
-				if (pendingSeek.readFailures >= SYNC_MARKER_SEEK_MAX_READ_FAILURES) {
-					pendingSyncMarkerSeek = null;
-					reviewSeekCoordinator.finish(
-						pendingSeek.seekRequestID,
-						'unverified',
-						'Sync marker could not be read after seeking',
-					);
-					syncPrototypeStatusTone.value = 'error';
-					syncPrototypeStatus.value = pendingSeek.phase === 'verification'
-						? 'Seek correction could not be verified'
-						: 'Seek completed, but its sync marker could not be verified';
-					log.debug('Stopped seek synchronization after repeated marker read failures', {
-						videoId: pendingSeek.videoId,
-						readFailures: pendingSeek.readFailures,
-					});
-				} else {
-					const retryDelayMs = Math.min(
-						SYNC_MARKER_SEEK_OBSERVATION_INTERVAL_MS
-							* 2 ** (pendingSeek.readFailures - 1),
-						SYNC_MARKER_SEEK_READ_FAILURE_BACKOFF_MAX_MS,
-					);
-					scheduleAutomaticSyncMarkerRead(retryDelayMs);
-				}
-			}
-		}
-	} finally {
-		isSyncPrototypeCapturing.value = false;
-		if (!automatic) revealPlayerControls();
-	}
-}
-
-function dismissReviewSyncStatus(): void {
-	syncPrototypeStatus.value = '';
 }
 
 </script>
