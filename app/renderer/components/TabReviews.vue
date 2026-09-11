@@ -4,6 +4,7 @@ import { IPC_EVENTS } from '@/events';
 import type { ReviewTimelineWindowAction, ReviewTimelineWindowContext } from '@/timelineWindow';
 
 import { ref, computed, watch, onMounted, onBeforeUnmount, useTemplateRef, nextTick } from 'vue';
+import { useI18n } from 'vue-i18n';
 import { useIpcOn } from '@/renderer/composables/useIpcOn';
 
 import TabContent from '@/renderer/components/TabContent.vue';
@@ -48,6 +49,7 @@ function formatWclDifficultyLabel(difficulty: number | null | undefined) {
 
 const reviewsStore = useReviewsStore();
 const loginStore = useLoginStore();
+const { t } = useI18n();
 
 const isWclAuthorized = ref(false);
 let initialReportsRequested = false;
@@ -982,17 +984,43 @@ const reportOptions = computed(() => {
 	const lastReport = reviewsStore.getReports[reviewsStore.getReports.length - 1];
 	const lastReportEndTime = lastReport ? lastReport.endTime : undefined;
 
-	if (lastReportEndTime) {
+	if (lastReportEndTime && reviewsStore.hasOlderReports) {
 		list.push({
-			label: 'Load older reports...',
+			label: reviewsStore.olderReportsLoading
+				? t('reviews.loading_older_reports')
+				: t('reviews.load_older_reports'),
+			disabled: reviewsStore.olderReportsLoading,
 			overrideAction: () => {
-				reviewsStore.requestReports(lastReportEndTime);
+				void reviewsStore.requestReports(lastReportEndTime);
 			},
 		});
 	}
 
 	return list;
 });
+
+const reportDropdownLoading = computed(() => (
+	reviewsStore.isReportListLoading || reviewsStore.olderReportsLoading
+));
+const reportDropdownLoadingLabel = computed(() => (
+	reviewsStore.getReports.length === 0 ? t('reviews.loading_reports') : undefined
+));
+const reportDropdownError = computed(() => (
+	reviewsStore.reportListError || reviewsStore.olderReportsError
+		? t('reviews.reports_load_failed')
+		: null
+));
+const reportDropdownEmpty = computed(() => (
+	reviewsStore.reportListStatus === 'ready' && reviewsStore.getReports.length === 0
+));
+
+function retryReportDropdownLoad() {
+	if (reviewsStore.olderReportsError) {
+		const lastReport = reviewsStore.getReports[reviewsStore.getReports.length - 1];
+		if (lastReport?.endTime) return reviewsStore.requestReports(lastReport.endTime, true);
+	}
+	return reviewsStore.requestReports(undefined, true);
+}
 
 const fightOptions = computed(() => {
 	const list = [
@@ -1002,7 +1030,7 @@ const fightOptions = computed(() => {
 		},
 	]
 
-	if (!reviewsStore.getSelectedReport || !reviewsStore.getReportDetails?.fights) return list;
+	if (!reviewsStore.getReportDetails?.fights) return list;
 
 	const timeOffset = reviewsStore.getReportTimeOffset;
 	const fights = reviewsStore.getReportDetails.fights;
@@ -1032,6 +1060,17 @@ const fightOptions = computed(() => {
 
 	return list;
 });
+
+const fightDropdownLoadingLabel = computed(() => (
+	!reviewsStore.getReportDetails ? t('reviews.loading_fights') : undefined
+));
+const fightDropdownError = computed(() => (
+	reviewsStore.selectedReportDetailsError ? t('reviews.fights_load_failed') : null
+));
+const fightDropdownEmpty = computed(() => (
+	reviewsStore.selectedReportDetailsStatus === 'ready'
+	&& reviewsStore.getReportDetails?.fights?.length === 0
+));
 
 watch(reviewsStore.videoList, (newList) => {
 	if (!reviewsStore.selectedVideoInfo && newList.length > 0) {
@@ -1361,13 +1400,26 @@ function deleteYoutubeVideo(videoId: string) {
 					<template v-if="isWclAuthorized">
 						<Dropdown :options="reportOptions" class="min-w-[34rem]"
 							:placeholder="$t('reviews.select_report')"
+							:loading="reportDropdownLoading"
+							:loadingLabel="reportDropdownLoadingLabel"
+							:empty="reportDropdownEmpty"
+							:emptyLabel="$t('reviews.no_reports')"
+							:error="reportDropdownError"
 							v-model="reviewsStore.selectedReportCode"
 							:onOpen="reviewsStore.requestReports"
+							:onRetry="retryReportDropdownLoad"
 						></Dropdown>
 						<Dropdown :options="fightOptions" class="min-w-[34rem]"
 							:placeholder="$t('reviews.select_fight')"
+							:disabled="!reviewsStore.selectedReportCode"
+							:loading="reviewsStore.isSelectedReportDetailsLoading"
+							:loadingLabel="fightDropdownLoadingLabel"
+							:empty="fightDropdownEmpty"
+							:emptyLabel="$t('reviews.no_fights')"
+							:error="fightDropdownError"
 							v-model="reviewsStore.selectedFightID"
 							:onOpen="reviewsStore.requestReportData"
+							:onRetry="() => reviewsStore.requestReportData(true)"
 						></Dropdown>
 					</template>
 					<div

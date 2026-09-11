@@ -109,5 +109,13 @@
 	"backups.openbackupsfolder": "Open Backups Folder",
 	"reviews.add_youtube_stream": "Add YouTube Stream",
 	"reviews.select_report": "Select Report",
-	"reviews.select_fight": "Select Fight"
+	"reviews.select_fight": "Select Fight",
+	"reviews.loading_reports": "Loading reports…",
+	"reviews.loading_fights": "Loading fights…",
+	"reviews.load_older_reports": "Load older reports…",
+	"reviews.loading_older_reports": "Loading older reports…",
+	"reviews.no_reports": "No reports found",
+	"reviews.no_fights": "No boss fights in this report",
+	"reviews.reports_load_failed": "Failed to load reports — click to retry",
+	"reviews.fights_load_failed": "Failed to load fights — click to retry"
 }
