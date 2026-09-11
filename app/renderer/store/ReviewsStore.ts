@@ -3,8 +3,6 @@ import { ref, computed, watch, shallowRef, nextTick } from 'vue';
 import log from 'electron-log/renderer';
 import { IPC_EVENTS } from '@/events';
 import type {
-	ReviewTimelineViewMode,
-	ReviewTimelineWindowAction,
 	ReviewTimelineWindowContext,
 	ReviewTimelineWindowDataSnapshot,
 } from '@/timelineWindow';
@@ -13,11 +11,11 @@ import type { WclRequestResult } from '@/wclRequests';
 
 import { useYoutubeVideoInfo } from '@/renderer/composables/useYoutubeVideoInfo';
 import { useReviewBossCastPreferences } from '@/renderer/composables/useReviewBossCastPreferences';
+import { useReviewTimelineWindowState } from '@/renderer/composables/useReviewTimelineWindowState';
 
 const FIGHT_DATA_CACHE_TTL_MS = 30 * 60 * 1000;
 const REPORT_LIST_CACHE_TTL_MS = 15 * 1000;
 const REPORT_DETAILS_CACHE_TTL_MS = 15 * 1000;
-type TimelineWindowActionHandler = (action: ReviewTimelineWindowAction) => boolean;
 type LoadStatus = 'idle' | 'loading' | 'refreshing' | 'ready' | 'error';
 
 export const useReviewsStore = defineStore('Reviews', () => {
@@ -33,15 +31,22 @@ export const useReviewsStore = defineStore('Reviews', () => {
 		setDisplayMode: setBossCastDisplayMode,
 		visibilityOverrides: bossCastVisibilityOverrides,
 	} = useReviewBossCastPreferences();
+	const {
+		detached: timelineWindowDetached,
+		expanded: timelineExpanded,
+		flushPendingActions: flushPendingTimelineWindowActions,
+		hasPendingActions: hasPendingTimelineWindowActions,
+		registerActionHandler: registerTimelineWindowActionHandler,
+		returnToReviewsRevision: timelineWindowReturnToReviewsRevision,
+		viewMode: timelineViewMode,
+	} = useReviewTimelineWindowState({
+		onReattached: () => {
+			void reloadBossCastPreferences();
+		},
+	});
 	const selectedVideoInfo = ref<YouTubeVideo | null>(null);
-	const timelineWindowDetached = ref(false);
-	const timelineExpanded = ref(false);
-	const timelineViewMode = ref<ReviewTimelineViewMode>('fight');
-	const timelineWindowReturnToReviewsRevision = ref(0);
-	const pendingTimelineWindowActions = shallowRef<ReviewTimelineWindowAction[]>([]);
 	const timelineWindowDataRevision = ref(0);
 	const timelineWindowUpdatedFight = shallowRef<{ reportCode: string; fightID: number } | null>(null);
-	let timelineWindowActionHandler: TimelineWindowActionHandler | null = null;
 
 	function setSelectedVideoInfo(video: YouTubeVideo | null) {
 		selectedVideoInfo.value = video;
@@ -147,67 +152,6 @@ export const useReviewsStore = defineStore('Reviews', () => {
 	function markTimelineWindowFightDataUpdated(reportCode: string, fightID: number) {
 		timelineWindowUpdatedFight.value = { reportCode, fightID };
 		timelineWindowDataRevision.value++;
-	}
-
-	const hasPendingTimelineWindowActions = computed(() => pendingTimelineWindowActions.value.length > 0);
-	const isTimelineSeekAction = (action: ReviewTimelineWindowAction) => (
-		action.type === 'seek' || action.type === 'seek-pull'
-	);
-
-	function coalesceTimelineWindowActions(actions: ReviewTimelineWindowAction[]) {
-		let newestSeekIndex = -1;
-		for (let index = actions.length - 1; index >= 0; index--) {
-			if (!isTimelineSeekAction(actions[index])) continue;
-			newestSeekIndex = index;
-			break;
-		}
-		return actions.filter((action, index) => (
-			!isTimelineSeekAction(action) || index === newestSeekIndex
-		));
-	}
-
-	function flushPendingTimelineWindowActions() {
-		if (!timelineWindowActionHandler || pendingTimelineWindowActions.value.length === 0) return;
-		const queuedActions = coalesceTimelineWindowActions(pendingTimelineWindowActions.value);
-		pendingTimelineWindowActions.value = [];
-		const deferredActions: ReviewTimelineWindowAction[] = [];
-		queuedActions.forEach(action => {
-			try {
-				if (!timelineWindowActionHandler?.(action)) deferredActions.push(action);
-			} catch (error) {
-				log.error('Failed to handle detached timeline action', { action, error });
-				deferredActions.push(action);
-			}
-		});
-		if (deferredActions.length > 0) {
-			pendingTimelineWindowActions.value = coalesceTimelineWindowActions([
-				...deferredActions,
-				...pendingTimelineWindowActions.value,
-			]);
-		}
-	}
-
-	function registerTimelineWindowActionHandler(handler: TimelineWindowActionHandler) {
-		timelineWindowActionHandler = handler;
-		flushPendingTimelineWindowActions();
-		return () => {
-			if (timelineWindowActionHandler === handler) timelineWindowActionHandler = null;
-		};
-	}
-
-	function receiveTimelineWindowAction(action: ReviewTimelineWindowAction) {
-		if (!action?.type) return;
-		if (timelineWindowActionHandler) {
-			try {
-				if (timelineWindowActionHandler(action)) return;
-			} catch (error) {
-				log.error('Failed to handle detached timeline action', { action, error });
-			}
-		}
-		pendingTimelineWindowActions.value = coalesceTimelineWindowActions([
-			...pendingTimelineWindowActions.value,
-			action,
-		]).slice(-50);
 	}
 
 	function createTimelineWindowDataSnapshot(
@@ -959,20 +903,6 @@ export const useReviewsStore = defineStore('Reviews', () => {
 		void ensureFightCooldowns(reportCode, fightID, true);
 		void ensureFightBossCasts(reportCode, fightID, true, getSelectedFight.value?.encounterID);
 	});
-
-	ipc.on(IPC_EVENTS.TIMELINE_WINDOW_ACTION, (_event, action: ReviewTimelineWindowAction) => {
-		receiveTimelineWindowAction(action);
-	});
-
-	ipc.on(
-		IPC_EVENTS.TIMELINE_WINDOW_REATTACHED,
-		(_event, input?: { returnToReviews?: boolean }) => {
-			timelineWindowDetached.value = false;
-			timelineExpanded.value = true;
-			void reloadBossCastPreferences();
-			if (input?.returnToReviews) timelineWindowReturnToReviewsRevision.value++;
-		},
-	);
 
 	ipc.on(
 		IPC_EVENTS.TIMELINE_WINDOW_DATA_UPDATED,
