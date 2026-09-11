@@ -3,6 +3,7 @@ import { computed } from 'vue';
 import { IPC_EVENTS } from '@/events';
 
 import { useYoutubeVideoInfo } from '@/renderer/composables/useYoutubeVideoInfo';
+import { useIpcOn } from '@/renderer/composables/useIpcOn';
 import { useReviewBossCastPreferences } from '@/renderer/composables/useReviewBossCastPreferences';
 import { useReviewFightData } from '@/renderer/composables/useReviewFightData';
 import { useReviewReportData } from '@/renderer/composables/useReviewReportData';
@@ -157,7 +158,7 @@ export const useReviewsStore = defineStore('Reviews', () => {
 		return selected.endTime - selected.startTime;
 	});
 
-	ipc.on(IPC_EVENTS.SOCKET_WCL_READY_CALLBACK, () => {
+	useIpcOn(IPC_EVENTS.SOCKET_WCL_READY_CALLBACK, () => {
 		// A reconnect can mean the server was deployed with a new cooldown catalog,
 		// encounter-alert registry, or boss-cast enrichment. Wait until this socket's
 		// WCL credentials are restored before invalidating and refreshing; otherwise
