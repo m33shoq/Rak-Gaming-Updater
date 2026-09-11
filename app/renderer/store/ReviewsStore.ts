@@ -1,14 +1,13 @@
 import { defineStore } from 'pinia';
-import { ref, computed, nextTick } from 'vue';
-import log from 'electron-log/renderer';
+import { computed } from 'vue';
 import { IPC_EVENTS } from '@/events';
-import { reviewVideoOverlapsWindow } from '@/reviewVideoSelection';
 
 import { useYoutubeVideoInfo } from '@/renderer/composables/useYoutubeVideoInfo';
 import { useReviewBossCastPreferences } from '@/renderer/composables/useReviewBossCastPreferences';
 import { useReviewFightData } from '@/renderer/composables/useReviewFightData';
 import { useReviewReportData } from '@/renderer/composables/useReviewReportData';
 import { useReviewTimelineWindowState } from '@/renderer/composables/useReviewTimelineWindowState';
+import { useReviewVideoSelection } from '@/renderer/composables/useReviewVideoSelection';
 
 export const useReviewsStore = defineStore('Reviews', () => {
 	const { youtubeVideoInfo, refreshYoutubeVideoInfo } = useYoutubeVideoInfo();
@@ -36,20 +35,7 @@ export const useReviewsStore = defineStore('Reviews', () => {
 			void reloadBossCastPreferences();
 		},
 	});
-	const selectedVideoInfo = ref<YouTubeVideo | null>(null);
-
-	function setSelectedVideoInfo(video: YouTubeVideo | null) {
-		selectedVideoInfo.value = video;
-	}
-
-	const pendingDirectVideoSeekSeconds = ref<number | null>(null);
-	function consumePendingDirectVideoSeekSeconds() {
-		const value = pendingDirectVideoSeekSeconds.value;
-		pendingDirectVideoSeekSeconds.value = null;
-		return value;
-	}
-
-	const getSelectedVideoId = computed(() => selectedVideoInfo.value?.id || null);
+	let ensureSelectedVideoIsAvailable: (reportCode: string | null) => void = () => undefined;
 	const {
 		getReportDetails,
 		getReports,
@@ -76,11 +62,7 @@ export const useReviewsStore = defineStore('Reviews', () => {
 		setReports,
 	} = useReviewReportData({
 		mergeTimelineData: snapshot => mergeTimelineWindowDataSnapshot(snapshot),
-		onReportChanged: reportCode => {
-			if (reportCode && !videoList.value.some(video => video.id === selectedVideoInfo.value?.id)) {
-				setSelectedVideoInfo(videoList.value[0] || null);
-			}
-		},
+		onReportChanged: reportCode => ensureSelectedVideoIsAvailable(reportCode),
 		onFightChanged: () => {
 			void requestFightEvents();
 			void requestFightCooldowns();
@@ -128,6 +110,25 @@ export const useReviewsStore = defineStore('Reviews', () => {
 		selectedFightID,
 		selectedFight: getSelectedFight,
 	});
+	const {
+		consumePendingDirectVideoSeekSeconds,
+		ensureSelectedVideoIsAvailable: ensureSelectedVideoIsAvailableFromSelection,
+		getSelectedVideoId,
+		openVideoFromDeepLink,
+		pendingDirectVideoSeekSeconds,
+		selectedVideoInfo,
+		setSelectedVideoInfo,
+		videoList,
+	} = useReviewVideoSelection({
+		youtubeVideoInfo,
+		refreshYoutubeVideoInfo,
+		selectedReportCode,
+		selectedReport: getSelectedReport,
+		reportDetails,
+		selectedFightID,
+		selectedFight: getSelectedFight,
+	});
+	ensureSelectedVideoIsAvailable = ensureSelectedVideoIsAvailableFromSelection;
 	const getReportTimeOffset = computed(() => {
 		return getSelectedReport.value?.startTime ?? getReportDetails.value?.startTime ?? 0;
 	});
@@ -155,84 +156,6 @@ export const useReviewsStore = defineStore('Reviews', () => {
 		if (!selected) return 0;
 		return selected.endTime - selected.startTime;
 	});
-
-	function getSelectedFightAbsoluteWindow(): { start: number; end: number } | null {
-		const reportStart = getSelectedReport.value?.startTime ?? getReportDetails.value?.startTime;
-		const fight = getSelectedFight.value;
-		if (!Number.isFinite(reportStart) || !fight) return null;
-		return {
-			start: reportStart! + fight.startTime,
-			end: reportStart! + fight.endTime,
-		};
-	}
-
-	const reportVideoList = computed<YouTubeVideo[]>(() => {
-		const selectedReport = getSelectedReport.value;
-		const reportStart = selectedReport?.startTime ?? getReportDetails.value?.startTime;
-		const reportEnd = selectedReport?.endTime ?? getReportDetails.value?.endTime;
-		const now = Date.now();
-
-		const videosArray: YouTubeVideo[] = Object.values(youtubeVideoInfo.value.byId || {});
-
-		return videosArray.filter(video => {
-			return !selectedReportCode.value
-				|| !Number.isFinite(reportStart)
-				|| !Number.isFinite(reportEnd)
-				|| reviewVideoOverlapsWindow(video, reportStart!, reportEnd!, now);
-		}).sort((a, b) => (b.startTime || 0) - (a.startTime || 0));
-	});
-
-	const videoList = computed<YouTubeVideo[]>(() => {
-		const fightWindow = getSelectedFightAbsoluteWindow();
-		if (!fightWindow) return reportVideoList.value;
-
-		const now = Date.now();
-		return reportVideoList.value.filter(video => (
-			reviewVideoOverlapsWindow(video, fightWindow.start, fightWindow.end, now)
-		));
-	});
-
-	function videoMatchesCurrentSelection(video: YouTubeVideo): boolean {
-		const fightWindow = getSelectedFightAbsoluteWindow();
-		if (fightWindow) {
-			return reviewVideoOverlapsWindow(video, fightWindow.start, fightWindow.end);
-		}
-		return videoList.value.some(candidate => candidate.id === video.id);
-	}
-
-	async function openVideoFromDeepLink(videoId: string, timestampSeconds: number) {
-		const normalizedVideoId = videoId.trim();
-		if (!normalizedVideoId) {
-			return { success: false, error: 'Deep link is missing a video ID.' };
-		}
-
-		await refreshYoutubeVideoInfo(); // ensure we have the latest video info before trying to find the video
-
-		const targetVideo = youtubeVideoInfo.value?.byId?.[normalizedVideoId] ?? null;
-		if (!targetVideo) {
-			return { success: false, error: `Video ${normalizedVideoId} was not found.` };
-		}
-
-		// if video was active during currently selected report/fight just select it and set the timestamp
-		// otherwise clear selected report/fight to avoid confusion and then select the video and set the timestamp
-
-		if (selectedReportCode.value && !videoMatchesCurrentSelection(targetVideo)) {
-			log.info('Deep linked video is not relevant to currently selected report/fight, clearing selection');
-			selectedFightID.value = null;
-
-			if (selectedReportCode.value !== null) {
-				selectedReportCode.value = null;
-				reportDetails.value = null;
-				await nextTick();
-			}
-		}
-
-		setSelectedVideoInfo(targetVideo);
-		pendingDirectVideoSeekSeconds.value = timestampSeconds;
-		log.info('Opened video from deep link', { videoId: normalizedVideoId, timestampSeconds });
-
-		return { success: true };
-	}
 
 	ipc.on(IPC_EVENTS.SOCKET_WCL_READY_CALLBACK, () => {
 		// A reconnect can mean the server was deployed with a new cooldown catalog,
