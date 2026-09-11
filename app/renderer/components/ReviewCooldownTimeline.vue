@@ -1,13 +1,20 @@
 <script setup lang="ts">
 import log from 'electron-log/renderer';
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, provide, ref, watch } from 'vue';
 
 import ReviewBossCastInterrupt from '@/renderer/components/ReviewBossCastInterrupt.vue';
 import ReviewBossCastTargets from '@/renderer/components/ReviewBossCastTargets.vue';
+import ReviewCombatTimer from '@/renderer/components/ReviewCombatTimer.vue';
 import ReviewCooldownComparison from '@/renderer/components/ReviewCooldownComparison.vue';
+import ReviewReplay from '@/renderer/components/ReviewReplay.vue';
 import ReviewCooldownTarget from '@/renderer/components/ReviewCooldownTarget.vue';
 import ReviewEncounterAlertTooltip from '@/renderer/components/ReviewEncounterAlertTooltip.vue';
+import ReviewPlaybackCursor from '@/renderer/components/ReviewPlaybackCursor.vue';
 import ReviewRaidMarker from '@/renderer/components/ReviewRaidMarker.vue';
+import {
+	reviewTimelinePlaybackKey,
+	type ReviewTimelinePlayback,
+} from '@/renderer/composables/useReviewTimelinePlayback';
 import { useReviewsStore } from '@/renderer/store/ReviewsStore';
 import { buildCollapsedBossCastMarkers, sortBossCastAbilitiesByFirstOccurrence } from '@/renderer/utils/bossCastAggregation';
 import { useBossCastTooltipLayout } from '@/renderer/utils/bossCastTooltipLayout';
@@ -30,10 +37,11 @@ const props = withDefaults(defineProps<{
 	phases?: reviewPhaseMarker[];
 	fightStartTime: number;
 	fightDuration: number;
-	cursorPercent?: number;
+	playback: ReviewTimelinePlayback;
 	loading?: boolean;
 	error?: string | null;
 	detached?: boolean;
+	compactOnly?: boolean;
 	expanded?: boolean;
 	viewMode?: ReviewTimelineViewMode;
 }>(), {
@@ -41,10 +49,10 @@ const props = withDefaults(defineProps<{
 	fightEvents: () => [],
 	groups: () => [],
 	phases: () => [],
-	cursorPercent: 0,
 	loading: false,
 	error: null,
 	detached: false,
+	compactOnly: false,
 	expanded: false,
 	viewMode: 'fight',
 });
@@ -55,13 +63,16 @@ const emit = defineEmits<{
 	openDeath: [deathID: number];
 	seekPull: [fightID: number, timestampSeconds: number];
 	openPullDeath: [fightID: number, deathID: number];
+	togglePlayback: [];
 	detach: [];
 	'update:expanded': [expanded: boolean];
 	'update:viewMode': [viewMode: ReviewTimelineViewMode];
 }>();
 
 const reviewsStore = useReviewsStore();
+provide(reviewTimelinePlaybackKey, props.playback);
 const isExpanded = ref(props.detached || props.expanded);
+const showsExpandedTimeline = computed(() => isExpanded.value && !props.compactOnly);
 const timelineViewMode = ref<ReviewTimelineViewMode>(props.viewMode);
 const comparisonSpellEvents = ref<reviewCooldownEvent[]>([]);
 const comparisonPlayerRequest = ref<{
@@ -1911,12 +1922,20 @@ function onComparisonPlayerRequestApplied(token: number) {
 		comparisonPlayerRequest.value = null;
 	}
 }
+
+function onCompactTimelineHeaderClick() {
+	if (props.compactOnly) {
+		emit('detach');
+		return;
+	}
+	isExpanded.value = !isExpanded.value;
+}
 </script>
 
 <template>
 	<section class="relative" :class="detached ? 'h-full min-h-0' : 'shrink-0'" style="--review-timeline-sidebar-width: 9rem;">
 		<div
-			v-if="isExpanded"
+			v-if="showsExpandedTimeline"
 			id="review-cooldown-timeline-panel"
 			ref="expandedTimelinePanel"
 			class="z-[120] flex min-h-40 flex-col overflow-hidden border border-sky-500/25 bg-light2 dark:border-sky-400/20 dark:bg-dark2"
@@ -1960,6 +1979,7 @@ function onComparisonPlayerRequestApplied(token: number) {
 					<div class="ml-1 flex rounded-sm border border-neutral-500/30 bg-black/5 p-0.5 text-[10px] dark:bg-black/20">
 						<button type="button" class="h-5 rounded-sm px-2" :class="timelineViewMode === 'fight' ? 'bg-sky-500/20 text-sky-600 dark:text-sky-300' : 'text-neutral-500 hover:text-inherit'" @click="timelineViewMode = 'fight'">Raid</button>
 						<button type="button" class="h-5 rounded-sm px-2" :class="timelineViewMode === 'comparison' ? 'bg-sky-500/20 text-sky-600 dark:text-sky-300' : 'text-neutral-500 hover:text-inherit'" @click="timelineViewMode = 'comparison'">Pull comparison</button>
+						<button v-if="selectedFight" type="button" class="h-5 rounded-sm px-2" :class="timelineViewMode === 'replay' ? 'bg-sky-500/20 text-sky-600 dark:text-sky-300' : 'text-neutral-500 hover:text-inherit'" @click="timelineViewMode = 'replay'">Replay</button>
 					</div>
 					<button
 						v-if="!detached"
@@ -2018,7 +2038,7 @@ function onComparisonPlayerRequestApplied(token: number) {
 			</div>
 
 			<div
-				v-if="groups.length"
+				v-if="timelineViewMode !== 'replay' && groups.length"
 				class="flex shrink-0 flex-wrap items-center gap-1.5 border-b border-neutral-400/30 bg-light4 px-3 py-2 shadow-inner dark:border-neutral-600/30 dark:bg-dark4"
 			>
 				<div class="mr-0.5 flex shrink-0 items-center gap-1.5 border-r border-neutral-500/25 pr-2">
@@ -2112,7 +2132,7 @@ function onComparisonPlayerRequestApplied(token: number) {
 			</div>
 
 			<div
-				v-if="isSpellFiltersExpanded && spellOptions.length > 0"
+				v-if="timelineViewMode !== 'replay' && isSpellFiltersExpanded && spellOptions.length > 0"
 				class="shrink-0 border-b border-neutral-400/30 bg-light4 px-3 py-2 shadow-inner dark:border-neutral-600/30 dark:bg-dark4"
 			>
 				<div class="flex items-center gap-2">
@@ -2340,7 +2360,11 @@ function onComparisonPlayerRequestApplied(token: number) {
 					<div
 						class="relative min-w-0 flex-1"
 					>
-						<span class="absolute left-1 top-1.5 font-medium tabular-nums">{{ formatTime(0) }}</span>
+						<ReviewCombatTimer
+							class="absolute left-1 top-1.5 z-20 font-semibold tabular-nums text-amber-600 dark:text-amber-300"
+							:max-seconds="fightDuration / 1000"
+							aria-label="Current fight time"
+						/>
 						<span class="absolute left-1/2 top-1.5 -translate-x-1/2 font-medium tabular-nums">
 							{{ formatTime(fightDuration / 2000) }}
 						</span>
@@ -2483,11 +2507,9 @@ function onComparisonPlayerRequestApplied(token: number) {
 								class="pointer-events-none absolute inset-y-0 z-[11] w-0.5 bg-amber-400/80 shadow-[0_0_5px_rgba(245,158,11,0.25)]"
 								:style="{ left: `${marker.percent * 100}%` }"
 							></div>
-							<div
-								v-if="cursorPercent > 0 && cursorPercent < 1"
+							<ReviewPlaybackCursor
 								class="pointer-events-none absolute inset-y-0 z-30 w-0.5 bg-amber-400"
-								:style="{ left: `${cursorPercent * 100}%` }"
-							></div>
+							/>
 							<div
 								v-if="timelineHover.visible && timelineHover.context === 'expanded'"
 								class="pointer-events-none absolute inset-y-0 z-40 w-0.5 bg-white/60"
@@ -2503,7 +2525,7 @@ function onComparisonPlayerRequestApplied(token: number) {
 								<template v-if="reviewsStore.bossCastDisplayMode === 'collapsed'">
 									<div v-for="marker in minuteTimeMarkers" :key="`collapsed-head-minute:${marker}`" class="pointer-events-none absolute inset-y-0 z-[1] w-px bg-neutral-500/25" :style="{ left: `${marker * 100}%` }"></div>
 									<div v-for="phase in visiblePhases" :key="`collapsed-head-phase:${phase.name}:${phase.percent}`" class="pointer-events-none absolute inset-y-0 z-10 w-0.5 bg-sky-400/80" :style="{ left: `${phase.percent * 100}%` }"></div>
-									<div v-if="cursorPercent > 0 && cursorPercent < 1" class="pointer-events-none absolute inset-y-0 z-30 w-0.5 bg-amber-400" :style="{ left: `${cursorPercent * 100}%` }"></div>
+									<ReviewPlaybackCursor class="pointer-events-none absolute inset-y-0 z-30 w-0.5 bg-amber-400" />
 									<span v-for="marker in collapsedBossCastDurationMarkers.filter(entry => entry.durationSeconds > 0)" :key="`collapsed-head-duration:${marker.key}`" class="review-boss-cast-rail review-boss-cast-rail--compact pointer-events-none absolute top-[9px] z-[6] h-[3px] min-w-px" :class="getBossCastDurationClass(marker)" :style="{ left: `${marker.startPercent * 100}%`, width: `${Math.max(0, marker.percent - marker.startPercent) * 100}%` }"></span>
 									<button v-for="item in collapsedBossCastMarkers" :key="`collapsed-head:${item.marker.key}`" type="button" class="absolute top-0 z-20 size-5 overflow-visible rounded-none border bg-black shadow-[0_1px_4px_rgba(0,0,0,0.45)] transition-none hover:z-30 hover:scale-110 focus:z-30 focus:outline-none focus:ring-1 focus:ring-amber-200" :class="getBossCastMarkerClass(item.occurrences)" :style="{ left: `clamp(0px, calc(${item.marker.percent * 100}% + ${item.offsetPixels}px), calc(100% - 20px))` }" :aria-label="item.occurrences.length > 1 ? `${item.lane.ability.name}, ${item.occurrences.length} outcomes, first at ${formatCooldownTimestamp(item.marker.timestampSeconds)}` : `${item.lane.ability.name} ${item.marker.event.bossCast.interrupt ? 'interrupted' : 'completed'} for ${item.marker.event.source?.name || 'Unknown enemy'} at ${formatCooldownTimestamp(item.marker.timestampSeconds)}`" @click.stop="emit('seek', item.marker.timestampSeconds)" @mouseenter="showBossCastTooltip(item.lane, item.marker, $event, item.occurrences)" @mousemove="updateDetailTooltipPosition" @mouseleave="hideDetailTooltip">
 										<img v-if="item.lane.ability.icon" :src="getSpellIconURL(item.lane.ability.icon)" :alt="item.lane.ability.name" class="block size-full" draggable="false" /><span v-else class="flex size-full items-center justify-center text-[9px] text-white">{{ item.lane.ability.name.slice(0, 1) }}</span>
@@ -2660,12 +2682,11 @@ function onComparisonPlayerRequestApplied(token: number) {
 			</div>
 			</template>
 			<ReviewCooldownComparison
-				v-else
+				v-else-if="timelineViewMode === 'comparison'"
 				:groups="groups"
 				:enabled-group-ids="selectedGroupIDs"
 				:excluded-spell-ids="excludedSpellIDs"
 				:container-resizing="isExpandedTimelineResizing"
-				:current-fight-cursor-seconds="cursorPercent * fightDuration / 1000"
 				:requested-player-id="comparisonPlayerRequest?.playerID"
 				:requested-player-name="comparisonPlayerRequest?.playerName"
 				:player-request-token="comparisonPlayerRequest?.token"
@@ -2675,6 +2696,13 @@ function onComparisonPlayerRequestApplied(token: number) {
 				@open-pull="fightID => emit('openFight', fightID)"
 				@open-death="(fightID, deathID) => emit('openPullDeath', fightID, deathID)"
 			/>
+			<ReviewReplay
+				v-else-if="timelineViewMode === 'replay' && reviewsStore.selectedReportCode && reviewsStore.selectedFightID"
+				:report-code="reviewsStore.selectedReportCode"
+				:fight-i-d="reviewsStore.selectedFightID"
+				@seek="emit('seek', $event)"
+				@toggle-playback="emit('togglePlayback')"
+			/>
 		</div>
 
 		<div v-if="!detached" class="relative flex h-8 w-full overflow-visible rounded-md border border-neutral-500/30 bg-light4 dark:bg-dark4">
@@ -2682,16 +2710,17 @@ function onComparisonPlayerRequestApplied(token: number) {
 				type="button"
 				class="flex shrink-0 items-center gap-2 rounded-l-md border-r border-neutral-500/30 px-2 text-left transition-colors hover:bg-light3 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-sky-500 dark:hover:bg-dark3"
 				style="width: var(--review-timeline-sidebar-width);"
-				:aria-expanded="isExpanded"
+				:aria-expanded="showsExpandedTimeline"
 				aria-controls="review-cooldown-timeline-panel"
-				@click="isExpanded = !isExpanded"
+				:title="compactOnly ? 'Show detached timeline window' : undefined"
+				@click="onCompactTimelineHeaderClick"
 			>
 				<svg
 					xmlns="http://www.w3.org/2000/svg"
 					viewBox="0 0 20 20"
 					fill="currentColor"
 					class="size-4 shrink-0 transition-transform"
-					:class="{ 'rotate-180': isExpanded }"
+					:class="{ 'rotate-180': showsExpandedTimeline }"
 				>
 					<path
 						fill-rule="evenodd"
@@ -2702,7 +2731,7 @@ function onComparisonPlayerRequestApplied(token: number) {
 				<span class="min-w-0 leading-tight">
 					<span class="block truncate text-xs font-semibold">Fight timeline</span>
 					<span class="block truncate text-[10px] text-neutral-500 dark:text-neutral-400">
-						{{ loading ? 'Loading...' : `${visibleCooldownCount} casts / ${visibleDeathPeriods.length} deaths${encounterAlertOccurrenceCount ? ` / ${encounterAlertOccurrenceCount} alerts` : ''}` }}
+						{{ compactOnly ? 'Detached' : loading ? 'Loading...' : `${visibleCooldownCount} casts / ${visibleDeathPeriods.length} deaths${encounterAlertOccurrenceCount ? ` / ${encounterAlertOccurrenceCount} alerts` : ''}` }}
 					</span>
 				</span>
 			</button>
@@ -2766,11 +2795,9 @@ function onComparisonPlayerRequestApplied(token: number) {
 					</button>
 				</template>
 
-				<div
-					v-if="cursorPercent > 0 && cursorPercent < 1"
+				<ReviewPlaybackCursor
 					class="pointer-events-none absolute inset-y-0 z-20 w-0.5 bg-amber-400"
-					:style="{ left: `${cursorPercent * 100}%` }"
-				></div>
+				/>
 				<div
 					v-if="timelineHover.visible && timelineHover.context === 'compact'"
 					class="pointer-events-none absolute inset-y-0 z-40 w-0.5 bg-white/60"
@@ -2784,6 +2811,13 @@ function onComparisonPlayerRequestApplied(token: number) {
 					Timeline data incomplete
 				</span>
 			</div>
+
+			<ReviewCombatTimer
+				class="pointer-events-none absolute top-full z-50 mt-0.5 rounded bg-light4 px-1 py-0.5 text-xs font-semibold leading-none tabular-nums text-amber-600 shadow-sm dark:bg-dark4 dark:text-amber-300"
+				style="left: calc(var(--review-timeline-sidebar-width) + 0.25rem);"
+				:max-seconds="fightDuration / 1000"
+				aria-label="Current fight time"
+			/>
 
 			<div
 				class="pointer-events-none absolute right-0 top-full z-50 mt-0.5 rounded bg-light4 px-1 py-0.5 text-xs font-medium leading-none tabular-nums text-neutral-600 shadow-sm dark:bg-dark4 dark:text-neutral-300"

@@ -1,15 +1,18 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue';
+import { useI18n } from 'vue-i18n';
 
 import TabContent from '@/renderer/components/TabContent.vue';
 import Checkbox from '@/renderer/components/Checkbox.vue';
 import Input from '@/renderer/components/Input.vue';
 import UIButton from '@/renderer/components/Button.vue';
 import { getElectronStoreRef } from '@/renderer/store/ElectronRefStore';
+import { IPC_EVENTS } from '@/events';
 
 import { useObsStatus } from '@/renderer/composables/useObsStatus';
 
 const { obsStatus, saveObsSettings, reconnectObs } = useObsStatus();
+const { t } = useI18n();
 const obsEnabled = getElectronStoreRef('obsEnabled', false);
 const obsPort = getElectronStoreRef('obsPort', 4455);
 const obsPassword = getElectronStoreRef('obsPassword', '');
@@ -17,6 +20,9 @@ const obsPassword = getElectronStoreRef('obsPassword', '');
 const saveStatus = ref('');
 const isSaving = ref(false);
 const isReconnecting = ref(false);
+const isInstallingSyncMarker = ref(false);
+const syncMarkerStatus = ref('');
+const syncMarkerStatusIsError = ref(false);
 
 const connectionStateLabel = computed(() => {
 	if (obsStatus.value.connected) return 'obs.status.connected';
@@ -79,6 +85,29 @@ async function forceReconnect() {
 		isReconnecting.value = false;
 	}
 }
+
+async function installSyncMarker() {
+	if (isInstallingSyncMarker.value) return;
+	isInstallingSyncMarker.value = true;
+	syncMarkerStatus.value = '';
+	syncMarkerStatusIsError.value = false;
+	try {
+		const response = await ipc.invoke(IPC_EVENTS.REVIEW_SYNC_OVERLAY_INSTALL);
+		const clockStatus = response.clockCalibration?.applied
+			? t('obs.sync_marker_clock_corrected', {
+				offset: `${response.clockCalibration.offsetMs >= 0 ? '+' : ''}${response.clockCalibration.offsetMs} ms`,
+			})
+			: t('obs.sync_marker_clock_fallback');
+		syncMarkerStatus.value = `${t('obs.sync_marker_ready', { scene: response.sceneName })} ${clockStatus}`;
+	} catch (error) {
+		syncMarkerStatusIsError.value = true;
+		syncMarkerStatus.value = error instanceof Error
+			? error.message
+			: t('obs.sync_marker_failed');
+	} finally {
+		isInstallingSyncMarker.value = false;
+	}
+}
 </script>
 
 <template>
@@ -123,9 +152,19 @@ async function forceReconnect() {
 			<div class="flex gap-2 flex-wrap mt-3">
 				<UIButton :label="$t('obs.apply_settings')" :disabled="isSaving" @click="applySettings" />
 				<UIButton :label="$t('obs.reconnect')" :disabled="isReconnecting || !obsEnabled" @click="forceReconnect" />
+				<UIButton
+					:label="$t('obs.install_sync_marker')"
+					:disabled="isInstallingSyncMarker || !obsStatus.connected"
+					@click="installSyncMarker"
+				/>
 			</div>
 
 			<p v-if="saveStatus" class="text-xs mt-1 opacity-80">{{ $t(saveStatus) }}</p>
+			<p
+				v-if="syncMarkerStatus"
+				class="text-xs mt-1"
+				:class="syncMarkerStatusIsError ? 'text-red-400' : 'text-teal-300'"
+			>{{ syncMarkerStatus }}</p>
 
 			<div class="mt-4 border border-gray-500/30 rounded-lg p-3 dark:bg-dark3 bg-light3">
 				<div class="flex flex-wrap items-center gap-2 text-xs mb-2">

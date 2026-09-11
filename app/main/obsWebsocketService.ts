@@ -24,6 +24,21 @@ export type ObsStreamStartedPayload = {
 	youtubeUrl: string;
 };
 
+export type ObsBrowserSourceInstallOptions = {
+	inputName: string;
+	localFile: string;
+	sourceWidth: number;
+	sourceHeight: number;
+	customCss?: string;
+};
+
+export type ObsBrowserSourceInstallResult = {
+	inputName: string;
+	sceneName: string;
+	createdInput: boolean;
+	createdSceneItem: boolean;
+};
+
 type ObsServiceCallbacks = {
 	onStatus: (status: ObsStatus) => void;
 	onStreamStarted: (payload: ObsStreamStartedPayload) => void;
@@ -138,6 +153,172 @@ export default class ObsWebsocketService {
 	async reconnectNow() {
 		await this.disconnect();
 		await this.connect();
+	}
+
+	async installBrowserSourceInCurrentProgramScene(
+		options: ObsBrowserSourceInstallOptions,
+	): Promise<ObsBrowserSourceInstallResult> {
+		if (!this.status.connected) {
+			throw new Error('OBS WebSocket is not connected. Enable OBS integration first.');
+		}
+		if (!options.inputName.trim() || !options.localFile.trim()) {
+			throw new TypeError('A Browser Source name and local file are required');
+		}
+		if (
+			!Number.isSafeInteger(options.sourceWidth)
+			|| !Number.isSafeInteger(options.sourceHeight)
+			|| options.sourceWidth <= 0
+			|| options.sourceHeight <= 0
+		) {
+			throw new RangeError('Browser Source dimensions must be positive integers');
+		}
+
+		const [sceneState, videoSettings, inputList] = await Promise.all([
+			this.obs.call('GetCurrentProgramScene'),
+			this.obs.call('GetVideoSettings'),
+			this.obs.call('GetInputList'),
+		]);
+		const sceneName = sceneState.sceneName;
+		const inputSettings = {
+			is_local_file: true,
+			local_file: options.localFile,
+			width: options.sourceWidth,
+			height: options.sourceHeight,
+			css: options.customCss ?? '',
+			shutdown: false,
+			restart_when_active: false,
+			reroute_audio: false,
+		};
+		const inputs = inputList.inputs as Array<{
+			inputKind?: unknown;
+			inputName?: unknown;
+		}>;
+		const existingInput = inputs.find(input => input.inputName === options.inputName);
+		if (
+			existingInput
+			&& (typeof existingInput.inputKind !== 'string' || !existingInput.inputKind.startsWith('browser_source'))
+		) {
+			throw new Error(`An OBS source named "${options.inputName}" already exists and is not a Browser Source.`);
+		}
+
+		let createdInput = false;
+		let createdSceneItem = false;
+		let sceneItemId: number;
+		if (!existingInput) {
+			const created = await this.obs.call('CreateInput', {
+				sceneName,
+				inputName: options.inputName,
+				inputKind: 'browser_source',
+				inputSettings,
+				sceneItemEnabled: true,
+			});
+			createdInput = true;
+			createdSceneItem = true;
+			sceneItemId = created.sceneItemId;
+		} else {
+			await this.obs.call('SetInputSettings', {
+				inputName: options.inputName,
+				inputSettings,
+				overlay: true,
+			});
+
+			const sceneItems = await this.obs.call('GetSceneItemList', { sceneName });
+			const existingSceneItem = (sceneItems.sceneItems as Array<{
+				sceneItemId?: unknown;
+				sourceName?: unknown;
+			}>).find(item => item.sourceName === options.inputName && Number.isSafeInteger(item.sceneItemId));
+			if (existingSceneItem) {
+				sceneItemId = existingSceneItem.sceneItemId as number;
+			} else {
+				const created = await this.obs.call('CreateSceneItem', {
+					sceneName,
+					sourceName: options.inputName,
+					sceneItemEnabled: true,
+				});
+				createdSceneItem = true;
+				sceneItemId = created.sceneItemId;
+			}
+		}
+
+		const baseWidth = Number.isFinite(videoSettings.baseWidth) && videoSettings.baseWidth > 0
+			? videoSettings.baseWidth
+			: options.sourceWidth;
+		const baseHeight = Number.isFinite(videoSettings.baseHeight) && videoSettings.baseHeight > 0
+			? videoSettings.baseHeight
+			: options.sourceHeight;
+		await this.obs.call('SetSceneItemTransform', {
+			sceneName,
+			sceneItemId,
+			sceneItemTransform: {
+				alignment: 5,
+				boundsType: 'OBS_BOUNDS_NONE',
+				cropBottom: 0,
+				cropLeft: 0,
+				cropRight: 0,
+				cropTop: 0,
+				positionX: 0,
+				positionY: 0,
+				rotation: 0,
+				scaleX: baseWidth / options.sourceWidth,
+				scaleY: baseHeight / options.sourceHeight,
+			},
+		});
+		await this.obs.call('SetSceneItemEnabled', { sceneName, sceneItemId, sceneItemEnabled: true });
+
+		const updatedSceneItems = await this.obs.call('GetSceneItemList', { sceneName });
+		const topIndex = Math.max(0, updatedSceneItems.sceneItems.length - 1);
+		await this.obs.call('SetSceneItemIndex', { sceneName, sceneItemId, sceneItemIndex: topIndex });
+		await this.obs.call('SetSceneItemLocked', { sceneName, sceneItemId, sceneItemLocked: true });
+
+		if (!createdInput) {
+			try {
+				await this.obs.call('PressInputPropertiesButton', {
+					inputName: options.inputName,
+					propertyName: 'refreshnocache',
+				});
+			} catch (error) {
+				this.callbacks.log.warn('[OBS] Browser Source was updated but could not be force-refreshed', error);
+			}
+		}
+
+		this.callbacks.log.info('[OBS] Installed Browser Source in current Program scene', {
+			inputName: options.inputName,
+			localFile: options.localFile,
+			sceneName,
+			createdInput,
+			createdSceneItem,
+		});
+		return { inputName: options.inputName, sceneName, createdInput, createdSceneItem };
+	}
+
+	async updateBrowserSourceCustomCss(inputName: string, customCss: string): Promise<boolean> {
+		if (!this.status.connected) return false;
+
+		if (!await this.hasBrowserSource(inputName)) return false;
+		await this.obs.call('SetInputSettings', {
+			inputName,
+			inputSettings: { css: customCss },
+			overlay: true,
+		});
+		return true;
+	}
+
+	async hasBrowserSource(inputName: string): Promise<boolean> {
+		if (!this.status.connected) return false;
+
+		const inputList = await this.obs.call('GetInputList');
+		const existingInput = (inputList.inputs as Array<{
+			inputKind?: unknown;
+			inputName?: unknown;
+		}>).find(input => input.inputName === inputName);
+		if (!existingInput) return false;
+		if (
+			typeof existingInput.inputKind !== 'string'
+			|| !existingInput.inputKind.startsWith('browser_source')
+		) {
+			throw new Error(`An OBS source named "${inputName}" already exists and is not a Browser Source.`);
+		}
+		return true;
 	}
 
 	async dispose() {

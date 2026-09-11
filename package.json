@@ -44,6 +44,10 @@
 			{
 				"from": "./node_modules/regedit/vbs",
 				"to": "vbs"
+			},
+			{
+				"from": "./app/obs/rg-sync-overlay.html",
+				"to": "obs/rg-sync-overlay.html"
 			}
 		],
 		"win": {

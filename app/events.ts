@@ -114,6 +114,8 @@ export const IPC_EVENTS = {
 	TIMELINE_WINDOW_CONTEXT_UPDATED: 'timeline-window-context-updated',
 	TIMELINE_WINDOW_CURSOR_SET: 'timeline-window-cursor-set',
 	TIMELINE_WINDOW_CURSOR_UPDATED: 'timeline-window-cursor-updated',
+	TIMELINE_WINDOW_PLAYBACK_SET: 'timeline-window-playback-set',
+	TIMELINE_WINDOW_PLAYBACK_UPDATED: 'timeline-window-playback-updated',
 	TIMELINE_WINDOW_DATA_SET: 'timeline-window-data-set',
 	TIMELINE_WINDOW_DATA_UPDATED: 'timeline-window-data-updated',
 	TIMELINE_WINDOW_ACTION: 'timeline-window-action',
@@ -126,6 +128,9 @@ export const IPC_EVENTS = {
 	YOUTUBE_PLAYER_FULLSCREEN_SET: 'youtube-player-fullscreen-set',
 	YOUTUBE_PLAYER_FULLSCREEN_STATUS_GET: 'youtube-player-fullscreen-status-get',
 	YOUTUBE_PLAYER_FULLSCREEN_CHANGED: 'youtube-player-fullscreen-changed',
+	REVIEW_SYNC_CAPTURE_VIDEO_FRAME: 'review-sync-capture-video-frame',
+	REVIEW_SYNC_OVERLAY_REVEAL: 'review-sync-overlay-reveal',
+	REVIEW_SYNC_OVERLAY_INSTALL: 'review-sync-overlay-install',
 
 
 

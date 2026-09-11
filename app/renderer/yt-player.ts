@@ -223,6 +223,11 @@ export default class YouTubePlayer extends EventEmitter {
 		return (this._ready && this._player.getCurrentTime()) || 0;
 	}
 
+	getVideoId() {
+		if (!this._ready || !this._player?.getVideoData) return null;
+		return this._player.getVideoData()?.video_id || null;
+	}
+
 	destroy() {
 		this._destroy();
 	}

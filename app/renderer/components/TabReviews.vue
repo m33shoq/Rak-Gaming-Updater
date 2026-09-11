@@ -6,6 +6,7 @@ import type { ReviewTimelineWindowAction, ReviewTimelineWindowContext } from '@/
 import { ref, computed, watch, onMounted, onBeforeUnmount, useTemplateRef, nextTick } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useIpcOn } from '@/renderer/composables/useIpcOn';
+import { createReviewTimelinePlayback } from '@/renderer/composables/useReviewTimelinePlayback';
 
 import TabContent from '@/renderer/components/TabContent.vue';
 import UIButton from '@/renderer/components/Button.vue';
@@ -20,6 +21,15 @@ import { useLoginStore } from '@/renderer/store/LoginStore';
 import { useYoutubeVideoInfo } from '@/renderer/composables/useYoutubeVideoInfo';
 
 import YTPlayer from '@/renderer/yt-player';
+import { decodeReviewSyncMarkerImage } from '@/renderer/reviewSyncMarkerDecoder';
+import type { ReviewSyncMarkerCapture } from '@/reviewSyncMarker';
+import {
+	ReviewSeekCoordinator,
+	type ReviewSeekExecutionContext,
+	type ReviewSeekIntent,
+	type ReviewSeekSource,
+} from '@/renderer/reviewSeekCoordinator';
+import { getReviewVideoEndTime } from '@/reviewVideoSelection';
 
 // format seconds to mm:ss
 function formatTime(t) {
@@ -110,6 +120,14 @@ const isPlayerPlaying = ref(false);
 const isPlayerControlDockHovered = ref(false);
 const isPlayerControlDockFocused = ref(false);
 const queuedSeekDeltaSeconds = ref<number | null>(null);
+const syncPrototypeAnchor = ref<{
+	videoId: string;
+	videoTimeSeconds: number;
+	timestampMs: number;
+} | null>(null);
+const syncPrototypeStatus = ref('');
+const syncPrototypeStatusTone = ref<'success' | 'error' | 'info'>('info');
+const isSyncPrototypeCapturing = ref(false);
 
 const DEFAULT_SEEK_SECONDS = 5;
 const SHIFT_SEEK_SECONDS = 3;
@@ -125,7 +143,82 @@ const HOTKEY_SEEK_TARGET_EPSILON_SECONDS = 0.001;
 const HOTKEY_SEEK_INDICATOR_MIN_VISIBLE_MS = 500;
 const HOTKEY_SEEK_HOLD_INITIAL_INTERVAL_MS = 350;
 const HOTKEY_SEEK_HOLD_FASTEST_INTERVAL_MS = 60;
+const VIDEO_TIME_UPDATE_HZ = 16;
 const HOTKEY_SEEK_HOLD_ACCELERATION_MS = 3500;
+const SYNC_MARKER_AUTO_READ_INTERVAL_MS = 10_000;
+const SYNC_MARKER_REANCHOR_THRESHOLD_MS = 250;
+const SYNC_MARKER_AUTO_FAILURE_LOG_INTERVAL_MS = 5 * 60_000;
+const SYNC_MARKER_STATE_CHANGE_READ_DELAY_MS = 500;
+const SYNC_MARKER_SEEK_SETTLE_READ_DELAY_MS = 750;
+const SYNC_MARKER_MIN_AUTO_READ_GAP_MS = 2_000;
+const SYNC_MARKER_REANCHOR_CONFIRMATION_TOLERANCE_MS = 250;
+const SYNC_MARKER_REANCHOR_CONFIRMATION_MAX_AGE_MS = 30_000;
+const SYNC_MARKER_SEEK_FIRST_READ_DELAY_MS = 150;
+const SYNC_MARKER_SEEK_OBSERVATION_INTERVAL_MS = 250;
+const SYNC_MARKER_SEEK_OBSERVATION_MIN_SEPARATION_MS = 175;
+const SYNC_MARKER_SEEK_OBSERVATION_TOLERANCE_MS = 175;
+const SYNC_MARKER_SEEK_API_TIME_MAX_DISTANCE_SECONDS = 60;
+const SYNC_MARKER_SEEK_LANDING_EARLY_TOLERANCE_MS = 250;
+const SYNC_MARKER_SEEK_LANDING_LATE_TOLERANCE_MS = 350;
+const SYNC_MARKER_SEEK_VERIFICATION_ORIGIN_TOLERANCE_MS = 1_000;
+const SYNC_MARKER_SEEK_CORRECTION_TOLERANCE_MS = 250;
+const SYNC_MARKER_SEEK_CORRECTION_MAX_MS = 60_000;
+const SYNC_MARKER_SEEK_CORRECTION_MAX_AGE_MS = 30_000;
+const SYNC_MARKER_SEEK_CORRECTION_MAX_ATTEMPTS = 2;
+const SYNC_MARKER_SEEK_MAX_OBSERVATION_ATTEMPTS = 16;
+const SYNC_MARKER_SEEK_MAX_READ_FAILURES = 6;
+const SYNC_MARKER_SEEK_READ_FAILURE_BACKOFF_MAX_MS = 2_000;
+
+let syncMarkerAutoReadInterval: number | null = null;
+let syncMarkerScheduledReadTimeout: number | null = null;
+let lastSyncMarkerAutoFailureLogTime = 0;
+let lastSyncMarkerCaptureStartedAt = 0;
+let youtubePlayerStateRevision = 0;
+let youtubePlayerSeekRevision = 0;
+let pendingSyncMarkerReanchor: {
+	videoId: string;
+	kind: 'initial' | 'adjustment';
+	measurementMs: number;
+	observedAt: number;
+} | null = null;
+type SyncMarkerSeekObservation = {
+	markerTimestampMs: number;
+	videoTimeSeconds: number;
+	timelineOriginMs: number;
+	observedAt: number;
+};
+
+let nextSyncMarkerSeekID = 0;
+let pendingSyncMarkerSeek: {
+	id: number;
+	videoId: string;
+	targetMarkerTimestampMs: number;
+	startedAt: number;
+	seekIssuedAt: number;
+	requestedVideoTimeSeconds: number;
+	phase: 'initial' | 'verification';
+	correctionAttempts: number;
+	observations: SyncMarkerSeekObservation[];
+	playedSinceSeekMs: number;
+	playingSince: number | null;
+	playbackRateAtStart: number;
+	observationAttempts: number;
+	readFailures: number;
+	seekRequestID: number;
+} | null = null;
+
+let internallySelectedFight: { requestID: number; fightID: number } | null = null;
+let internallySelectedVideo: { requestID: number; videoID: string } | null = null;
+
+const reviewSeekCoordinator = new ReviewSeekCoordinator(
+	executeReviewSeek,
+	state => {
+		if (state?.phase === 'failed' || state?.phase === 'unavailable') {
+			syncPrototypeStatusTone.value = 'error';
+			syncPrototypeStatus.value = state.message || 'Video seek is unavailable';
+		}
+	},
+);
 
 const PLAYER_SHORTCUTS = [
 	{ keys: 'Space / K', action: 'Play or pause' },
@@ -172,6 +265,9 @@ let hotkeySeekState: {
 	targetSeconds: number;
 	dispatchedFromSeconds: number | null;
 	dispatchedTargetSeconds: number | null;
+	dispatchedAt: number | null;
+	playbackRateAtDispatch: number;
+	wasPlayingAtDispatch: boolean;
 	lastInputAt: number;
 } | null = null;
 
@@ -285,8 +381,22 @@ function pauseVideo() {
 	}
 }
 
-function performSeek(seconds: number) {
+function dispatchPlayerSeek(seconds: number) {
+	youtubePlayerSeekRevision++;
 	player.value?.seek(seconds);
+	// The iframe does not consistently emit a state transition for paused or
+	// short seeks. Start the guarded observation loop promptly for synchronized
+	// seeks; ordinary relative seeks only need the slower anchor-maintenance read.
+	scheduleAutomaticSyncMarkerRead(
+		getPendingSyncMarkerSeek()
+			? SYNC_MARKER_SEEK_FIRST_READ_DELAY_MS
+			: SYNC_MARKER_SEEK_SETTLE_READ_DELAY_MS,
+	);
+}
+
+function dispatchPlayerLoad(videoID: string, autoplay: boolean, seconds: number) {
+	youtubePlayerSeekRevision++;
+	player.value?.load(videoID, autoplay, seconds);
 }
 
 function clearHotkeySeekTimeouts() {
@@ -342,11 +452,6 @@ function clearQueuedHotkeySeek() {
 	hotkeySeekState = null;
 	hotkeySeekHoldState = null;
 	hideQueuedSeekIndicator();
-}
-
-function seekTo(seconds: number) {
-	clearQueuedHotkeySeek();
-	performSeek(seconds);
 }
 
 function togglePlayPause() {
@@ -440,7 +545,19 @@ function isDispatchedHotkeySeekComplete(currentTime: number) {
 	const fromSeconds = state.dispatchedFromSeconds;
 	const targetSeconds = state.dispatchedTargetSeconds;
 	const tolerance = getSeekConfirmationTolerance(fromSeconds, targetSeconds);
-	if (targetSeconds > fromSeconds) return currentTime >= targetSeconds - tolerance;
+	if (targetSeconds > fromSeconds) {
+		if (currentTime < targetSeconds - tolerance) return false;
+		if (!state.wasPlayingAtDispatch || state.dispatchedAt === null) return true;
+
+		// Crossing a forward target is not proof that YouTube accepted the seek: for
+		// a one-second hotkey the video can naturally reach it before the retry. A
+		// successful seek must put playback measurably ahead of that natural path.
+		const elapsedSeconds = Math.max(0, performance.now() - state.dispatchedAt) / 1000;
+		const naturallyReachableTime = fromSeconds
+			+ elapsedSeconds * state.playbackRateAtDispatch
+			+ 0.2;
+		return currentTime > naturallyReachableTime;
+	}
 	if (targetSeconds < fromSeconds) return currentTime <= targetSeconds + tolerance;
 	return Math.abs(currentTime - targetSeconds) <= tolerance;
 }
@@ -456,7 +573,10 @@ function dispatchQueuedHotkeySeek() {
 	state.targetSeconds = clampSeekTarget(state.targetSeconds);
 	state.dispatchedFromSeconds = player.value.getCurrentTime();
 	state.dispatchedTargetSeconds = state.targetSeconds;
-	performSeek(state.targetSeconds);
+	state.dispatchedAt = performance.now();
+	state.playbackRateAtDispatch = player.value.getPlaybackRate();
+	state.wasPlayingAtDispatch = isPlayerPlaying.value;
+	void requestVideoTimeSeek(state.targetSeconds, 'hotkey', false);
 
 	hotkeySeekRetryTimeout = window.setTimeout(() => {
 		hotkeySeekRetryTimeout = null;
@@ -497,6 +617,7 @@ function onHotkeySeekTimeUpdate(currentTime: number) {
 	) {
 		state.dispatchedFromSeconds = null;
 		state.dispatchedTargetSeconds = null;
+		state.dispatchedAt = null;
 		dispatchQueuedHotkeySeek();
 		return;
 	}
@@ -506,6 +627,8 @@ function onHotkeySeekTimeUpdate(currentTime: number) {
 
 function seekByDelta(delta: number) {
 	if (!player.value) return false;
+	reviewSeekCoordinator.cancel('Relative hotkey seek');
+	cancelPendingSynchronizedSeek('Relative hotkey seek superseded synchronized seek');
 
 	if (!hotkeySeekState) {
 		const currentTime = player.value.getCurrentTime();
@@ -514,6 +637,9 @@ function seekByDelta(delta: number) {
 			targetSeconds: currentTime,
 			dispatchedFromSeconds: null,
 			dispatchedTargetSeconds: null,
+			dispatchedAt: null,
+			playbackRateAtDispatch: player.value.getPlaybackRate(),
+			wasPlayingAtDispatch: isPlayerPlaying.value,
 			lastInputAt: Date.now(),
 		};
 	}
@@ -532,7 +658,11 @@ function seekByDelta(delta: number) {
 function seekByCurrentPlayerTime(delta: number) {
 	if (!player.value) return false;
 	const currentTime = player.value.getCurrentTime();
-	seekTo(clampSeekTarget(currentTime + delta));
+	// Frame stepping intentionally bypasses the queued seek coordinator. Its tiny,
+	// immediate steps are the useful behavior and must not wait for marker checks.
+	reviewSeekCoordinator.cancel('Frame step');
+	cancelPendingSynchronizedSeek('Frame step');
+	dispatchPlayerSeek(clampSeekTarget(currentTime + delta));
 	return true;
 }
 
@@ -596,6 +726,11 @@ function closeHotkeyGuideOnOutsidePointer(event: PointerEvent) {
 	if (!isHotkeyGuideOpen.value || !(event.target instanceof Node)) return;
 	if (hotkeyGuide.value?.contains(event.target) || hotkeyGuideButton.value?.contains(event.target)) return;
 	isHotkeyGuideOpen.value = false;
+}
+
+function onReviewsVisibilityChange() {
+	if (document.visibilityState !== 'visible') return;
+	if (getPendingSyncMarkerSeek()) scheduleAutomaticSyncMarkerRead(0);
 }
 
 function onFullscreenButtonClick(event: MouseEvent) {
@@ -743,79 +878,98 @@ watch(videoContainer, (container) => {
 });
 
 let lastFightRelativeTime = 0;
-function onVideoIdChanged() {
-	clearQueuedHotkeySeek();
-	if (player.value) {
-		const videoId = reviewsStore.getSelectedVideoId;
-		if (videoId) {
-			if (!playerLoaded) return;
+function requestSelectedVideoPlayback(source: ReviewSeekSource = 'video-selection') {
+	const videoID = reviewsStore.getSelectedVideoId;
+	if (!videoID || !player.value || !playerLoaded) return;
 
-			const directSeekSeconds = reviewsStore.consumePendingDirectVideoSeekSeconds();
-			if (directSeekSeconds !== null) {
-				log.info(`Loading video ${videoId} from direct request, seeking to ${directSeekSeconds}s`);
-				player.value.load(videoId, true, directSeekSeconds);
-			} else if (!reviewsStore.selectedReportCode) {
-				log.info(`Loading video ${videoId} without report context, seeking to 0s`);
-				player.value.load(videoId, true, 0);
-			} else {
-				const relativeFightStart = reviewsStore.getFightStartRelativeToVideo / 1000; // in seconds
-				const seekTime = relativeFightStart + YOUTUBE_DELAY_OFFSET + lastFightRelativeTime;
-
-				log.info(`Loading video ${videoId}, seeking to ${seekTime}s (relativeFightStart: ${relativeFightStart}s, lastFightRelativeTime: ${lastFightRelativeTime}s)`);
-
-				player.value.load(videoId, true, seekTime);
-			}
-		} else {
-			player.value.stop();
-		}
+	const directSeekSeconds = reviewsStore.consumePendingDirectVideoSeekSeconds();
+	if (directSeekSeconds !== null) {
+		void requestVideoTimeSeek(directSeekSeconds, 'deep-link', true, videoID);
+		return;
 	}
+
+	const fightID = reviewsStore.selectedFightID;
+	if (fightID) {
+		void requestFightSeek(fightID, lastFightRelativeTime, source, videoID);
+		return;
+	}
+
+	const reportStartTime = reviewsStore.getSelectedReport?.startTime
+		?? reviewsStore.getReportDetails?.startTime;
+	const reportVideoTime = Number.isFinite(reportStartTime)
+		? Math.max(0, getVideoTimeForAbsoluteLogTimestamp(reportStartTime!))
+		: 0;
+	void requestVideoTimeSeek(reportVideoTime, source, true, videoID);
 }
 
 watch(() => reviewsStore.getSelectedVideoId, (newId) => {
+	if (syncPrototypeAnchor.value && syncPrototypeAnchor.value.videoId !== newId) {
+		syncPrototypeAnchor.value = null;
+		syncPrototypeStatus.value = '';
+	}
+	pendingSyncMarkerReanchor = null;
+	cancelPendingSynchronizedSeek('Selected video changed');
 	if (!newId) {
+		internallySelectedVideo = null;
+		reviewSeekCoordinator.cancel('No video selected');
 		isPlayerControlDockHovered.value = false;
 		isPlayerControlDockFocused.value = false;
 		isHotkeyGuideOpen.value = false;
 		keepPlayerControlsVisible();
+		player.value?.stop();
+		return;
 	}
-	onVideoIdChanged();
+	if (
+		internallySelectedVideo?.videoID === newId
+		&& reviewSeekCoordinator.state?.requestID === internallySelectedVideo.requestID
+	) {
+		internallySelectedVideo = null;
+		return;
+	}
+	internallySelectedVideo = null;
+	requestSelectedVideoPlayback();
 });
 
-watch(() => reviewsStore.pendingDirectVideoSeekSeconds, (newId) => {
+watch(() => reviewsStore.pendingDirectVideoSeekSeconds, () => {
 	if (reviewsStore.pendingDirectVideoSeekSeconds !== null) {
-		onVideoIdChanged();
+		requestSelectedVideoPlayback('deep-link');
 	}
 });
 
-let pendingComparisonSeek: { fightID: number; timestampSeconds: number } | null = null;
 watch(() => reviewsStore.selectedFightID, (newVal) => {
-	const comparisonTimestamp = pendingComparisonSeek?.fightID === newVal
-		? pendingComparisonSeek.timestampSeconds
-		: 0;
-	lastFightRelativeTime = comparisonTimestamp;
-	if (newVal && reviewsStore.selectedVideoInfo) {
-		const relativeFightStart = reviewsStore.getFightStartRelativeToVideo / 1000; // in seconds
-
-		const seekTime = relativeFightStart + YOUTUBE_DELAY_OFFSET + comparisonTimestamp;
-
-		log.info(`New fight selected, seeking to ${seekTime}s (relativeFightStart: ${relativeFightStart}s)`);
-
-		seekTo(seekTime);
+	if (
+		newVal
+		&& internallySelectedFight?.fightID === newVal
+		&& reviewSeekCoordinator.state?.requestID === internallySelectedFight.requestID
+	) {
+		internallySelectedFight = null;
+		return;
 	}
+	internallySelectedFight = null;
+	lastFightRelativeTime = 0;
+	if (newVal) void requestFightSeek(newVal, 0, 'fight-selection');
+	else reviewSeekCoordinator.cancel('No fight selected');
 });
 
-watch(() => reviewsStore.selectedReportCode, (newVal, oldVal) => {
+watch(() => reviewsStore.selectedReportCode, async (newVal, oldVal) => {
 	if (newVal !== oldVal) {
 		lastFightRelativeTime = 0;
-
-		if (newVal && reviewsStore.selectedVideoInfo && reviewsStore.videoList.some(v => v.id === reviewsStore.selectedVideoInfo?.id)) {
-			const relativeFightStart = reviewsStore.getFightStartRelativeToVideo / 1000; // in seconds
-
-			const seekTime = relativeFightStart + YOUTUBE_DELAY_OFFSET;
-
-			log.info(`New report selected, seeking to ${seekTime}s (relativeFightStart: ${relativeFightStart}s)`);
-
-			seekTo(seekTime);
+		internallySelectedFight = null;
+		internallySelectedVideo = null;
+		reviewSeekCoordinator.cancel('Selected report changed');
+		cancelPendingSynchronizedSeek('Selected report changed');
+		await nextTick();
+		if (reviewsStore.selectedReportCode !== newVal) return;
+		if (newVal && reviewsStore.selectedVideoInfo) {
+			const reportStart = reviewsStore.getSelectedReport?.startTime
+				?? reviewsStore.getReportDetails?.startTime;
+			if (Number.isFinite(reportStart)) {
+				void requestVideoTimeSeek(
+					getVideoTimeForAbsoluteLogTimestamp(reportStart!),
+					'report-selection',
+					true,
+				);
+			}
 		}
 	}
 });
@@ -832,6 +986,10 @@ const currentVideoTime = ref(0);
 
 watch(playerIframe, (el) => {
 	clearQueuedHotkeySeek();
+	clearScheduledSyncMarkerRead();
+	reviewSeekCoordinator.cancel('YouTube player instance changed');
+	cancelPendingSynchronizedSeek('YouTube player instance changed');
+	youtubePlayerStateRevision++;
 	isPlayerPlaying.value = false;
 	keepPlayerControlsVisible();
 	if (player.value) {
@@ -851,12 +1009,19 @@ watch(playerIframe, (el) => {
 			height: '100%',
 			host: "https://www.youtube-nocookie.com",
 			keyboard: false,
-			timeupdateFrequency: 200, // ms
+			timeupdateFrequency: 1000 / VIDEO_TIME_UPDATE_HZ,
 			width: '100%',
 		});
 
 		player.value.on('unplayable', ({ videoId, errorCode, data }) => {
 			clearQueuedHotkeySeek();
+			const seekState = reviewSeekCoordinator.state;
+			pendingSyncMarkerSeek = null;
+			if (seekState) reviewSeekCoordinator.finish(
+				seekState.requestID,
+				'failed',
+				'YouTube could not play the selected video',
+			);
 			log.info("YouTube video unplayable:", videoId, errorCode);
 			log.info(player.value._player)
 			log.info("playerInfo", player.value?._player?.playerInfo)
@@ -875,7 +1040,16 @@ watch(playerIframe, (el) => {
 		});
 
 		player.value.on('error', (error) => {
+			youtubePlayerStateRevision++;
+			clearScheduledSyncMarkerRead();
 			clearQueuedHotkeySeek();
+			pendingSyncMarkerSeek = null;
+			const seekState = reviewSeekCoordinator.state;
+			if (seekState) reviewSeekCoordinator.finish(
+				seekState.requestID,
+				'failed',
+				'YouTube player error',
+			);
 			log.info("YouTube embed error:", error);
 			alert(`Error embedding video. Error code: ${error}`);
 		});
@@ -883,32 +1057,75 @@ watch(playerIframe, (el) => {
 		player.value.on('timeupdate', (seconds) => {
 			currentVideoTime.value = seconds;
 			onHotkeySeekTimeUpdate(seconds);
+			rememberCurrentFightTime();
+		});
+
+		player.value.on('unstarted', () => {
+			youtubePlayerStateRevision++;
+			markPendingSyncMarkerSeekStopped();
+			isPlayerPlaying.value = false;
+			if (getPendingSyncMarkerSeek()) {
+				scheduleAutomaticSyncMarkerRead(SYNC_MARKER_SEEK_OBSERVATION_INTERVAL_MS);
+			} else {
+				clearScheduledSyncMarkerRead();
+			}
+			keepPlayerControlsVisible();
 		});
 
 		player.value.on('cued', () => {
-			playVideo();
+			youtubePlayerStateRevision++;
+			markPendingSyncMarkerSeekStopped();
+			isPlayerPlaying.value = false;
+			keepPlayerControlsVisible();
+			scheduleAutomaticSyncMarkerRead();
 		});
 
 		player.value.on('ready', () => {
+			youtubePlayerStateRevision++;
 			log.info('YouTube player ready');
 			playerLoaded = true;
 			player.value.mute();
-			onVideoIdChanged();
+			requestSelectedVideoPlayback();
 			reviewsStore.flushPendingTimelineWindowActions();
 		});
 
 		player.value.on('playing', () => {
+			youtubePlayerStateRevision++;
 			isPlayerPlaying.value = true;
+			markPendingSyncMarkerSeekPlaying();
 			revealPlayerControls();
+			scheduleAutomaticSyncMarkerRead();
 		});
 
 		const keepControlsVisibleWhileStopped = () => {
 			isPlayerPlaying.value = false;
 			keepPlayerControlsVisible();
 		};
-		player.value.on('paused', keepControlsVisibleWhileStopped);
-		player.value.on('buffering', keepControlsVisibleWhileStopped);
-		player.value.on('ended', keepControlsVisibleWhileStopped);
+		player.value.on('paused', () => {
+			youtubePlayerStateRevision++;
+			markPendingSyncMarkerSeekStopped();
+			keepControlsVisibleWhileStopped();
+			scheduleAutomaticSyncMarkerRead();
+		});
+		player.value.on('buffering', () => {
+			youtubePlayerStateRevision++;
+			markPendingSyncMarkerSeekStopped();
+			keepControlsVisibleWhileStopped();
+			if (getPendingSyncMarkerSeek()) {
+				scheduleAutomaticSyncMarkerRead(SYNC_MARKER_SEEK_OBSERVATION_INTERVAL_MS);
+			} else {
+				clearScheduledSyncMarkerRead();
+			}
+		});
+		player.value.on('ended', () => {
+			youtubePlayerStateRevision++;
+			markPendingSyncMarkerSeekStopped();
+			keepControlsVisibleWhileStopped();
+			scheduleAutomaticSyncMarkerRead();
+		});
+		player.value.on('playbackRateChange', (rate) => {
+			updatePendingSyncMarkerSeekPlaybackRate(rate);
+		});
 	}
 });
 
@@ -917,6 +1134,10 @@ onMounted(async () => {
 	window.addEventListener('blur', closeHotkeyGuide);
 	window.addEventListener('resize', publishPlayerPointerBounds);
 	document.addEventListener('pointerdown', closeHotkeyGuideOnOutsidePointer);
+	document.addEventListener('visibilitychange', onReviewsVisibilityChange);
+	syncMarkerAutoReadInterval = window.setInterval(() => {
+		void captureReviewSyncMarker('periodic');
+	}, SYNC_MARKER_AUTO_READ_INTERVAL_MS);
 	try {
 		isPlayerFullscreen.value = await ipc.invoke(IPC_EVENTS.YOUTUBE_PLAYER_FULLSCREEN_STATUS_GET) === true;
 	} catch (error) {
@@ -951,6 +1172,14 @@ onBeforeUnmount(() => {
 	window.removeEventListener('blur', closeHotkeyGuide);
 	window.removeEventListener('resize', publishPlayerPointerBounds);
 	document.removeEventListener('pointerdown', closeHotkeyGuideOnOutsidePointer);
+	document.removeEventListener('visibilitychange', onReviewsVisibilityChange);
+	clearScheduledSyncMarkerRead();
+	cancelPendingSynchronizedSeek('Reviews closed');
+	reviewSeekCoordinator.cancel('Reviews closed');
+	if (syncMarkerAutoReadInterval !== null) {
+		window.clearInterval(syncMarkerAutoReadInterval);
+		syncMarkerAutoReadInterval = null;
+	}
 	playerBoundsResizeObserver?.disconnect();
 	playerBoundsResizeObserver = null;
 	ipc.send(IPC_EVENTS.YOUTUBE_PLAYER_POINTER_BOUNDS_SET, null);
@@ -1084,37 +1313,257 @@ watch(reviewsStore.videoList, (newList) => {
 
 const YOUTUBE_DELAY_OFFSET = 5;
 
-// 0 - fight end, in seconds
-function seekToFightTimestamp(fightTimestamp) {
-	if (!player.value) return;
-	const relativeFightStart = reviewsStore.getFightStartRelativeToVideo / 1000; // in seconds
-
-	const seekTime = relativeFightStart + fightTimestamp + YOUTUBE_DELAY_OFFSET;
-
-	log.info(`Seeking to ${seekTime}s in video (relativeFightStart: ${relativeFightStart}s, fightTimestamp: ${fightTimestamp}s)`);
-
-	seekTo(seekTime);
-	playVideo();
+function getActiveSyncPrototypeAnchor() {
+	const anchor = syncPrototypeAnchor.value;
+	return anchor?.videoId === reviewsStore.getSelectedVideoId ? anchor : null;
 }
 
-async function seekToPullTimestamp(fightID: number, timestampSeconds: number) {
-	if (!reviewsStore.getReportDetails?.fights.some(fight => fight.id === fightID)) return;
-	pendingComparisonSeek = { fightID, timestampSeconds };
+function getVideoTimeForAbsoluteLogTimestamp(timestampMs: number): number {
+	const anchor = getActiveSyncPrototypeAnchor();
+	if (anchor) {
+		return anchor.videoTimeSeconds + (timestampMs - anchor.timestampMs) / 1000;
+	}
 
-	if (reviewsStore.selectedFightID !== fightID) {
-		reviewsStore.selectedFightID = fightID;
+	const videoStartTime = reviewsStore.selectedVideoInfo?.startTime || 0;
+	return (timestampMs - videoStartTime) / 1000 + YOUTUBE_DELAY_OFFSET;
+}
+
+function getAbsoluteLogTimestampForVideoTime(videoTimeSeconds: number): number {
+	const anchor = getActiveSyncPrototypeAnchor();
+	if (anchor) {
+		return anchor.timestampMs + (videoTimeSeconds - anchor.videoTimeSeconds) * 1000;
+	}
+
+	const videoStartTime = reviewsStore.selectedVideoInfo?.startTime || 0;
+	return videoStartTime + (videoTimeSeconds - YOUTUBE_DELAY_OFFSET) * 1000;
+}
+
+function videoContainsTimestamp(video: YouTubeVideo, timestampMs: number): boolean {
+	return video.startTime <= timestampMs
+		&& getReviewVideoEndTime(video) >= timestampMs;
+}
+
+function getVideoForFightTimestamp(
+	timestampMs: number,
+	preferredVideoID?: string,
+): YouTubeVideo | null {
+	const candidates = reviewsStore.videoList;
+	const preferred = preferredVideoID
+		? candidates.find(video => video.id === preferredVideoID) || null
+		: null;
+	if (preferredVideoID) {
+		return preferred && videoContainsTimestamp(preferred, timestampMs)
+			? preferred
+			: null;
+	}
+
+	const current = reviewsStore.selectedVideoInfo;
+	if (current && candidates.some(video => video.id === current.id) && videoContainsTimestamp(current, timestampMs)) {
+		return current;
+	}
+
+	return candidates.find(video => videoContainsTimestamp(video, timestampMs)) || null;
+}
+
+async function executeReviewSeek(
+	intent: ReviewSeekIntent,
+	context: ReviewSeekExecutionContext,
+) {
+	const activePlayer = player.value;
+	if (!activePlayer || !playerLoaded) {
+		return { phase: 'unavailable' as const, message: 'YouTube player is still loading' };
+	}
+
+	if (intent.kind === 'video-time') {
+		const video = reviewsStore.videoList.find(candidate => candidate.id === intent.videoID)
+			|| reviewsStore.selectedVideoInfo;
+		if (!video || video.id !== intent.videoID) {
+			return { phase: 'unavailable' as const, message: 'The selected stream is no longer available' };
+		}
+		const videoDurationSeconds = video.duration > 0 ? video.duration / 1000 : Number.POSITIVE_INFINITY;
+		if (
+			!Number.isFinite(intent.videoTimeSeconds)
+			|| intent.videoTimeSeconds < 0
+			|| intent.videoTimeSeconds > videoDurationSeconds
+		) {
+			return { phase: 'unavailable' as const, message: 'That timestamp is outside the selected stream' };
+		}
+		if (!context.isCurrent()) return { phase: 'unavailable' as const };
+
+		cancelPendingSynchronizedSeek('Video-time seek');
+		context.setPhase(activePlayer.getVideoId() === video.id ? 'seeking' : 'loading');
+		if (activePlayer.getVideoId() === video.id) {
+			dispatchPlayerSeek(intent.videoTimeSeconds);
+			if (intent.play) activePlayer.play();
+		} else {
+			dispatchPlayerLoad(video.id, intent.play, intent.videoTimeSeconds);
+		}
+		return { phase: 'completed' as const };
+	}
+
+	const reportDetails = reviewsStore.getReportDetails;
+	const fight = reportDetails?.fights?.find(candidate => candidate.id === intent.fightID);
+	const reportStartTime = reviewsStore.getSelectedReport?.startTime ?? reportDetails?.startTime;
+	if (!fight || !Number.isFinite(reportStartTime)) {
+		return { phase: 'unavailable' as const, message: 'The requested pull is no longer available' };
+	}
+
+	const fightDurationSeconds = Math.max(0, (fight.endTime - fight.startTime) / 1000);
+	const fightTimestampSeconds = Math.max(
+		0,
+		Math.min(Number(intent.fightTimestampSeconds) || 0, fightDurationSeconds),
+	);
+	if (reviewsStore.selectedFightID !== fight.id) {
+		internallySelectedFight = { requestID: context.requestID, fightID: fight.id };
+		reviewsStore.selectedFightID = fight.id;
 		await nextTick();
+		if (!context.isCurrent()) return { phase: 'unavailable' as const };
+	}
+
+	const targetMarkerTimestampMs = reportStartTime! + fight.startTime + fightTimestampSeconds * 1000;
+	const targetVideo = getVideoForFightTimestamp(targetMarkerTimestampMs, intent.preferredVideoID);
+	if (!targetVideo) {
+		const loadedVideoID = activePlayer.getVideoId();
+		const loadedVideo = loadedVideoID
+			? reviewsStore.videoList.find(video => video.id === loadedVideoID) || null
+			: null;
+		if (
+			intent.preferredVideoID
+			&& loadedVideo
+			&& reviewsStore.getSelectedVideoId !== loadedVideo.id
+		) {
+			internallySelectedVideo = { requestID: context.requestID, videoID: loadedVideo.id };
+			reviewsStore.setSelectedVideoInfo(loadedVideo);
+			await nextTick();
+		}
+		return {
+			phase: 'unavailable' as const,
+			message: 'No stream contains that point in the pull',
+		};
+	}
+
+	if (reviewsStore.getSelectedVideoId !== targetVideo.id) {
+		internallySelectedVideo = { requestID: context.requestID, videoID: targetVideo.id };
+		reviewsStore.setSelectedVideoInfo(targetVideo);
+		await nextTick();
+		if (!context.isCurrent()) return { phase: 'unavailable' as const };
+	}
+
+	const videoTimeSeconds = getVideoTimeForAbsoluteLogTimestamp(targetMarkerTimestampMs);
+	const videoDurationSeconds = targetVideo.duration > 0
+		? targetVideo.duration / 1000
+		: Number.POSITIVE_INFINITY;
+	if (
+		!Number.isFinite(videoTimeSeconds)
+		|| videoTimeSeconds < 0
+		|| videoTimeSeconds > videoDurationSeconds
+	) {
+		return {
+			phase: 'unavailable' as const,
+			message: 'The synchronized timestamp is outside the selected stream',
+		};
+	}
+	if (!context.isCurrent()) return { phase: 'unavailable' as const };
+
+	lastFightRelativeTime = fightTimestampSeconds;
+	clearQueuedHotkeySeek();
+	cancelPendingSynchronizedSeek('New absolute seek');
+	if (intent.synchronize) {
+		queueSyncMarkerSeek(
+			targetMarkerTimestampMs,
+			videoTimeSeconds,
+			context.requestID,
+			targetVideo.id,
+		);
+	}
+
+	const loadedVideoID = activePlayer.getVideoId();
+	context.setPhase(loadedVideoID === targetVideo.id ? 'seeking' : 'loading');
+	log.info('Dispatching coordinated review seek', {
+		requestID: context.requestID,
+		source: intent.source,
+		fightID: fight.id,
+		fightTimestampSeconds,
+		videoID: targetVideo.id,
+		videoTimeSeconds,
+		loadRequired: loadedVideoID !== targetVideo.id,
+	});
+	if (loadedVideoID === targetVideo.id) {
+		dispatchPlayerSeek(videoTimeSeconds);
+		if (intent.play) activePlayer.play();
 	} else {
-		lastFightRelativeTime = timestampSeconds;
+		dispatchPlayerLoad(targetVideo.id, intent.play, videoTimeSeconds);
 	}
 
-	if (!reviewsStore.videoList.some(video => video.id === reviewsStore.getSelectedVideoId)) {
-		reviewsStore.setSelectedVideoInfo(reviewsStore.videoList[0] || null);
-		await nextTick();
-	}
+	return { phase: intent.synchronize ? 'verifying' as const : 'completed' as const };
+}
 
-	seekToFightTimestamp(timestampSeconds);
-	pendingComparisonSeek = null;
+function requestVideoTimeSeek(
+	videoTimeSeconds: number,
+	source: ReviewSeekSource,
+	play: boolean,
+	videoID = reviewsStore.getSelectedVideoId,
+) {
+	if (!videoID || !player.value || !playerLoaded) return Promise.resolve(null);
+	return reviewSeekCoordinator.request({
+		kind: 'video-time',
+		source,
+		videoID,
+		videoTimeSeconds,
+		play,
+		synchronize: false,
+	});
+}
+
+function requestFightSeek(
+	fightID: number,
+	fightTimestampSeconds: number,
+	source: ReviewSeekSource,
+	preferredVideoID?: string,
+) {
+	if (!player.value || !playerLoaded) return Promise.resolve(null);
+	return reviewSeekCoordinator.request({
+		kind: 'fight-time',
+		source,
+		fightID,
+		fightTimestampSeconds,
+		preferredVideoID,
+		play: true,
+		synchronize: true,
+	});
+}
+
+// 0 - fight end, in seconds
+function seekToFightTimestamp(fightTimestamp: number, source: ReviewSeekSource = 'timeline') {
+	const fightID = reviewsStore.selectedFightID;
+	if (!fightID) return;
+	void requestFightSeek(fightID, fightTimestamp, source);
+}
+
+function seekToPullTimestamp(
+	fightID: number,
+	timestampSeconds: number,
+	source: ReviewSeekSource = 'comparison',
+) {
+	if (!reviewsStore.getReportDetails?.fights.some(fight => fight.id === fightID)) return;
+	void requestFightSeek(fightID, timestampSeconds, source);
+}
+
+function rememberCurrentFightTime(): void {
+	if (!reviewsStore.selectedFightID || !reviewsStore.getFightDuration) return;
+	if (player.value?.getVideoId() !== reviewsStore.getSelectedVideoId) return;
+	const pendingSeek = getPendingSyncMarkerSeek();
+	if (
+		pendingSeek
+		&& Date.now() - pendingSeek.seekIssuedAt < 2_000
+		&& Math.abs(currentVideoTime.value - pendingSeek.requestedVideoTimeSeconds) > 2
+	) return;
+	const currentLogTimestamp = getAbsoluteLogTimestampForVideoTime(currentVideoTime.value);
+	const fightRelativeTime = (currentLogTimestamp - reviewsStore.getFightStartTime) / 1000;
+	lastFightRelativeTime = Math.max(
+		0,
+		Math.min(fightRelativeTime, reviewsStore.getFightDuration / 1000),
+	);
 }
 
 const copyReviewLinkStatus = ref('');
@@ -1169,21 +1618,18 @@ async function copyReviewLink(event?: MouseEvent) {
 const currentFightCursor = computed(() => {
     if (!player.value || !reviewsStore.getFightDuration) return 0;
 
-    // Calculate fight start and video start in seconds
-    const fightStartRelativeToVideo = reviewsStore.getFightStartRelativeToVideo / 1000; // in seconds
-
-    // Calculate current fight-relative time
-    const fightRelativeTime = currentVideoTime.value - fightStartRelativeToVideo - YOUTUBE_DELAY_OFFSET;
+	const currentLogTimestamp = getAbsoluteLogTimestampForVideoTime(currentVideoTime.value);
+	const fightRelativeTime = (currentLogTimestamp - reviewsStore.getFightStartTime) / 1000;
 
     // Clamp between 0 and fightDuration (in seconds)
     const fightDurationSec = reviewsStore.getFightDuration / 1000;
     const clamped = Math.max(0, Math.min(fightRelativeTime, fightDurationSec));
-	lastFightRelativeTime = clamped;
 
     // Return as percent (0 to 1)
 	// log.debug(`Current fight cursor: ${clamped}s / ${fightDurationSec}s = ${(clamped / fightDurationSec * 100).toFixed(2)}%`);
     return clamped / fightDurationSec;
 });
+const timelinePlayback = createReviewTimelinePlayback(currentFightCursor, isPlayerPlaying);
 
 const phaseTransitions = computed(() => {
 	const selectedReportDetails = reviewsStore.getReportDetails;
@@ -1269,6 +1715,7 @@ function buildTimelineWindowContext(includeAllCachedPulls = false): ReviewTimeli
 		fightStartTime: reviewsStore.getFightStartTimeOffset,
 		fightDuration: reviewsStore.getFightDuration,
 		cursorPercent: currentFightCursor.value,
+		playing: isPlayerPlaying.value,
 		viewMode: reviewsStore.timelineViewMode,
 		title: `${fight.name} · Fight #${fight.id}`,
 	};
@@ -1306,11 +1753,11 @@ function handleTimelineWindowAction(action: ReviewTimelineWindowAction): boolean
 	switch (action.type) {
 		case 'seek':
 			if (!player.value || !playerLoaded) return false;
-			seekToFightTimestamp(action.timestampSeconds);
+			seekToFightTimestamp(action.timestampSeconds, 'detached-timeline');
 			return true;
 		case 'seek-pull':
 			if (!player.value || !playerLoaded) return false;
-			void seekToPullTimestamp(action.fightID, action.timestampSeconds);
+			seekToPullTimestamp(action.fightID, action.timestampSeconds, 'detached-timeline');
 			return true;
 		case 'open-fight':
 			openWCLFight(action.fightID);
@@ -1320,6 +1767,10 @@ function handleTimelineWindowAction(action: ReviewTimelineWindowAction): boolean
 			return true;
 		case 'open-pull-death':
 			openWCLPullDeath(action.fightID, action.deathID);
+			return true;
+		case 'toggle-playback':
+			if (!player.value || !playerLoaded) return false;
+			togglePlayPause();
 			return true;
 		case 'view-mode':
 			reviewsStore.timelineViewMode = action.viewMode;
@@ -1356,6 +1807,10 @@ watch(currentFightCursor, (cursorPercent) => {
 	if (reviewsStore.timelineWindowDetached) ipc.send(IPC_EVENTS.TIMELINE_WINDOW_CURSOR_SET, cursorPercent);
 });
 
+watch(isPlayerPlaying, (playing) => {
+	if (reviewsStore.timelineWindowDetached) ipc.send(IPC_EVENTS.TIMELINE_WINDOW_PLAYBACK_SET, playing);
+});
+
 function openYoutubeLink(videoId: string, timestampSeconds?: number) {
 	ipc.send(IPC_EVENTS.YOUTUBE_OPEN_LINK, videoId, timestampSeconds);
 }
@@ -1380,6 +1835,677 @@ function openSelectedYoutubeVideo(event: MouseEvent) {
 	if (event.detail > 1) return;
 	const selectedVideo = reviewsStore.selectedVideoInfo;
 	if (selectedVideo) openStreamInBrowser(selectedVideo);
+}
+
+function formatSyncVideoTime(seconds: number): string {
+	const safeSeconds = Math.max(0, seconds);
+	const hours = Math.floor(safeSeconds / 3600);
+	const minutes = Math.floor((safeSeconds % 3600) / 60);
+	const wholeSeconds = Math.floor(safeSeconds % 60);
+	const deciseconds = Math.floor((safeSeconds % 1) * 10);
+	return hours > 0
+		? `${hours}:${minutes.toString().padStart(2, '0')}:${wholeSeconds.toString().padStart(2, '0')}.${deciseconds}`
+		: `${minutes}:${wholeSeconds.toString().padStart(2, '0')}.${deciseconds}`;
+}
+
+function formatSignedSeconds(seconds: number): string {
+	return `${seconds >= 0 ? '+' : ''}${seconds.toFixed(1)}s`;
+}
+
+type ReviewSyncCaptureTrigger = 'manual' | 'periodic' | 'player-state';
+
+function clearScheduledSyncMarkerRead(): void {
+	if (syncMarkerScheduledReadTimeout === null) return;
+	window.clearTimeout(syncMarkerScheduledReadTimeout);
+	syncMarkerScheduledReadTimeout = null;
+}
+
+function cancelPendingSynchronizedSeek(reason: string): void {
+	const pending = pendingSyncMarkerSeek;
+	pendingSyncMarkerSeek = null;
+	if (pending) reviewSeekCoordinator.finish(pending.seekRequestID, 'unverified', reason);
+}
+
+function queueSyncMarkerSeek(
+	targetMarkerTimestampMs: number,
+	requestedVideoTimeSeconds: number,
+	seekRequestID: number,
+	videoId: string,
+): void {
+	pendingSyncMarkerSeek = null;
+	if (
+		!videoId
+		|| !Number.isFinite(targetMarkerTimestampMs)
+		|| !Number.isFinite(requestedVideoTimeSeconds)
+	) return;
+
+	const now = Date.now();
+	pendingSyncMarkerSeek = {
+		id: ++nextSyncMarkerSeekID,
+		videoId,
+		targetMarkerTimestampMs: targetMarkerTimestampMs!,
+		startedAt: now,
+		seekIssuedAt: now,
+		requestedVideoTimeSeconds,
+		phase: 'initial',
+		correctionAttempts: 0,
+		observations: [],
+		playedSinceSeekMs: 0,
+		playingSince: isPlayerPlaying.value && player.value?.getVideoId() === videoId ? now : null,
+		playbackRateAtStart: player.value?.getPlaybackRate() || 1,
+		observationAttempts: 0,
+		readFailures: 0,
+		seekRequestID,
+	};
+}
+
+function getPendingSyncMarkerSeek() {
+	const pending = pendingSyncMarkerSeek;
+	if (!pending) return null;
+	const expired = Date.now() - pending.startedAt > SYNC_MARKER_SEEK_CORRECTION_MAX_AGE_MS;
+	if (
+		pending.videoId !== reviewsStore.getSelectedVideoId
+		|| !reviewSeekCoordinator.isCurrent(pending.seekRequestID)
+		|| expired
+	) {
+		pendingSyncMarkerSeek = null;
+		if (expired) {
+			syncPrototypeStatusTone.value = 'error';
+			syncPrototypeStatus.value = 'Seek completed, but synchronization timed out';
+			reviewSeekCoordinator.finish(
+				pending.seekRequestID,
+				'unverified',
+				'Sync marker verification timed out',
+			);
+		}
+		return null;
+	}
+	return pending;
+}
+
+function markPendingSyncMarkerSeekPlaying(): void {
+	const pending = getPendingSyncMarkerSeek();
+	if (
+		!pending
+		|| pending.playingSince !== null
+		|| player.value?.getVideoId() !== pending.videoId
+	) return;
+	pending.playingSince = Date.now();
+	pending.playbackRateAtStart = player.value?.getPlaybackRate() || 1;
+}
+
+function updatePendingSyncMarkerSeekPlaybackRate(rate: number): void {
+	const pending = getPendingSyncMarkerSeek();
+	if (!pending || !Number.isFinite(rate) || rate <= 0) return;
+	const wasPlaying = pending.playingSince !== null;
+	if (wasPlaying) markPendingSyncMarkerSeekStopped();
+	pending.playbackRateAtStart = rate;
+	if (wasPlaying) pending.playingSince = Date.now();
+}
+
+function markPendingSyncMarkerSeekStopped(): void {
+	const pending = getPendingSyncMarkerSeek();
+	if (!pending || pending.playingSince === null) return;
+	pending.playedSinceSeekMs += (
+		Date.now() - pending.playingSince
+	) * pending.playbackRateAtStart;
+	pending.playingSince = null;
+}
+
+function getPendingSyncMarkerSeekPlaybackMs(
+	pending: NonNullable<typeof pendingSyncMarkerSeek>,
+	observedAt: number,
+): number {
+	if (pending.playingSince === null) return pending.playedSinceSeekMs;
+	return pending.playedSinceSeekMs + Math.max(
+		0,
+		observedAt - pending.playingSince,
+	) * pending.playbackRateAtStart;
+}
+
+function scheduleAutomaticSyncMarkerRead(
+	delayMilliseconds?: number,
+): void {
+	clearScheduledSyncMarkerRead();
+	const delay = delayMilliseconds ?? (
+		getPendingSyncMarkerSeek()
+			? SYNC_MARKER_SEEK_FIRST_READ_DELAY_MS
+			: SYNC_MARKER_STATE_CHANGE_READ_DELAY_MS
+	);
+	syncMarkerScheduledReadTimeout = window.setTimeout(() => {
+		syncMarkerScheduledReadTimeout = null;
+		void captureReviewSyncMarker('player-state');
+	}, Math.max(0, delay));
+}
+
+function shouldApplySyncMarkerAnchor(
+	automatic: boolean,
+	videoId: string,
+	differenceMs: number | null,
+	markerTimelineOriginMs: number,
+): boolean {
+	if (!automatic) {
+		pendingSyncMarkerReanchor = null;
+		return differenceMs === null || Math.abs(differenceMs) >= SYNC_MARKER_REANCHOR_THRESHOLD_MS;
+	}
+
+	const now = Date.now();
+	const pending = pendingSyncMarkerReanchor;
+	const kind = differenceMs === null ? 'initial' : 'adjustment';
+	const measurementMs = differenceMs ?? markerTimelineOriginMs;
+	if (
+		pending?.videoId === videoId
+		&& pending.kind === kind
+		&& now - pending.observedAt <= SYNC_MARKER_REANCHOR_CONFIRMATION_MAX_AGE_MS
+		&& Math.abs(pending.measurementMs - measurementMs)
+			<= SYNC_MARKER_REANCHOR_CONFIRMATION_TOLERANCE_MS
+	) {
+		const averageMeasurementMs = (pending.measurementMs + measurementMs) / 2;
+		pendingSyncMarkerReanchor = null;
+		return kind === 'initial'
+			|| Math.abs(averageMeasurementMs) >= SYNC_MARKER_REANCHOR_THRESHOLD_MS;
+	}
+
+	if (kind === 'initial' || Math.abs(measurementMs) >= SYNC_MARKER_REANCHOR_THRESHOLD_MS) {
+		pendingSyncMarkerReanchor = { videoId, kind, measurementMs, observedAt: now };
+		// Confirm a potentially disruptive adjustment promptly instead of waiting
+		// for the next periodic pass.
+		scheduleAutomaticSyncMarkerRead(SYNC_MARKER_MIN_AUTO_READ_GAP_MS);
+	} else {
+		pendingSyncMarkerReanchor = null;
+	}
+	return false;
+}
+
+function isSyncMarkerSeekLandingPlausible(
+	pending: NonNullable<typeof pendingSyncMarkerSeek>,
+	videoTimeSeconds: number,
+	observedAt: number,
+): boolean {
+	const elapsedSeconds = Math.max(0, (observedAt - pending.seekIssuedAt) / 1000);
+	const earliestPlausibleTime = pending.requestedVideoTimeSeconds
+		- SYNC_MARKER_SEEK_API_TIME_MAX_DISTANCE_SECONDS;
+	// YouTube can play at up to 2x while we wait for the rendered frame.
+	const latestPlausibleTime = pending.requestedVideoTimeSeconds
+		+ elapsedSeconds * 2
+		+ SYNC_MARKER_SEEK_API_TIME_MAX_DISTANCE_SECONDS;
+	return videoTimeSeconds >= earliestPlausibleTime
+		&& videoTimeSeconds <= latestPlausibleTime;
+}
+
+function isSyncMarkerSeekTargetReached(
+	pending: NonNullable<typeof pendingSyncMarkerSeek>,
+	markerTimestampMs: number,
+	observedAt: number,
+): boolean {
+	const playbackSinceSeekMs = getPendingSyncMarkerSeekPlaybackMs(pending, observedAt);
+	const landingErrorMs = markerTimestampMs - pending.targetMarkerTimestampMs;
+	return landingErrorMs >= -SYNC_MARKER_SEEK_LANDING_EARLY_TOLERANCE_MS
+		&& landingErrorMs <= playbackSinceSeekMs + SYNC_MARKER_SEEK_LANDING_LATE_TOLERANCE_MS;
+}
+
+function applyConfirmedSyncMarkerOrigin(
+	videoId: string,
+	videoTimeSeconds: number,
+	timelineOriginMs: number,
+): void {
+	syncPrototypeAnchor.value = {
+		videoId,
+		videoTimeSeconds,
+		timestampMs: timelineOriginMs + videoTimeSeconds * 1000,
+	};
+	pendingSyncMarkerReanchor = null;
+}
+
+function processPendingSyncMarkerSeek(
+	markerTimestampMs: number,
+	videoTimeSeconds: number,
+	observedAt: number,
+): boolean {
+	const pending = getPendingSyncMarkerSeek();
+	if (!pending) return false;
+	pending.observationAttempts++;
+	pending.readFailures = 0;
+	if (pending.observationAttempts > SYNC_MARKER_SEEK_MAX_OBSERVATION_ATTEMPTS) {
+		pendingSyncMarkerSeek = null;
+		reviewSeekCoordinator.finish(
+			pending.seekRequestID,
+			'unverified',
+			'Rendered video frame did not stabilize',
+		);
+		syncPrototypeStatusTone.value = 'error';
+		syncPrototypeStatus.value = 'Seek sync stopped · rendered frame did not stabilize';
+		log.warn('Could not obtain coherent RG sync marker frames after YouTube seek', {
+			videoId: pending.videoId,
+			phase: pending.phase,
+			correctionAttempts: pending.correctionAttempts,
+		});
+		return true;
+	}
+
+	if (!isSyncMarkerSeekLandingPlausible(pending, videoTimeSeconds, observedAt)) {
+		log.debug('Ignored RG sync marker from a frame outside the active seek landing', {
+			videoId: pending.videoId,
+			phase: pending.phase,
+			requestedVideoTimeSeconds: pending.requestedVideoTimeSeconds,
+			videoTimeSeconds,
+		});
+		scheduleAutomaticSyncMarkerRead(SYNC_MARKER_SEEK_OBSERVATION_INTERVAL_MS);
+		return true;
+	}
+
+	const observation: SyncMarkerSeekObservation = {
+		markerTimestampMs,
+		videoTimeSeconds,
+		timelineOriginMs: markerTimestampMs - videoTimeSeconds * 1000,
+		observedAt,
+	};
+	const expectedTimelineOriginMs = pending.targetMarkerTimestampMs
+		- pending.requestedVideoTimeSeconds * 1000;
+	if (
+		pending.phase === 'verification'
+		&& Math.abs(observation.timelineOriginMs - expectedTimelineOriginMs)
+			> SYNC_MARKER_SEEK_VERIFICATION_ORIGIN_TOLERANCE_MS
+	) {
+		// The iframe API may expose the corrected time before Chromium replaces
+		// the pre-correction frame. Never feed that mixed observation back into
+		// another correction.
+		log.debug('Ignored stale RG sync marker frame while verifying corrected seek', {
+			videoId: pending.videoId,
+			originDifferenceMs: observation.timelineOriginMs - expectedTimelineOriginMs,
+		});
+		scheduleAutomaticSyncMarkerRead(SYNC_MARKER_SEEK_OBSERVATION_INTERVAL_MS);
+		return true;
+	}
+	const previousObservation = pending.observations.at(-1);
+	if (!previousObservation) {
+		pending.observations.push(observation);
+		scheduleAutomaticSyncMarkerRead(SYNC_MARKER_SEEK_OBSERVATION_INTERVAL_MS);
+		return true;
+	}
+
+	const observationSeparationMs = observation.observedAt - previousObservation.observedAt;
+	if (observationSeparationMs < SYNC_MARKER_SEEK_OBSERVATION_MIN_SEPARATION_MS) {
+		scheduleAutomaticSyncMarkerRead(
+			SYNC_MARKER_SEEK_OBSERVATION_MIN_SEPARATION_MS - observationSeparationMs,
+		);
+		return true;
+	}
+
+	const markerProgressMs = observation.markerTimestampMs
+		- previousObservation.markerTimestampMs;
+	const videoProgressMs = (
+		observation.videoTimeSeconds - previousObservation.videoTimeSeconds
+	) * 1000;
+	const progressionDifferenceMs = markerProgressMs - videoProgressMs;
+	if (Math.abs(progressionDifferenceMs) > SYNC_MARKER_SEEK_OBSERVATION_TOLERANCE_MS) {
+		// A seek may update the iframe API before Chromium paints the new video
+		// frame. Start the pair again from the newest observation in that case.
+		pending.observations = [observation];
+		log.debug('Waiting for two coherent RG sync marker frames after seek', {
+			videoId: pending.videoId,
+			phase: pending.phase,
+			progressionDifferenceMs,
+		});
+		scheduleAutomaticSyncMarkerRead(SYNC_MARKER_SEEK_OBSERVATION_INTERVAL_MS);
+		return true;
+	}
+
+	const confirmedTimelineOriginMs = (
+		previousObservation.timelineOriginMs + observation.timelineOriginMs
+	) / 2;
+	const mappingErrorMs = confirmedTimelineOriginMs - expectedTimelineOriginMs;
+	const targetReached = isSyncMarkerSeekTargetReached(
+		pending,
+		observation.markerTimestampMs,
+		observation.observedAt,
+	);
+	if (Math.abs(mappingErrorMs) > SYNC_MARKER_SEEK_CORRECTION_MAX_MS) {
+		pendingSyncMarkerSeek = null;
+		reviewSeekCoordinator.finish(
+			pending.seekRequestID,
+			'unverified',
+			'RG sync marker implied an implausible mapping change',
+		);
+		syncPrototypeStatusTone.value = 'error';
+		syncPrototypeStatus.value = `Seek sync stopped · implausible ${formatSignedSeconds(mappingErrorMs / 1000)} mapping change`;
+		log.warn('Rejected an implausible RG sync marker mapping after YouTube seek', {
+			videoId: pending.videoId,
+			phase: pending.phase,
+			mappingErrorMs,
+		});
+		return true;
+	}
+	applyConfirmedSyncMarkerOrigin(
+		pending.videoId,
+		observation.videoTimeSeconds,
+		confirmedTimelineOriginMs,
+	);
+
+	if (
+		Math.abs(mappingErrorMs) <= SYNC_MARKER_SEEK_CORRECTION_TOLERANCE_MS
+		&& targetReached
+	) {
+		pendingSyncMarkerSeek = null;
+		reviewSeekCoordinator.finish(pending.seekRequestID, 'completed');
+		syncPrototypeStatusTone.value = 'success';
+		syncPrototypeStatus.value = `Seek synchronized · ${formatSignedSeconds(mappingErrorMs / 1000)} residual`;
+		log.info('Verified YouTube seek against coherent RG sync marker frames', {
+			videoId: pending.videoId,
+			phase: pending.phase,
+			mappingErrorMs,
+			landingErrorMs: observation.markerTimestampMs - pending.targetMarkerTimestampMs,
+			correctionAttempts: pending.correctionAttempts,
+		});
+		return true;
+	}
+
+	if (
+		Math.abs(observation.markerTimestampMs - pending.targetMarkerTimestampMs)
+			> SYNC_MARKER_SEEK_CORRECTION_MAX_MS
+		|| pending.correctionAttempts >= SYNC_MARKER_SEEK_CORRECTION_MAX_ATTEMPTS
+	) {
+		pendingSyncMarkerSeek = null;
+		reviewSeekCoordinator.finish(
+			pending.seekRequestID,
+			'unverified',
+			'RG sync marker correction did not converge',
+		);
+		syncPrototypeStatusTone.value = 'error';
+		syncPrototypeStatus.value = `Seek sync stopped · ${formatSignedSeconds(mappingErrorMs / 1000)} residual`;
+		log.warn('Could not safely converge YouTube seek with RG sync marker', {
+			videoId: pending.videoId,
+			phase: pending.phase,
+			mappingErrorMs,
+			landingErrorMs: observation.markerTimestampMs - pending.targetMarkerTimestampMs,
+			correctionAttempts: pending.correctionAttempts,
+		});
+		return true;
+	}
+
+	const correctedVideoTimeSeconds = clampSeekTarget(
+		(pending.targetMarkerTimestampMs - confirmedTimelineOriginMs) / 1000,
+	);
+	const correctionDeltaMs = (
+		correctedVideoTimeSeconds - observation.videoTimeSeconds
+	) * 1000;
+	pending.phase = 'verification';
+	pending.correctionAttempts++;
+	pending.requestedVideoTimeSeconds = correctedVideoTimeSeconds;
+	pending.seekIssuedAt = Date.now();
+	pending.observations = [];
+	pending.playedSinceSeekMs = 0;
+	pending.playingSince = isPlayerPlaying.value ? pending.seekIssuedAt : null;
+	pending.playbackRateAtStart = player.value?.getPlaybackRate() || 1;
+	pending.observationAttempts = 0;
+	pending.readFailures = 0;
+	syncPrototypeStatusTone.value = 'info';
+	syncPrototypeStatus.value = `Correcting seek · ${formatSignedSeconds(correctionDeltaMs / 1000)}`;
+	log.info('Correcting YouTube seek from confirmed RG sync marker mapping', {
+		videoId: pending.videoId,
+		mappingErrorMs,
+		landingErrorMs: observation.markerTimestampMs - pending.targetMarkerTimestampMs,
+		toVideoTimeSeconds: correctedVideoTimeSeconds,
+		attempt: pending.correctionAttempts,
+	});
+	dispatchPlayerSeek(correctedVideoTimeSeconds);
+	return true;
+}
+
+async function captureReviewSyncMarker(trigger: ReviewSyncCaptureTrigger = 'manual'): Promise<void> {
+	const automatic = trigger !== 'manual';
+	if (isSyncPrototypeCapturing.value) {
+		if (trigger === 'player-state') scheduleAutomaticSyncMarkerRead(250);
+		return;
+	}
+	const millisecondsSinceLastCapture = Date.now() - lastSyncMarkerCaptureStartedAt;
+	if (
+		automatic
+		&& (
+			(trigger === 'periodic' && !isPlayerPlaying.value)
+			|| document.visibilityState !== 'visible'
+		)
+	) return;
+	if (
+		automatic
+		&& !getPendingSyncMarkerSeek()
+		&& millisecondsSinceLastCapture < SYNC_MARKER_MIN_AUTO_READ_GAP_MS
+	) {
+		if (trigger === 'player-state') {
+			scheduleAutomaticSyncMarkerRead(
+				SYNC_MARKER_MIN_AUTO_READ_GAP_MS - millisecondsSinceLastCapture,
+			);
+		}
+		return;
+	}
+	const selectedVideo = reviewsStore.selectedVideoInfo;
+	const container = videoContainer.value;
+	if (!selectedVideo || !player.value || !playerLoaded || !container) {
+		if (!automatic) {
+			syncPrototypeStatusTone.value = 'error';
+			syncPrototypeStatus.value = 'Load a YouTube video before reading its sync marker';
+		}
+		return;
+	}
+	if (player.value.getVideoId() !== selectedVideo.id) {
+		if (getPendingSyncMarkerSeek()) {
+			scheduleAutomaticSyncMarkerRead(SYNC_MARKER_SEEK_OBSERVATION_INTERVAL_MS);
+		} else if (!automatic) {
+			syncPrototypeStatusTone.value = 'info';
+			syncPrototypeStatus.value = 'Waiting for the selected YouTube video to load';
+		}
+		return;
+	}
+	if (['unstarted', 'buffering'].includes(player.value.getState())) {
+		if (getPendingSyncMarkerSeek()) {
+			scheduleAutomaticSyncMarkerRead(SYNC_MARKER_SEEK_OBSERVATION_INTERVAL_MS);
+		} else if (!automatic) {
+			syncPrototypeStatusTone.value = 'info';
+			syncPrototypeStatus.value = 'Waiting for the YouTube frame to finish loading';
+		}
+		return;
+	}
+
+	clearScheduledSyncMarkerRead();
+	isSyncPrototypeCapturing.value = true;
+	lastSyncMarkerCaptureStartedAt = Date.now();
+	const playerStateRevisionAtCaptureStart = youtubePlayerStateRevision;
+	const playerSeekRevisionAtCaptureStart = youtubePlayerSeekRevision;
+	const syncMarkerSeekIDAtCaptureStart = getPendingSyncMarkerSeek()?.id ?? null;
+	if (!automatic) {
+		syncPrototypeStatusTone.value = 'info';
+		syncPrototypeStatus.value = 'Reading RG sync marker...';
+		keepPlayerControlsVisible();
+	}
+
+	try {
+		const bounds = container.getBoundingClientRect();
+		const videoTimeBeforeCapture = player.value.getCurrentTime();
+		const videoTimeBeforeCapturedAt = Date.now();
+		const capture = await ipc.invoke(IPC_EVENTS.REVIEW_SYNC_CAPTURE_VIDEO_FRAME, {
+			x: bounds.left,
+			y: bounds.top,
+			width: bounds.width,
+			height: bounds.height,
+		}) as ReviewSyncMarkerCapture;
+		const videoTimeAfterCapture = player.value.getCurrentTime();
+		const videoTimeAfterCapturedAt = Date.now();
+		if (youtubePlayerStateRevision !== playerStateRevisionAtCaptureStart) {
+			throw new Error('YouTube player state changed while reading the sync marker');
+		}
+		if (youtubePlayerSeekRevision !== playerSeekRevisionAtCaptureStart) {
+			throw new Error('Video position changed while reading the sync marker');
+		}
+		if (reviewsStore.getSelectedVideoId !== selectedVideo.id) {
+			throw new Error('The selected video changed while reading the marker');
+		}
+		if (player.value.getVideoId() !== selectedVideo.id) {
+			throw new Error('YouTube displayed a different video while reading the marker');
+		}
+		if (!capture?.dataUrl || typeof capture.dataUrl !== 'string') {
+			throw new Error('Electron did not return a captured YouTube frame');
+		}
+		if (
+			!Number.isFinite(capture.captureStartedAtMs)
+			|| !Number.isFinite(capture.captureFinishedAtMs)
+			|| capture.captureFinishedAtMs < capture.captureStartedAtMs
+		) {
+			throw new Error('Electron returned invalid sync marker capture timing');
+		}
+		const frameCapturedAt = (
+			capture.captureStartedAtMs + capture.captureFinishedAtMs
+		) / 2;
+		const sampleDurationMs = Math.max(1, videoTimeAfterCapturedAt - videoTimeBeforeCapturedAt);
+		const allowedVideoMovementSeconds = sampleDurationMs / 1000
+			* (player.value.getPlaybackRate() || 1)
+			+ 0.5;
+		if (
+			!Number.isFinite(videoTimeBeforeCapture)
+			|| !Number.isFinite(videoTimeAfterCapture)
+			|| Math.abs(videoTimeAfterCapture - videoTimeBeforeCapture) > allowedVideoMovementSeconds
+		) {
+			throw new Error('Video moved too far while the marker was being captured');
+		}
+
+		const captureProgress = Math.max(0, Math.min(
+			1,
+			(frameCapturedAt - videoTimeBeforeCapturedAt) / sampleDurationMs,
+		));
+		const videoTimeSeconds = videoTimeBeforeCapture
+			+ (videoTimeAfterCapture - videoTimeBeforeCapture) * captureProgress;
+		const anchorAtCaptureStart = getActiveSyncPrototypeAnchor();
+		const approximateTimestampMs = anchorAtCaptureStart
+			? anchorAtCaptureStart.timestampMs
+				+ (videoTimeSeconds - anchorAtCaptureStart.videoTimeSeconds) * 1000
+			: selectedVideo.startTime + videoTimeSeconds * 1000;
+		const marker = await decodeReviewSyncMarkerImage(
+			capture.dataUrl,
+			capture.markerBounds,
+			approximateTimestampMs,
+		);
+		if (youtubePlayerStateRevision !== playerStateRevisionAtCaptureStart) {
+			throw new Error('YouTube player state changed while decoding the sync marker');
+		}
+		if (youtubePlayerSeekRevision !== playerSeekRevisionAtCaptureStart) {
+			throw new Error('Video position changed while decoding the sync marker');
+		}
+		if (reviewsStore.getSelectedVideoId !== selectedVideo.id) {
+			throw new Error('The selected video changed while decoding the sync marker');
+		}
+		if (player.value.getVideoId() !== selectedVideo.id) {
+			throw new Error('YouTube changed videos while decoding the sync marker');
+		}
+		if ((getPendingSyncMarkerSeek()?.id ?? null) !== syncMarkerSeekIDAtCaptureStart) {
+			throw new Error('A newer video seek started while decoding the sync marker');
+		}
+		const previousAnchor = getActiveSyncPrototypeAnchor();
+		const anchorDifferenceMs = previousAnchor
+			? marker.timestampMs - (
+				previousAnchor.timestampMs
+					+ (videoTimeSeconds - previousAnchor.videoTimeSeconds) * 1000
+			)
+			: null;
+		const handledBySeekSynchronization = processPendingSyncMarkerSeek(
+			marker.timestampMs,
+			videoTimeSeconds,
+			frameCapturedAt,
+		);
+		const shouldApplyAnchor = !handledBySeekSynchronization && shouldApplySyncMarkerAnchor(
+			automatic,
+			selectedVideo.id,
+			anchorDifferenceMs,
+			marker.timestampMs - videoTimeSeconds * 1000,
+		);
+		if (shouldApplyAnchor) {
+			applyConfirmedSyncMarkerOrigin(
+				selectedVideo.id,
+				videoTimeSeconds,
+				marker.timestampMs - videoTimeSeconds * 1000,
+			);
+		}
+
+		const markerOffsetSeconds = videoTimeSeconds - (marker.timestampMs - selectedVideo.startTime) / 1000;
+		const correctionSeconds = markerOffsetSeconds - YOUTUBE_DELAY_OFFSET;
+		const markerTime = new Date(marker.timestampMs).toISOString().slice(11, 23);
+		if (!handledBySeekSynchronization && shouldApplyAnchor) {
+			syncPrototypeStatusTone.value = 'success';
+			const status = automatic
+				? previousAnchor ? 'Sync adjusted' : 'Sync active'
+				: 'Prototype active';
+			syncPrototypeStatus.value = `${status} · ${markerTime}Z at ${formatSyncVideoTime(videoTimeSeconds)} · offset ${formatSignedSeconds(markerOffsetSeconds)} · correction ${formatSignedSeconds(correctionSeconds)} · ${Math.round(marker.confidence * 100)}% contrast`;
+		} else if (!handledBySeekSynchronization && !automatic) {
+			syncPrototypeStatusTone.value = 'success';
+			syncPrototypeStatus.value = `Sync stable · measured change ${formatSignedSeconds((anchorDifferenceMs || 0) / 1000)} · ${Math.round(marker.confidence * 100)}% contrast`;
+		}
+		if (!handledBySeekSynchronization && (shouldApplyAnchor || !automatic)) {
+			log[shouldApplyAnchor ? 'info' : 'debug'](
+				shouldApplyAnchor ? 'Applied prototype review sync marker' : 'Kept existing prototype review sync marker',
+				{
+					videoId: selectedVideo.id,
+					videoTimeSeconds,
+					markerTimestampMs: marker.timestampMs,
+					markerOffsetSeconds,
+					correctionSeconds,
+					anchorDifferenceMs,
+					automatic,
+					confidence: marker.confidence,
+				},
+			);
+		}
+		lastSyncMarkerAutoFailureLogTime = 0;
+	} catch (error) {
+		if (automatic) {
+			const now = Date.now();
+			if (now - lastSyncMarkerAutoFailureLogTime >= SYNC_MARKER_AUTO_FAILURE_LOG_INTERVAL_MS) {
+				lastSyncMarkerAutoFailureLogTime = now;
+				log.debug('Automatic review sync marker capture skipped after a failed read', error);
+			}
+		} else {
+			syncPrototypeStatusTone.value = 'error';
+			syncPrototypeStatus.value = error instanceof Error
+				? `Sync marker not read: ${error.message}`
+				: 'Sync marker could not be read';
+			log.warn('Prototype review sync marker capture failed', error);
+		}
+		const pendingSeek = getPendingSyncMarkerSeek();
+		if (pendingSeek) {
+			if (pendingSeek.id !== syncMarkerSeekIDAtCaptureStart) {
+				scheduleAutomaticSyncMarkerRead(SYNC_MARKER_SEEK_FIRST_READ_DELAY_MS);
+			} else {
+				pendingSeek.readFailures++;
+				if (pendingSeek.readFailures >= SYNC_MARKER_SEEK_MAX_READ_FAILURES) {
+					pendingSyncMarkerSeek = null;
+					reviewSeekCoordinator.finish(
+						pendingSeek.seekRequestID,
+						'unverified',
+						'Sync marker could not be read after seeking',
+					);
+					syncPrototypeStatusTone.value = 'error';
+					syncPrototypeStatus.value = pendingSeek.phase === 'verification'
+						? 'Seek correction could not be verified'
+						: 'Seek completed, but its sync marker could not be verified';
+					log.debug('Stopped seek synchronization after repeated marker read failures', {
+						videoId: pendingSeek.videoId,
+						readFailures: pendingSeek.readFailures,
+					});
+				} else {
+					const retryDelayMs = Math.min(
+						SYNC_MARKER_SEEK_OBSERVATION_INTERVAL_MS
+							* 2 ** (pendingSeek.readFailures - 1),
+						SYNC_MARKER_SEEK_READ_FAILURE_BACKOFF_MAX_MS,
+					);
+					scheduleAutomaticSyncMarkerRead(retryDelayMs);
+				}
+			}
+		}
+	} finally {
+		isSyncPrototypeCapturing.value = false;
+		if (!automatic) revealPlayerControls();
+	}
+}
+
+function dismissReviewSyncStatus(): void {
+	syncPrototypeStatus.value = '';
 }
 
 function refreshYoutubeVideo(videoId: string) {
@@ -1475,6 +2601,19 @@ function deleteYoutubeVideo(videoId: string) {
 							<button
 								type="button"
 								class="youtube-player-control-button"
+								:title="isSyncPrototypeCapturing ? 'Reading RG sync marker...' : 'Read RG sync marker now (automatic synchronization is enabled)'"
+								aria-label="Read RG sync marker from the video"
+								:disabled="isSyncPrototypeCapturing"
+								@click.stop="captureReviewSyncMarker('manual')"
+								@dblclick.stop
+							>
+								<svg viewBox="0 0 24 24" aria-hidden="true">
+									<path d="M8 3H3v5M16 3h5v5M8 21H3v-5M16 21h5v-5M7 10h10v4H7z" />
+								</svg>
+							</button>
+							<button
+								type="button"
+								class="youtube-player-control-button"
 								title="Open video on YouTube"
 								aria-label="Open current video on YouTube"
 								@click.stop="openSelectedYoutubeVideo"
@@ -1514,6 +2653,19 @@ function deleteYoutubeVideo(videoId: string) {
 									<path d="M8 3H3v5M16 3h5v5M8 21H3v-5M16 21h5v-5" />
 								</svg>
 							</button>
+						</div>
+						<div
+							v-if="syncPrototypeStatus"
+							class="youtube-player-sync-prototype"
+							:class="`youtube-player-sync-prototype--${syncPrototypeStatusTone}`"
+							role="status"
+							@dblclick.stop
+						>
+							<span>{{ syncPrototypeStatus }}</span>
+							<button
+								type="button"
+								@click.stop="dismissReviewSyncStatus"
+							>Close</button>
 						</div>
 						<section
 							v-if="isHotkeyGuideOpen"
@@ -1644,16 +2796,17 @@ function deleteYoutubeVideo(videoId: string) {
 						{{ copyReviewLinkTooltip }}
 					</span>
 					<ReviewCooldownTimeline
-						v-if="!reviewsStore.timelineWindowDetached && reviewsStore.selectedFightID && reviewsStore.getFightDuration > 0"
+						v-if="reviewsStore.selectedFightID && reviewsStore.getFightDuration > 0"
 						v-model:expanded="reviewsStore.timelineExpanded"
 						v-model:view-mode="reviewsStore.timelineViewMode"
+						:compact-only="reviewsStore.timelineWindowDetached"
 						:events="reviewsStore.getFightCooldownEvents"
 						:fight-events="reviewsStore.getFightEvents"
 						:groups="reviewsStore.getFightCooldownGroups"
 						:phases="phaseTransitions"
 						:fight-start-time="reviewsStore.getFightStartTimeOffset"
 						:fight-duration="reviewsStore.getFightDuration"
-						:cursor-percent="currentFightCursor"
+						:playback="timelinePlayback"
 						:loading="reviewsStore.isFightCooldownsLoading || reviewsStore.isFightEventsLoading"
 						:error="reviewsStore.getFightCooldownError || reviewsStore.getFightEventsError"
 						@seek="seekToFightTimestamp"
@@ -1661,6 +2814,7 @@ function deleteYoutubeVideo(videoId: string) {
 						@open-death="openWCLDeath"
 						@seek-pull="seekToPullTimestamp"
 						@open-pull-death="openWCLPullDeath"
+						@toggle-playback="togglePlayPause"
 						@detach="detachTimeline"
 					/>
 				</div>
@@ -1771,6 +2925,11 @@ function deleteYoutubeVideo(videoId: string) {
 	color: white;
 }
 
+.youtube-player-control-button:disabled {
+	cursor: wait;
+	opacity: 0.45;
+}
+
 .youtube-player-control-button:focus-visible {
 	outline: 2px solid rgb(129 140 248 / 85%);
 	outline-offset: -2px;
@@ -1793,6 +2952,49 @@ function deleteYoutubeVideo(videoId: string) {
 .youtube-player-control-button svg path {
 	stroke-linecap: round;
 	stroke-linejoin: round;
+}
+
+.youtube-player-sync-prototype {
+	position: absolute;
+	top: 0.65rem;
+	right: 0.65rem;
+	z-index: 3;
+	display: flex;
+	max-width: min(48rem, calc(100% - 1.3rem));
+	align-items: center;
+	gap: 0.55rem;
+	padding: 0.38rem 0.5rem;
+	border: 1px solid rgb(71 85 105 / 80%);
+	border-radius: 0.15rem;
+	background: rgb(8 13 22 / 94%);
+	box-shadow: 0 2px 8px rgb(0 0 0 / 65%);
+	color: rgb(203 213 225);
+	font-size: 0.72rem;
+	font-variant-numeric: tabular-nums;
+	line-height: 1.2;
+}
+
+.youtube-player-sync-prototype--success {
+	border-color: rgb(45 212 191 / 70%);
+	color: rgb(153 246 228);
+}
+
+.youtube-player-sync-prototype--error {
+	border-color: rgb(248 113 113 / 75%);
+	color: rgb(254 202 202);
+}
+
+.youtube-player-sync-prototype button {
+	padding-left: 0.5rem;
+	border-left: 1px solid rgb(100 116 139 / 55%);
+	color: rgb(226 232 240);
+	font-weight: 700;
+	text-transform: uppercase;
+}
+
+.youtube-player-sync-prototype button:hover,
+.youtube-player-sync-prototype button:focus-visible {
+	color: white;
 }
 
 .youtube-player-hotkey-guide {

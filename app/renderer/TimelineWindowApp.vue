@@ -5,6 +5,7 @@ import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vu
 import { IPC_EVENTS } from '@/events';
 import type { ReviewTimelineViewMode, ReviewTimelineWindowAction, ReviewTimelineWindowContext } from '@/timelineWindow';
 import { useIpcOn } from '@/renderer/composables/useIpcOn';
+import { createReviewTimelinePlayback } from '@/renderer/composables/useReviewTimelinePlayback';
 import { getElectronStoreRef } from '@/renderer/store/ElectronRefStore';
 import { useReviewsStore } from '@/renderer/store/ReviewsStore';
 import ReviewCooldownTimeline from '@/renderer/components/ReviewCooldownTimeline.vue';
@@ -14,6 +15,8 @@ const reviewsStore = useReviewsStore();
 const darkMode = getElectronStoreRef('darkMode', true);
 const context = shallowRef<ReviewTimelineWindowContext | null>(null);
 const cursorPercent = ref(0);
+const isPlayerPlaying = ref(false);
+const timelinePlayback = createReviewTimelinePlayback(cursorPercent, isPlayerPlaying);
 const emptyCooldownData: reviewFightCooldownData = {
 	catalogVersion: 0,
 	cooldownGroups: [],
@@ -32,6 +35,7 @@ async function applyContext(nextContext: ReviewTimelineWindowContext | null) {
 	if (!nextContext) return;
 	context.value = nextContext;
 	cursorPercent.value = nextContext.cursorPercent;
+	isPlayerPlaying.value = nextContext.playing === true;
 	await reviewsStore.hydrateTimelineWindowContext(nextContext);
 	const selectedFight = nextContext.reportDetails.fights.find(fight => fight.id === nextContext.fightID);
 	// Requests cannot be transferred between renderer processes. Revalidate the
@@ -83,6 +87,10 @@ useIpcOn(IPC_EVENTS.TIMELINE_WINDOW_CONTEXT_UPDATED, (_event, nextContext: Revie
 
 useIpcOn(IPC_EVENTS.TIMELINE_WINDOW_CURSOR_UPDATED, (_event, nextCursorPercent: number) => {
 	if (Number.isFinite(nextCursorPercent)) cursorPercent.value = nextCursorPercent;
+});
+
+useIpcOn(IPC_EVENTS.TIMELINE_WINDOW_PLAYBACK_UPDATED, (_event, playing: boolean) => {
+	if (typeof playing === 'boolean') isPlayerPlaying.value = playing;
 });
 
 onMounted(async () => {
@@ -139,7 +147,7 @@ onBeforeUnmount(() => {
 				:phases="context.phases"
 				:fight-start-time="context.fightStartTime"
 				:fight-duration="context.fightDuration"
-				:cursor-percent="cursorPercent"
+				:playback="timelinePlayback"
 				:loading="timelineLoading"
 				:error="timelineError"
 				@update:view-mode="updateViewMode"
@@ -148,6 +156,7 @@ onBeforeUnmount(() => {
 				@open-death="deathID => sendAction({ type: 'open-death', deathID })"
 				@seek-pull="(fightID, timestampSeconds) => sendAction({ type: 'seek-pull', fightID, timestampSeconds })"
 				@open-pull-death="(fightID, deathID) => sendAction({ type: 'open-pull-death', fightID, deathID })"
+				@toggle-playback="sendAction({ type: 'toggle-playback' })"
 			/>
 			<div v-else class="flex h-full items-center justify-center text-sm text-neutral-500">Loading timeline...</div>
 		</main>

@@ -6,7 +6,9 @@ import ReviewBossCastInterrupt from '@/renderer/components/ReviewBossCastInterru
 import ReviewBossCastTargets from '@/renderer/components/ReviewBossCastTargets.vue';
 import ReviewCooldownTarget from '@/renderer/components/ReviewCooldownTarget.vue';
 import ReviewEncounterAlertTooltip from '@/renderer/components/ReviewEncounterAlertTooltip.vue';
+import ReviewPlaybackCursor from '@/renderer/components/ReviewPlaybackCursor.vue';
 import ReviewRaidMarker from '@/renderer/components/ReviewRaidMarker.vue';
+import type { ReviewTimelineCursorMapping } from '@/renderer/composables/useReviewTimelinePlayback';
 import { useReviewsStore } from '@/renderer/store/ReviewsStore';
 import { buildCollapsedBossCastMarkers, sortBossCastAbilitiesByFirstOccurrence } from '@/renderer/utils/bossCastAggregation';
 import { useBossCastTooltipLayout } from '@/renderer/utils/bossCastTooltipLayout';
@@ -26,7 +28,6 @@ const props = defineProps<{
 	enabledGroupIds: reviewCooldownGroupID[];
 	excludedSpellIds: number[];
 	containerResizing?: boolean;
-	currentFightCursorSeconds: number;
 	requestedPlayerId?: number;
 	requestedPlayerName?: string;
 	playerRequestToken?: number;
@@ -689,10 +690,17 @@ const minuteMarkers = computed(() => {
 const alignmentAnchorPercent = computed(() => (
 	(0 - timelineDomain.value.minSeconds) / timelineDomain.value.durationSeconds
 ));
-const currentFightCursorPercent = computed(() => {
+const currentFightCursorMapping = computed<ReviewTimelineCursorMapping | null>(() => {
 	const fight = reportDetails.value?.fights.find(item => item.id === reviewsStore.selectedFightID);
 	if (!fight) return null;
-	return toTimelinePercent(fight, props.currentFightCursorSeconds);
+	const timelineOriginSeconds = getAlignmentOriginSeconds(fight);
+	if (timelineOriginSeconds == null) return null;
+	return {
+		fightDurationSeconds: Math.max(0, (fight.endTime - fight.startTime) / 1000),
+		timelineOriginSeconds,
+		timelineStartSeconds: timelineDomain.value.minSeconds,
+		timelineDurationSeconds: timelineDomain.value.durationSeconds,
+	};
 });
 const longestBossCastData = computed(() => {
 	const reportCode = anchorReportCode.value;
@@ -1661,7 +1669,7 @@ onBeforeUnmount(() => {
 									<div v-if="bossReferenceBounds.start > 0" class="pointer-events-none absolute inset-y-0 left-0 z-[2] bg-black/20" :style="{ width: `${bossReferenceBounds.start * 100}%` }"></div>
 									<div v-if="bossReferenceBounds.end < 1" class="pointer-events-none absolute inset-y-0 right-0 z-[2] bg-black/20" :style="{ left: `${bossReferenceBounds.end * 100}%` }"></div>
 									<div class="pointer-events-none absolute inset-y-0 z-[4] w-0.5" :class="longestEligiblePull.kill ? 'bg-emerald-500/80' : 'bg-red-500/70'" :style="{ left: `${bossReferenceBounds.end * 100}%` }"></div>
-									<div v-if="longestEligiblePull.id === reviewsStore.selectedFightID && currentFightCursorPercent != null" class="pointer-events-none absolute inset-y-0 z-30 w-0.5 bg-amber-400 shadow-[0_0_4px_rgba(251,191,36,0.8)]" :style="{ left: `${currentFightCursorPercent * 100}%` }"></div>
+									<ReviewPlaybackCursor v-if="longestEligiblePull.id === reviewsStore.selectedFightID && currentFightCursorMapping" :mapping="currentFightCursorMapping" show-at-bounds class="pointer-events-none absolute inset-y-0 z-30 w-0.5 bg-amber-400 shadow-[0_0_4px_rgba(251,191,36,0.8)]" />
 									<span v-for="marker in collapsedBossCastDurationMarkers.filter(entry => entry.durationSeconds > 0)" :key="`collapsed-head-duration:${marker.key}`" class="review-boss-cast-rail review-boss-cast-rail--compact pointer-events-none absolute top-[10px] z-[6] h-[3px] min-w-px" :class="getBossCastDurationClass(marker)" :style="{ left: `${marker.startPercent * 100}%`, width: `${Math.max(0, marker.percent - marker.startPercent) * 100}%` }"></span>
 									<button v-for="item in collapsedBossCastMarkers" :key="`collapsed-head:${item.marker.key}`" type="button" class="absolute top-0.5 z-20 size-5 overflow-visible rounded-none border bg-black shadow-[0_1px_4px_rgba(0,0,0,.45)] transition-none hover:z-30 hover:scale-110 focus:z-30 focus:outline-none focus:ring-1 focus:ring-amber-200" :class="getBossCastMarkerClass(item.occurrences)" :style="{ left: `clamp(0px, calc(${item.marker.percent * 100}% + ${item.offsetPixels}px), calc(100% - 20px))` }" :aria-label="item.occurrences.length > 1 ? `${item.lane.ability.name}, ${item.occurrences.length} outcomes, first at ${formatBossCastTime(longestEligiblePull, item.marker.timestampSeconds)}` : `${item.lane.ability.name} ${item.marker.event.bossCast.interrupt ? 'interrupted' : 'completed'} for ${item.marker.event.source?.name || 'Unknown enemy'}`" @click.stop="emit('seekPull', longestEligiblePull.id, item.marker.timestampSeconds)" @mouseenter="showBossCast(longestEligiblePull, item.lane, item.marker, $event, item.occurrences)" @mousemove="updateTooltip" @mouseleave="hideDetail">
 										<img v-if="item.lane.ability.icon" :src="getSpellIconURL(item.lane.ability.icon)" :alt="item.lane.ability.name" class="block size-full" draggable="false" /><span v-else class="flex size-full items-center justify-center text-[9px] text-white">?</span>
@@ -1691,7 +1699,7 @@ onBeforeUnmount(() => {
 								<div v-if="bossReferenceBounds.end < 1" class="pointer-events-none absolute inset-y-0 right-0 z-[2] bg-black/20" :style="{ left: `${bossReferenceBounds.end * 100}%` }"></div>
 								<div class="pointer-events-none absolute inset-y-0 z-[4] w-0.5" :class="longestEligiblePull.kill ? 'bg-emerald-500/80' : 'bg-red-500/70'" :style="{ left: `${bossReferenceBounds.end * 100}%` }"></div>
 								<div v-for="phase in bossReferencePhases" :key="`boss-phase:${lane.ability.spellID}:${phase.key}`" class="pointer-events-none absolute inset-y-0 z-10 w-0.5 bg-sky-400/75" :class="phase.key === alignmentPhaseKey ? 'bg-sky-300 shadow-[0_0_5px_rgba(125,211,252,0.65)]' : ''" :style="{ left: `${phase.percent * 100}%` }"></div>
-								<div v-if="longestEligiblePull.id === reviewsStore.selectedFightID && currentFightCursorPercent != null" class="pointer-events-none absolute inset-y-0 z-30 w-0.5 bg-amber-400 shadow-[0_0_4px_rgba(251,191,36,0.8)]" :style="{ left: `${currentFightCursorPercent * 100}%` }"></div>
+								<ReviewPlaybackCursor v-if="longestEligiblePull.id === reviewsStore.selectedFightID && currentFightCursorMapping" :mapping="currentFightCursorMapping" show-at-bounds class="pointer-events-none absolute inset-y-0 z-30 w-0.5 bg-amber-400 shadow-[0_0_4px_rgba(251,191,36,0.8)]" />
 								<span v-for="marker in lane.markers.filter(item => item.durationSeconds > 0)" :key="`boss-duration:${marker.key}`" class="review-boss-cast-rail pointer-events-none absolute top-[14px] z-[6] h-[5px] min-w-px" :class="getBossCastDurationClass(marker)" :style="{ left: `${marker.startPercent * 100}%`, width: `${Math.max(0, marker.percent - marker.startPercent) * 100}%` }"></span>
 								<button v-for="item in lane.markerGroups" :key="item.marker.key" type="button" class="absolute top-1 z-20 size-6 overflow-visible rounded-none border bg-black shadow-[0_1px_4px_rgba(0,0,0,.45)] transition-none hover:z-30 hover:scale-105 focus:z-30 focus:outline-none focus:ring-1 focus:ring-amber-200" :class="getBossCastMarkerClass(item.occurrences)" :style="{ left: `clamp(0px, calc(${item.marker.percent * 100}% + ${item.offsetPixels}px), calc(100% - 24px))` }" :aria-label="item.occurrences.length > 1 ? `${lane.ability.name}, ${item.occurrences.length} outcomes, first at ${formatBossCastTime(longestEligiblePull, item.marker.timestampSeconds)}` : `${lane.ability.name} ${item.marker.event.bossCast.interrupt ? 'interrupted' : 'completed'} for ${item.marker.event.source?.name || 'Unknown enemy'}`" @click.stop="emit('seekPull', longestEligiblePull.id, item.marker.timestampSeconds)" @mouseenter="showBossCast(longestEligiblePull, lane, item.marker, $event, item.occurrences)" @mousemove="updateTooltip" @mouseleave="hideDetail">
 									<img v-if="lane.ability.icon" :src="getSpellIconURL(lane.ability.icon)" :alt="lane.ability.name" class="size-full" draggable="false" /><span v-else class="flex size-full items-center justify-center text-[10px] text-white">?</span>
@@ -1728,7 +1736,7 @@ onBeforeUnmount(() => {
 							<div v-if="row.isAligned && row.startPercent > 0" class="pointer-events-none absolute inset-y-0 z-[3] w-px bg-neutral-400/45" :style="{ left: `${row.startPercent * 100}%` }"></div>
 							<div v-if="row.isAligned" class="pointer-events-none absolute inset-y-0 right-0 z-[2] bg-black/20" :style="{ left: `${row.endPercent * 100}%` }"></div>
 							<div v-if="row.isAligned" class="pointer-events-none absolute inset-y-0 z-[4] w-0.5" :class="row.fight.kill ? 'bg-emerald-500/80' : 'bg-red-500/70'" :style="{ left: `${row.endPercent * 100}%` }"></div>
-							<div v-if="row.isAligned && row.fight.id === reviewsStore.selectedFightID && currentFightCursorPercent != null && currentFightCursorPercent >= row.startPercent && currentFightCursorPercent <= row.endPercent" class="pointer-events-none absolute inset-y-0 z-30 w-0.5 bg-amber-400 shadow-[0_0_4px_rgba(251,191,36,0.8)]" :style="{ left: `${currentFightCursorPercent * 100}%` }"><span class="absolute -left-1 top-0 size-0 border-x-4 border-t-4 border-x-transparent border-t-amber-400"></span></div>
+							<ReviewPlaybackCursor v-if="row.isAligned && row.fight.id === reviewsStore.selectedFightID && currentFightCursorMapping" :mapping="currentFightCursorMapping" :minimum-percent="row.startPercent" :maximum-percent="row.endPercent" show-at-bounds caret class="pointer-events-none absolute inset-y-0 z-30 w-0.5 bg-amber-400 shadow-[0_0_4px_rgba(251,191,36,0.8)]" />
 							<button v-for="phase in row.phases" :key="`${row.fight.id}:${phase.key}`" type="button" class="group absolute inset-y-0 z-10 w-3 -translate-x-1/2 focus:outline-none" :style="{ left: `${phase.percent * 100}%` }" @click.stop="alignToPhase(phase.key)" @mouseenter="showPhase(row, phase, $event)" @mousemove="updateTooltip" @mouseleave="hideDetail">
 								<span class="pointer-events-none absolute inset-y-0 left-1/2 w-0.5 -translate-x-1/2 bg-sky-400/75 group-focus-visible:bg-white" :class="phase.key === alignmentPhaseKey ? 'bg-sky-300 shadow-[0_0_5px_rgba(125,211,252,0.65)]' : hoveredPhaseKey === phase.key ? 'bg-white shadow-[0_0_6px_rgba(125,211,252,0.9)]' : ''"></span>
 								<span class="pointer-events-none absolute left-[calc(50%+3px)] top-0 whitespace-nowrap bg-slate-950/75 px-1 text-[9px] font-semibold text-sky-300">{{ formatPhaseLabel(phase) }}</span>

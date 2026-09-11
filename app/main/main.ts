@@ -21,6 +21,10 @@ import AppUpdateService from '@/main/appUpdateService';
 import { getSafeInitialWindowBounds, getWindowSettingsFromWindow, type StoredWindowSettings } from '@/main/windowBounds';
 import ObsWebsocketService, { type ObsSettings as ObsServiceSettings } from '@/main/obsWebsocketService';
 import { registerRendererStoreSync } from '@/main/rendererStoreSync';
+import {
+	registerReviewSyncPrototypeIpc,
+	type ReviewSyncPrototypeController,
+} from '@/main/reviewSyncPrototype';
 import TimelineWindowController from '@/main/timelineWindowController';
 import FileUploadService from '@/main/fileUploadService';
 import WclRequestTransport, {
@@ -378,9 +382,11 @@ const fileUploadService = new FileUploadService({
 	tempDirectory: TEMP_DIR,
 });
 
+let reviewSyncPrototypeController: ReviewSyncPrototypeController | null = null;
 const obsService = new ObsWebsocketService({
 	onStatus: (status) => {
 		mainWindow?.webContents.send(IPC_EVENTS.OBS_STATUS_UPDATED, status);
+		reviewSyncPrototypeController?.setStreaming(status.streaming);
 	},
 	onStreamStarted: (payload) => {
 		log.info('[OBS] Stream is live', payload.youtubeUrl);
@@ -400,6 +406,8 @@ const obsService = new ObsWebsocketService({
 	},
 	log,
 });
+reviewSyncPrototypeController = registerReviewSyncPrototypeIpc(obsService, log);
+reviewSyncPrototypeController.setStreaming(obsService.getStatus().streaming);
 
 const OBS_STORE_KEYS = ['obsEnabled', 'obsPort', 'obsPassword'] as const;
 for (const key of OBS_STORE_KEYS) {
@@ -873,6 +881,7 @@ app.on('before-quit', (event) => {
 
 app.on('will-quit', (event) => {
 	appUpdateService.dispose();
+	reviewSyncPrototypeController?.dispose();
 	if (isQuiting) {
 		socket.disconnect();
 	}

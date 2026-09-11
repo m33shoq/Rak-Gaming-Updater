@@ -399,6 +399,14 @@ export default class TimelineWindowController {
 			}
 		});
 
+		ipcMain.on(IPC_EVENTS.TIMELINE_WINDOW_PLAYBACK_SET, (event, playing: boolean) => {
+			if (!this.isMainRenderer(event.sender) || typeof playing !== 'boolean') return;
+			if (this.context) this.context.playing = playing;
+			if (this.timelineWindow && !this.timelineWindow.isDestroyed()) {
+				this.timelineWindow.webContents.send(IPC_EVENTS.TIMELINE_WINDOW_PLAYBACK_UPDATED, playing);
+			}
+		});
+
 		ipcMain.on(IPC_EVENTS.TIMELINE_WINDOW_DATA_SET, (event, snapshot: ReviewTimelineWindowDataSnapshot) => {
 			const mainWindow = this.options.getMainWindow();
 			if (

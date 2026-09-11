@@ -1,4 +1,4 @@
-export type ReviewTimelineViewMode = 'fight' | 'comparison';
+export type ReviewTimelineViewMode = 'fight' | 'comparison' | 'replay';
 
 export type ReviewTimelineWindowContext = {
 	reportCode: string;
@@ -9,6 +9,7 @@ export type ReviewTimelineWindowContext = {
 	fightStartTime: number;
 	fightDuration: number;
 	cursorPercent: number;
+	playing: boolean;
 	viewMode: ReviewTimelineViewMode;
 	title: string;
 };
@@ -19,6 +20,7 @@ export type ReviewTimelineWindowAction =
 	| { type: 'open-fight'; fightID?: number }
 	| { type: 'open-death'; deathID: number }
 	| { type: 'open-pull-death'; fightID: number; deathID: number }
+	| { type: 'toggle-playback' }
 	| { type: 'view-mode'; viewMode: ReviewTimelineViewMode };
 
 export type ReviewTimelineWindowFightData = {

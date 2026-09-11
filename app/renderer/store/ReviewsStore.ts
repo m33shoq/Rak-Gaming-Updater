@@ -146,9 +146,25 @@ export const useReviewsStore = defineStore('Reviews', () => {
 	}
 
 	const hasPendingTimelineWindowActions = computed(() => pendingTimelineWindowActions.value.length > 0);
+	const isTimelineSeekAction = (action: ReviewTimelineWindowAction) => (
+		action.type === 'seek' || action.type === 'seek-pull'
+	);
+
+	function coalesceTimelineWindowActions(actions: ReviewTimelineWindowAction[]) {
+		let newestSeekIndex = -1;
+		for (let index = actions.length - 1; index >= 0; index--) {
+			if (!isTimelineSeekAction(actions[index])) continue;
+			newestSeekIndex = index;
+			break;
+		}
+		return actions.filter((action, index) => (
+			!isTimelineSeekAction(action) || index === newestSeekIndex
+		));
+	}
+
 	function flushPendingTimelineWindowActions() {
 		if (!timelineWindowActionHandler || pendingTimelineWindowActions.value.length === 0) return;
-		const queuedActions = pendingTimelineWindowActions.value;
+		const queuedActions = coalesceTimelineWindowActions(pendingTimelineWindowActions.value);
 		pendingTimelineWindowActions.value = [];
 		const deferredActions: ReviewTimelineWindowAction[] = [];
 		queuedActions.forEach(action => {
@@ -160,10 +176,10 @@ export const useReviewsStore = defineStore('Reviews', () => {
 			}
 		});
 		if (deferredActions.length > 0) {
-			pendingTimelineWindowActions.value = [
+			pendingTimelineWindowActions.value = coalesceTimelineWindowActions([
 				...deferredActions,
 				...pendingTimelineWindowActions.value,
-			];
+			]);
 		}
 	}
 
@@ -184,10 +200,10 @@ export const useReviewsStore = defineStore('Reviews', () => {
 				log.error('Failed to handle detached timeline action', { action, error });
 			}
 		}
-		pendingTimelineWindowActions.value = [
+		pendingTimelineWindowActions.value = coalesceTimelineWindowActions([
 			...pendingTimelineWindowActions.value,
 			action,
-		].slice(-50);
+		]).slice(-50);
 	}
 
 	function createTimelineWindowDataSnapshot(
