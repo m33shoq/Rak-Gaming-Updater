@@ -4,16 +4,15 @@ import { IPC_EVENTS } from '@/events';
 import type { ReviewTimelineWindowAction, ReviewTimelineWindowContext } from '@/timelineWindow';
 
 import { ref, computed, watch, onMounted, onBeforeUnmount, useTemplateRef, nextTick } from 'vue';
-import { useI18n } from 'vue-i18n';
 import { useIpcOn } from '@/renderer/composables/useIpcOn';
 import { createReviewTimelinePlayback } from '@/renderer/composables/useReviewTimelinePlayback';
 
 import TabContent from '@/renderer/components/TabContent.vue';
 import UIButton from '@/renderer/components/Button.vue';
-import Dropdown from '@/renderer/components/Dropdown.vue';
 import Input from '@/renderer/components/Input.vue';
 import ScrollFrame from '@/renderer/components/ScrollFrame.vue';
 import ReviewCooldownTimeline from '@/renderer/components/ReviewCooldownTimeline.vue';
+import ReviewWclSelectors from '@/renderer/components/ReviewWclSelectors.vue';
 
 import { useReviewsStore } from '@/renderer/store/ReviewsStore';
 import { useLoginStore } from '@/renderer/store/LoginStore';
@@ -42,44 +41,8 @@ function formatTime(t) {
 	return `${minutes}:${seconds.toString().padStart(2, '0')}`;
 }
 
-const WCL_DIFFICULTY_NAMES: Readonly<Record<number, string>> = {
-	1: 'LFR',
-	2: 'Flex',
-	3: 'Normal',
-	4: 'Heroic',
-	5: 'Mythic',
-	10: 'Mythic+',
-};
-
-function formatWclDifficultyLabel(difficulty: number | null | undefined) {
-	if (typeof difficulty !== 'number' || !Number.isFinite(difficulty)) return '';
-	const difficultyName = WCL_DIFFICULTY_NAMES[difficulty];
-	return difficultyName ? difficultyName.charAt(0) : `[${difficulty}]`;
-}
-
 const reviewsStore = useReviewsStore();
 const loginStore = useLoginStore();
-const { t } = useI18n();
-
-const isWclAuthorized = ref(false);
-let initialReportsRequested = false;
-let wclAuthorizationStatusRevision = 0;
-
-function applyWclAuthorizationStatus(authorized: unknown) {
-	isWclAuthorized.value = authorized === true;
-	if (!isWclAuthorized.value) {
-		initialReportsRequested = false;
-		return;
-	}
-	if (initialReportsRequested) return;
-	initialReportsRequested = true;
-	void reviewsStore.requestReports();
-}
-
-useIpcOn(IPC_EVENTS.WCL_AUTH_STATUS_UPDATED, (_event, authorized: boolean) => {
-	wclAuthorizationStatusRevision++;
-	applyWclAuthorizationStatus(authorized);
-});
 
 const youtubeLink = ref('')
 const youtubeLinkStatus = ref('')
@@ -1143,15 +1106,6 @@ onMounted(async () => {
 	} catch (error) {
 		log.warn('Failed to load YouTube player fullscreen state', error);
 	}
-	const requestedAtRevision = wclAuthorizationStatusRevision;
-	try {
-		const authorized = await ipc.invoke(IPC_EVENTS.WCL_AUTH_STATUS_GET);
-		if (wclAuthorizationStatusRevision === requestedAtRevision) {
-			applyWclAuthorizationStatus(authorized);
-		}
-	} catch (error) {
-		log.error('Failed to load WCL authorization status', error);
-	}
 	try {
 		const status = await ipc.invoke(IPC_EVENTS.TIMELINE_WINDOW_STATUS_GET) as { detached?: boolean };
 		const wasDetached = reviewsStore.timelineWindowDetached;
@@ -1192,116 +1146,7 @@ onBeforeUnmount(() => {
 	resetCopyReviewLinkStatus();
 });
 
-async function wclAuth() {
-	const res = await ipc.invoke(IPC_EVENTS.WCL_REQUEST_AUTH_LINK);
-	console.log('WCL Auth Link:', res)
-}
-
-const reportOptions = computed(() => {
-	const list = []
-
-	list.push({
-		label: '--',
-		value: null,
-	});
-
-	list.push(...reviewsStore.getReports.map(r => ({
-		label: `${r.title} - ${new Date(r.startTime).toLocaleString()}`,
-		value: r.code,
-	})));
-
-	const lastReport = reviewsStore.getReports[reviewsStore.getReports.length - 1];
-	const lastReportEndTime = lastReport ? lastReport.endTime : undefined;
-
-	if (lastReportEndTime && reviewsStore.hasOlderReports) {
-		list.push({
-			label: reviewsStore.olderReportsLoading
-				? t('reviews.loading_older_reports')
-				: t('reviews.load_older_reports'),
-			disabled: reviewsStore.olderReportsLoading,
-			overrideAction: () => {
-				void reviewsStore.requestReports(lastReportEndTime);
-			},
-		});
-	}
-
-	return list;
-});
-
-const reportDropdownLoading = computed(() => (
-	reviewsStore.isReportListLoading || reviewsStore.olderReportsLoading
-));
-const reportDropdownLoadingLabel = computed(() => (
-	reviewsStore.getReports.length === 0 ? t('reviews.loading_reports') : undefined
-));
-const reportDropdownError = computed(() => (
-	reviewsStore.reportListError || reviewsStore.olderReportsError
-		? t('reviews.reports_load_failed')
-		: null
-));
-const reportDropdownEmpty = computed(() => (
-	reviewsStore.reportListStatus === 'ready' && reviewsStore.getReports.length === 0
-));
-
-function retryReportDropdownLoad() {
-	if (reviewsStore.olderReportsError) {
-		const lastReport = reviewsStore.getReports[reviewsStore.getReports.length - 1];
-		if (lastReport?.endTime) return reviewsStore.requestReports(lastReport.endTime, true);
-	}
-	return reviewsStore.requestReports(undefined, true);
-}
-
-const fightOptions = computed(() => {
-	const list = [
-		{
-			label: '--',
-			value: null,
-		},
-	]
-
-	if (!reviewsStore.getReportDetails?.fights) return list;
-
-	const timeOffset = reviewsStore.getReportTimeOffset;
-	const fights = reviewsStore.getReportDetails.fights;
-
-	const idToCount = new Map<number, number>();
-	const encounterDifficultyToCount = new Map<string, number>();
-	const chronologicalFights = [...fights].sort((left, right) => left.startTime - right.startTime);
-	for (const f of chronologicalFights) {
-		const pullScope = `${f.encounterID}:${f.difficulty ?? 'unknown'}`;
-		const currentCount = encounterDifficultyToCount.get(pullScope) || 0;
-		encounterDifficultyToCount.set(pullScope, currentCount + 1);
-
-		idToCount.set(f.id, currentCount + 1);
-	}
-
-	list.push(...[...chronologicalFights].reverse().map(f => {
-		const count = idToCount.get(f.id) || 0;
-		const formattedDifficulty = formatWclDifficultyLabel(f.difficulty);
-		const difficultyLabel = formattedDifficulty ? ` ${formattedDifficulty}` : '';
-
-		return {
-			label: `#${count}${difficultyLabel} ${f.name} ${f.kill ? 'KILL' : (f.bossPercentage).toFixed(1) + '%'} ${formatTime((f.endTime - f.startTime) / 1000)} (${new Date(timeOffset + f.startTime).toLocaleTimeString()})`,
-			value: f.id,
-			color: f.kill ? 'green' : undefined,
-		}
-	}) || []);
-
-	return list;
-});
-
-const fightDropdownLoadingLabel = computed(() => (
-	!reviewsStore.getReportDetails ? t('reviews.loading_fights') : undefined
-));
-const fightDropdownError = computed(() => (
-	reviewsStore.selectedReportDetailsError ? t('reviews.fights_load_failed') : null
-));
-const fightDropdownEmpty = computed(() => (
-	reviewsStore.selectedReportDetailsStatus === 'ready'
-	&& reviewsStore.getReportDetails?.fights?.length === 0
-));
-
-watch(reviewsStore.videoList, (newList) => {
+watch(() => reviewsStore.videoList, (newList) => {
 	if (!reviewsStore.selectedVideoInfo && newList.length > 0) {
 		reviewsStore.setSelectedVideoInfo(newList[0]);
 	}
@@ -2523,41 +2368,7 @@ function deleteYoutubeVideo(videoId: string) {
 		<div class="w-full h-full min-h-0 flex flex-col">
 			<div class="flex flex-row gap-0 h-9/10 flex-14">
 				<div class="flex flex-1 flex-col max-w-[calc(100vw-350px)]">
-					<template v-if="isWclAuthorized">
-						<Dropdown :options="reportOptions" class="min-w-[34rem]"
-							:placeholder="$t('reviews.select_report')"
-							:loading="reportDropdownLoading"
-							:loadingLabel="reportDropdownLoadingLabel"
-							:empty="reportDropdownEmpty"
-							:emptyLabel="$t('reviews.no_reports')"
-							:error="reportDropdownError"
-							v-model="reviewsStore.selectedReportCode"
-							:onOpen="reviewsStore.requestReports"
-							:onRetry="retryReportDropdownLoad"
-						></Dropdown>
-						<Dropdown :options="fightOptions" class="min-w-[34rem]"
-							:placeholder="$t('reviews.select_fight')"
-							:disabled="!reviewsStore.selectedReportCode"
-							:loading="reviewsStore.isSelectedReportDetailsLoading"
-							:loadingLabel="fightDropdownLoadingLabel"
-							:empty="fightDropdownEmpty"
-							:emptyLabel="$t('reviews.no_fights')"
-							:error="fightDropdownError"
-							v-model="reviewsStore.selectedFightID"
-							:onOpen="reviewsStore.requestReportData"
-							:onRetry="() => reviewsStore.requestReportData(true)"
-						></Dropdown>
-					</template>
-					<div
-						v-else
-						class="flex min-w-[34rem] h-[72px] items-center justify-center"
-					>
-						<UIButton
-							@click="wclAuth"
-							label="Authorize WCL client"
-							class="h-14 min-w-[24rem] px-6 text-lg"
-						></UIButton>
-					</div>
+					<ReviewWclSelectors />
 					<div
 						ref="videoContainer"
 						class="youtube-player-container relative bg-gray-200 aspect-video max-w-[min(100%,80vw)] h-[calc(100%-85px)] rounded-md mt-2"
