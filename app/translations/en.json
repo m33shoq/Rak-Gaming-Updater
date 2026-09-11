@@ -120,5 +120,9 @@
 	"reviews.no_reports": "No reports found",
 	"reviews.no_fights": "No boss fights in this report",
 	"reviews.reports_load_failed": "Failed to load reports — click to retry",
-	"reviews.fights_load_failed": "Failed to load fights — click to retry"
+	"reviews.fights_load_failed": "Failed to load fights — click to retry",
+	"reviews.authorize_wcl": "Authorize WCL client",
+	"reviews.authorizing_wcl": "Authorizing WCL…",
+	"reviews.authorization_failed": "Failed to open WCL authorization: {error}",
+	"reviews.authorization_unknown_error": "Unknown error"
 }

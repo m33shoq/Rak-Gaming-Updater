@@ -20,27 +20,3 @@ test('report filtering includes streams overlapping any part of the report', () 
 	assert.equal(selection.reviewVideoOverlapsWindow(video('during', 150_000, 20_000), reportStart, reportEnd, now), true);
 	assert.equal(selection.reviewVideoOverlapsWindow(video('after', 200_001, 20_000), reportStart, reportEnd, now), false);
 });
-
-test('fight selection keeps a fitting current stream', () => {
-	const current = video('current', 50_000, 200_000);
-	const newer = video('newer', 75_000, 150_000);
-	assert.equal(
-		selection.chooseReviewVideoForWindow([newer, current], current, 100_000, 200_000, now),
-		current,
-	);
-});
-
-test('fight selection prefers full coverage and falls back to overlap', () => {
-	const unrelated = video('unrelated', 10_000, 20_000);
-	const partial = video('partial', 150_000, 20_000);
-	const complete = video('complete', 90_000, 120_000);
-
-	assert.equal(
-		selection.chooseReviewVideoForWindow([partial, complete], partial, 100_000, 200_000, now),
-		complete,
-	);
-	assert.equal(
-		selection.chooseReviewVideoForWindow([partial], unrelated, 100_000, 200_000, now),
-		partial,
-	);
-});

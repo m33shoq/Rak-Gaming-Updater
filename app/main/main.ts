@@ -96,6 +96,7 @@ function persistWindowSettingsDebounced(win: BrowserWindow, delayMs = 250) {
 
 const socket = Socket(SERVER_URL, { autoConnect: false });
 let isWclSocketReady = false;
+let isWclAuthorized = Boolean(store.get('WCL_REFRESH_TOKEN'));
 const wclRequestTransport = new WclRequestTransport(
 	socket,
 	() => isWclSocketReady,
@@ -111,6 +112,16 @@ function notifyRenderersWclReady(connectionID?: string) {
 	BrowserWindow.getAllWindows().forEach(window => {
 		if (!window.isDestroyed() && !window.webContents.isDestroyed()) {
 			window.webContents.send(IPC_EVENTS.SOCKET_WCL_READY_CALLBACK);
+		}
+	});
+}
+
+function notifyRenderersWclAuthorizationStatus(authorized: boolean, connectionID?: string) {
+	if (connectionID && (!socket.connected || socket.id !== connectionID)) return;
+	isWclAuthorized = authorized;
+	BrowserWindow.getAllWindows().forEach(window => {
+		if (!window.isDestroyed() && !window.webContents.isDestroyed()) {
+			window.webContents.send(IPC_EVENTS.WCL_AUTH_STATUS_UPDATED, authorized);
 		}
 	});
 }
@@ -1288,12 +1299,18 @@ socket.on(SOCKET_EVENTS.SOCKET_CONNECTED, () => {
 		void wclRequestTransport.requestTokenRefresh(WCL_REFRESH_TOKEN).then(response => {
 			if (response.success === true) {
 				log.info('WCL refresh token sent successfully');
+				notifyRenderersWclAuthorizationStatus(true, connectionID);
+				notifyRenderersWclReady(connectionID);
 			} else {
-				log.info('Error sending WCL refresh token:', 'error' in response ? response.error : 'Unknown error');
+				log.warn('Error sending WCL refresh token:', 'error' in response ? response.error : 'Unknown error');
+				// Keep the saved refresh token so a transient server failure can be
+				// retried on reconnect, but do not present it as an authenticated WCL
+				// session. The authorization flow itself does not require WCL readiness.
+				notifyRenderersWclAuthorizationStatus(false, connectionID);
 			}
-			notifyRenderersWclReady(connectionID);
 		});
 	} else {
+		notifyRenderersWclAuthorizationStatus(false, connectionID);
 		notifyRenderersWclReady(connectionID);
 	}
 });
@@ -1498,13 +1515,18 @@ ipcMain.handle(IPC_EVENTS.WCL_REQUEST_AUTH_LINK, async () => {
 });
 
 ipcMain.handle(IPC_EVENTS.WCL_AUTH_STATUS_GET, () => {
-	return Boolean(store.get('WCL_REFRESH_TOKEN'));
+	return isWclAuthorized;
 });
 
 socket.on(SOCKET_EVENTS.WCL_REFRESH_TOKEN_UPDATE, (data) => {
-	// log.info('Received WCL refresh token:', data);
-	store.set('WCL_REFRESH_TOKEN', data);
-	mainWindow?.webContents.send(IPC_EVENTS.WCL_AUTH_STATUS_UPDATED, Boolean(data));
+	const refreshToken = typeof data === 'string' ? data.trim() : '';
+	if (refreshToken) store.set('WCL_REFRESH_TOKEN', refreshToken);
+	else store.delete('WCL_REFRESH_TOKEN');
+
+	const authorized = Boolean(refreshToken);
+	notifyRenderersWclAuthorizationStatus(authorized, socket.id);
+	if (authorized) notifyRenderersWclReady(socket.id);
+	else isWclSocketReady = false;
 });
 
 ipcMain.handle(IPC_EVENTS.WCL_REQUEST_REPORTS_LIST, async (_event, payload?: { endTime?: unknown }) => {

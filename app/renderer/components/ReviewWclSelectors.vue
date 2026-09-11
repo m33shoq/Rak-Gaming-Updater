@@ -7,6 +7,7 @@ import UIButton from '@/renderer/components/Button.vue';
 import Dropdown from '@/renderer/components/Dropdown.vue';
 import { useIpcOn } from '@/renderer/composables/useIpcOn';
 import { useReviewsStore } from '@/renderer/store/ReviewsStore';
+import type { WclRequestResult } from '@/wclRequests';
 
 const WCL_DIFFICULTY_NAMES: Readonly<Record<number, string>> = {
 	1: 'LFR',
@@ -20,6 +21,8 @@ const WCL_DIFFICULTY_NAMES: Readonly<Record<number, string>> = {
 const reviewsStore = useReviewsStore();
 const { t } = useI18n();
 const isAuthorized = ref(false);
+const authorizing = ref(false);
+const authorizationError = ref('');
 let initialReportsRequested = false;
 let authorizationStatusRevision = 0;
 
@@ -45,6 +48,7 @@ function applyAuthorizationStatus(authorized: unknown): void {
 		initialReportsRequested = false;
 		return;
 	}
+	authorizationError.value = '';
 	if (initialReportsRequested) return;
 	initialReportsRequested = true;
 	void reviewsStore.requestReports();
@@ -68,10 +72,27 @@ onMounted(async () => {
 });
 
 async function authorize(): Promise<void> {
+	if (authorizing.value) return;
+	authorizing.value = true;
+	authorizationError.value = '';
 	try {
-		await ipc.invoke(IPC_EVENTS.WCL_REQUEST_AUTH_LINK);
+		const response = await ipc.invoke(
+			IPC_EVENTS.WCL_REQUEST_AUTH_LINK,
+		) as WclRequestResult<true>;
+		if (!response || response.success !== true) {
+			throw new Error(
+				response && 'error' in response
+					? response.error
+					: t('reviews.authorization_unknown_error'),
+			);
+		}
 	} catch (error) {
 		log.error('Failed to open WCL authorization', error);
+		authorizationError.value = t('reviews.authorization_failed', {
+			error: error instanceof Error ? error.message : t('reviews.authorization_unknown_error'),
+		});
+	} finally {
+		authorizing.value = false;
 	}
 }
 
@@ -210,13 +231,17 @@ const fightDropdownEmpty = computed(() => (
 		</template>
 		<div
 			v-else
-			class="flex min-w-[34rem] h-[72px] items-center justify-center"
+			class="flex min-h-[72px] min-w-[34rem] flex-col items-center justify-center gap-1.5"
 		>
 			<UIButton
 				class="h-14 min-w-[24rem] px-6 text-lg"
-				label="Authorize WCL client"
+				:label="authorizing ? $t('reviews.authorizing_wcl') : $t('reviews.authorize_wcl')"
+				:disabled="authorizing"
 				@click="authorize"
 			/>
+			<p v-if="authorizationError" role="alert" class="max-w-[34rem] text-center text-xs text-red-400">
+				{{ authorizationError }}
+			</p>
 		</div>
 	</div>
 </template>
