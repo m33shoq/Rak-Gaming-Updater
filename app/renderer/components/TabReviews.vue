@@ -1,12 +1,12 @@
 <script setup lang="ts">
 import log from 'electron-log/renderer';
-import { IPC_EVENTS } from '@/events';
 
-import { ref, computed, watch, onBeforeUnmount, useTemplateRef, nextTick } from 'vue';
+import { computed, watch, useTemplateRef, nextTick } from 'vue';
 import { useReviewPlayerFrame } from '@/renderer/composables/useReviewPlayerFrame';
 import { useReviewPlayerHotkeys } from '@/renderer/composables/useReviewPlayerHotkeys';
 import { createReviewTimelinePlayback } from '@/renderer/composables/useReviewTimelinePlayback';
 import { useReviewTimelineWindowBridge } from '@/renderer/composables/useReviewTimelineWindowBridge';
+import { useReviewVideoActions } from '@/renderer/composables/useReviewVideoActions';
 import { useReviewVideoSynchronization } from '@/renderer/composables/useReviewVideoSynchronization';
 import {
 	useReviewYoutubePlayer,
@@ -20,8 +20,6 @@ import ReviewVideoList from '@/renderer/components/ReviewVideoList.vue';
 import ReviewWclSelectors from '@/renderer/components/ReviewWclSelectors.vue';
 
 import { useReviewsStore } from '@/renderer/store/ReviewsStore';
-
-import { useYoutubeVideoInfo } from '@/renderer/composables/useYoutubeVideoInfo';
 
 import {
 	ReviewSeekCoordinator,
@@ -290,10 +288,6 @@ function handleYoutubePlayerStateChange(state: ReviewYoutubePlayerState): void {
 	updateSynchronizationPlayerState(state);
 }
 
-onBeforeUnmount(() => {
-	resetCopyReviewLinkStatus();
-});
-
 watch(() => reviewsStore.videoList, (newList) => {
 	if (!reviewsStore.selectedVideoInfo && newList.length > 0) {
 		reviewsStore.setSelectedVideoInfo(newList[0]);
@@ -532,55 +526,6 @@ function rememberCurrentFightTime(): void {
 	);
 }
 
-const copyReviewLinkStatus = ref('');
-const isCopyReviewLinkHovered = ref(false);
-let copyReviewLinkResetTimeout = null as number | null;
-
-const copyReviewLinkTooltip = computed(() => {
-	if (copyReviewLinkStatus.value) return copyReviewLinkStatus.value;
-	if (isCopyReviewLinkHovered.value && reviewsStore.getSelectedVideoId) return 'Copy review link with timestamp';
-	return '';
-});
-
-function resetCopyReviewLinkStatus() {
-	if (copyReviewLinkResetTimeout) {
-		clearTimeout(copyReviewLinkResetTimeout);
-		copyReviewLinkResetTimeout = null;
-	}
-	copyReviewLinkStatus.value = '';
-}
-
-async function copyReviewLink(event?: MouseEvent) {
-	(event?.currentTarget as HTMLButtonElement | null)?.blur();
-
-	const videoId = reviewsStore.getSelectedVideoId;
-	if (!videoId) {
-		copyReviewLinkStatus.value = 'No video selected';
-		return;
-	}
-
-	const timestampSeconds = Math.max(0, Math.floor(currentVideoTime.value || 0));
-	const reviewUrl = `https://rak-gaming-updater.org/api/updater/open/reviews?videoId=${encodeURIComponent(videoId)}&t=${timestampSeconds}`;
-
-	try {
-		await navigator.clipboard.writeText(reviewUrl);
-		copyReviewLinkStatus.value = 'Copied';
-		log.info('Copied review link', { reviewUrl });
-	} catch (error) {
-		copyReviewLinkStatus.value = 'Copy failed';
-		log.error('Failed to copy review link', error);
-	}
-
-	if (copyReviewLinkResetTimeout) {
-		clearTimeout(copyReviewLinkResetTimeout);
-	}
-
-	copyReviewLinkResetTimeout = window.setTimeout(() => {
-		copyReviewLinkStatus.value = '';
-		copyReviewLinkResetTimeout = null;
-	}, 2000);
-}
-
 const currentFightCursor = computed(() => {
     if (!player.value || !reviewsStore.getFightDuration) return 0;
 
@@ -620,31 +565,19 @@ const {
 	togglePlayback: () => togglePlayPause(),
 });
 
-function openYoutubeLink(videoId: string, timestampSeconds?: number) {
-	ipc.send(IPC_EVENTS.YOUTUBE_OPEN_LINK, videoId, timestampSeconds);
-}
-
-function getCurrentStreamTimestamp(video: YouTubeVideo): number | undefined {
-	if (!player.value || !playerLoaded.value) return undefined;
-	const currentTime = player.value.getCurrentTime();
-	if (!Number.isFinite(currentTime) || currentTime < 0) return undefined;
-
-	const selectedVideo = reviewsStore.selectedVideoInfo;
-	if (!selectedVideo || selectedVideo.id === video.id) return currentTime;
-
-	const currentPlaybackTime = selectedVideo.startTime + currentTime * 1000;
-	return Math.max(0, (currentPlaybackTime - video.startTime) / 1000);
-}
-
-function openStreamInBrowser(video: YouTubeVideo) {
-	openYoutubeLink(video.id, getCurrentStreamTimestamp(video));
-}
-
-function openSelectedYoutubeVideo(event: MouseEvent) {
-	if (event.detail > 1) return;
-	const selectedVideo = reviewsStore.selectedVideoInfo;
-	if (selectedVideo) openStreamInBrowser(selectedVideo);
-}
+const {
+	copyReviewLink,
+	copyReviewLinkTooltip,
+	isCopyReviewLinkHovered,
+	openSelectedYoutubeVideo,
+	openStreamInBrowser,
+} = useReviewVideoActions({
+	player,
+	playerLoaded,
+	currentVideoTime,
+	getSelectedVideo: () => reviewsStore.selectedVideoInfo,
+	getSelectedVideoID: () => reviewsStore.getSelectedVideoId,
+});
 
 </script>
 
