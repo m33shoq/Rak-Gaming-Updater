@@ -1,4 +1,4 @@
-export const REVIEW_REPLAY_VERSION = 8 as const;
+export const REVIEW_REPLAY_VERSION = 12 as const;
 
 export interface ReplayPosition {
 	timestamp: number;
@@ -77,11 +77,33 @@ export function isReplayActorActive(actor: ReplayActor, timestamp: number): bool
 	return actor.active.some(window => window.start <= timestamp && timestamp < window.end);
 }
 
+/** Players remain visible between an observed death and their next active interval. */
+export function isReplayPlayerDead(
+	actor: ReplayActor,
+	timestamp: number,
+	fightDuration: number,
+): boolean {
+	if (actor.kind !== 'player' || isReplayActorActive(actor, timestamp)) return false;
+
+	let latestWindow: ReplayActor['active'][number] | undefined;
+	for (let index = actor.active.length - 1; index >= 0; index--) {
+		if (actor.active[index].start > timestamp) continue;
+		latestWindow = actor.active[index];
+		break;
+	}
+	return Boolean(
+		latestWindow
+		&& latestWindow.end < fightDuration
+		&& timestamp >= latestWindow.end,
+	);
+}
+
 /** Interpolate only dense observations. Long gaps stay visibly stale instead of inventing movement. */
 export function sampleReplayPosition(
 	positions: readonly ReplayPosition[],
 	timestamp: number,
 	maxAge: number,
+	allowInterpolation = true,
 ): SampledReplayPosition | null {
 	let low = 0;
 	let high = positions.length;
@@ -98,7 +120,12 @@ export function sampleReplayPosition(
 	const age = timestamp - before.timestamp;
 	if (age > maxAge) return null;
 
-	if (after && before.mapID === after.mapID && after.timestamp - before.timestamp <= 1500) {
+	if (
+		allowInterpolation
+		&& after
+		&& before.mapID === after.mapID
+		&& after.timestamp - before.timestamp <= 1500
+	) {
 		const progress = (timestamp - before.timestamp) / (after.timestamp - before.timestamp);
 		return {
 			...before,

@@ -10,6 +10,7 @@ import { projectReplayMapPosition, resolveReplayMapDefinition } from '@/replayMa
 import {
 	activeReplayCast,
 	isReplayActorActive,
+	isReplayPlayerDead,
 	replayActorIconURLs,
 	sampleReplayPosition,
 	type ReplayActor,
@@ -110,15 +111,26 @@ function maxPositionAge(actor: ReplayActor): number {
 }
 
 const rawSampledActors = computed(() => (replay.value?.actors || []).flatMap(actor => {
-	if (!visibleKinds.value.has(actor.kind) || !isReplayActorActive(actor, timestamp.value)) return [];
+	if (!visibleKinds.value.has(actor.kind)) return [];
+	const active = isReplayActorActive(actor, timestamp.value);
+	const dead = isReplayPlayerDead(actor, timestamp.value, replay.value?.duration || 0);
+	if (!active && !dead) return [];
 
-	const position = sampleReplayPosition(actor.positions, timestamp.value, maxPositionAge(actor));
+	const position = sampleReplayPosition(
+		actor.positions,
+		timestamp.value,
+		dead ? Number.POSITIVE_INFINITY : maxPositionAge(actor),
+		!dead,
+	);
 	if (!position) return [];
 
 	return [{
 		actor: displayActorsByKey.value.get(actor.key) || actor,
 		position,
-		cast: activeReplayCast(castsByActor.value.get(actor.key) || [], actor.key, timestamp.value),
+		cast: dead
+			? null
+			: activeReplayCast(castsByActor.value.get(actor.key) || [], actor.key, timestamp.value),
+		dead,
 	}];
 }));
 
@@ -351,7 +363,8 @@ function formatTime(timestampMs: number): string {
 						:unit="unit"
 						:show-name="showNames"
 						:selected="selectedActorKey === entry.actor.key"
-						:opacity="!entry.cast && entry.position.age > 3000 ? 0.55 : 1"
+						:dead="entry.dead"
+						:opacity="!entry.dead && !entry.cast && entry.position.age > 3000 && entry.actor.positionRetentionMs !== null ? 0.55 : 1"
 						@select="selectActor(entry.actor.key)"
 					/>
 				</svg>

@@ -16,6 +16,7 @@ const props = defineProps<{
 	unit: number;
 	showName: boolean;
 	selected: boolean;
+	dead: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -84,7 +85,12 @@ function tryNextIcon(): void {
 </script>
 
 <template>
-	<g class="replay-actor" :class="`replay-actor-${actor.kind}`" @click.stop="emit('select')">
+	<g
+		class="replay-actor"
+		:class="[`replay-actor-${actor.kind}`, { 'replay-actor-dead': dead }]"
+		@click.stop="emit('select')"
+	>
+		<title v-if="dead">{{ actor.name }} is dead</title>
 		<defs>
 			<clipPath :id="iconClipID" clipPathUnits="userSpaceOnUse">
 				<circle
@@ -99,7 +105,7 @@ function tryNextIcon(): void {
 		</defs>
 
 		<g
-			v-if="actor.kind === 'player' && position.facingDegrees != null"
+			v-if="actor.kind === 'player' && !dead && position.facingDegrees != null"
 			:transform="`rotate(${position.facingDegrees})`"
 			opacity="0.78"
 		>
@@ -114,7 +120,7 @@ function tryNextIcon(): void {
 			v-if="actor.kind !== 'add'"
 			:r="radius"
 			fill="#05080d"
-			:stroke="selected ? '#7dd3fc' : actorColor"
+			:stroke="dead ? '#fb7185' : selected ? '#7dd3fc' : actorColor"
 			:stroke-width="unit * (selected ? 3 : 2)"
 		/>
 		<path
@@ -146,6 +152,20 @@ function tryNextIcon(): void {
 			class="actor-icon"
 			@error="tryNextIcon"
 		/>
+		<g v-if="dead" class="death-indicator" pointer-events="none">
+			<circle :r="radius - unit * 1.5" fill="rgb(5 8 13 / 68%)" />
+			<text
+				text-anchor="middle"
+				:y="unit * 6"
+				:font-size="unit * 20"
+				font-family="Arial, sans-serif"
+				font-weight="700"
+				fill="#fecdd3"
+				stroke="#05080d"
+				:stroke-width="unit * 2"
+				paint-order="stroke"
+			>☠</text>
+		</g>
 
 		<text
 			v-if="showName || selected"
@@ -153,7 +173,7 @@ function tryNextIcon(): void {
 			:y="-radius - unit * 6"
 			:font-size="unit * 14"
 			:font-weight="selected ? 800 : 600"
-			:fill="actor.kind === 'player' ? playerClassColor : '#f4f4f5'"
+			:fill="dead ? '#fda4af' : actor.kind === 'player' ? playerClassColor : '#f4f4f5'"
 			stroke="#05080d"
 			:stroke-width="unit * 3"
 			paint-order="stroke"
@@ -229,5 +249,9 @@ function tryNextIcon(): void {
 .actor-icon,
 .cast-icon {
 	pointer-events: none;
+}
+
+.replay-actor-dead .actor-icon {
+	filter: grayscale(1) brightness(0.48);
 }
 </style>

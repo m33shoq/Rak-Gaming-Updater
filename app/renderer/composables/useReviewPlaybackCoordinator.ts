@@ -5,6 +5,7 @@ import { getReviewVideoEndTime } from '@/reviewVideoSelection';
 import { useReviewVideoSynchronization } from '@/renderer/composables/useReviewVideoSynchronization';
 import {
 	ReviewSeekCoordinator,
+	shouldPlayReviewSeek,
 	type ReviewSeekExecutionContext,
 	type ReviewSeekIntent,
 	type ReviewSeekSource,
@@ -293,7 +294,7 @@ export function useReviewPlaybackCoordinator(options: ReviewPlaybackCoordinatorO
 			fightID,
 			fightTimestampSeconds,
 			preferredVideoID,
-			play: true,
+			play: shouldPlayReviewSeek(source, options.playerPlaying.value),
 			synchronize: true,
 		});
 	}

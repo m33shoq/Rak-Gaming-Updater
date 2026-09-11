@@ -8,6 +8,21 @@ export type ReviewSeekSource =
 	| 'deep-link'
 	| 'hotkey';
 
+const AUTOPLAY_REVIEW_SEEK_SOURCES: ReadonlySet<ReviewSeekSource> = new Set([
+	'fight-selection',
+	'report-selection',
+	'video-selection',
+	'deep-link',
+]);
+
+/**
+ * Selection and deep-link navigation retain their existing autoplay behavior.
+ * Interactive seeks preserve whether playback was running when they were queued.
+ */
+export function shouldPlayReviewSeek(source: ReviewSeekSource, wasPlaying: boolean): boolean {
+	return wasPlaying || AUTOPLAY_REVIEW_SEEK_SOURCES.has(source);
+}
+
 export type ReviewSeekIntent =
 	| {
 		kind: 'fight-time';

@@ -9,6 +9,17 @@ const js = ts.transpileModule(source, {
 }).outputText;
 const sync = await import(`data:text/javascript;base64,${Buffer.from(js).toString('base64')}`);
 
+const seekCoordinatorSource = readFileSync(
+	new URL('../app/renderer/reviewSeekCoordinator.ts', import.meta.url),
+	'utf8',
+);
+const seekCoordinatorJs = ts.transpileModule(seekCoordinatorSource, {
+	compilerOptions: { module: ts.ModuleKind.ESNext },
+}).outputText;
+const seekCoordinator = await import(
+	`data:text/javascript;base64,${Buffer.from(seekCoordinatorJs).toString('base64')}`
+);
+
 test('video/log timestamp mapping is reversible with and without an anchor', () => {
 	const videoStart = 1_000_000;
 	const logTimestamp = 1_042_000;
@@ -78,4 +89,17 @@ test('manual reads can apply a significant measurement immediately', () => {
 		confirmationMaxAgeMs: 30_000,
 	});
 	assert.equal(decision.apply, true);
+});
+
+test('interactive review seeks preserve paused playback', () => {
+	for (const source of ['timeline', 'comparison', 'detached-timeline', 'hotkey']) {
+		assert.equal(seekCoordinator.shouldPlayReviewSeek(source, false), false);
+		assert.equal(seekCoordinator.shouldPlayReviewSeek(source, true), true);
+	}
+});
+
+test('selection and deep-link seeks retain autoplay behavior', () => {
+	for (const source of ['fight-selection', 'report-selection', 'video-selection', 'deep-link']) {
+		assert.equal(seekCoordinator.shouldPlayReviewSeek(source, false), true);
+	}
 });

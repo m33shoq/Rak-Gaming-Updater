@@ -23,6 +23,10 @@ test('position sampling avoids long invented movement', () => {
 	], 1500, 3000).x, 5);
 	assert.equal(replay.sampleReplayPosition([
 		position,
+		{ ...position, timestamp: 2000, x: 10 },
+	], 1500, 3000, false).x, 0);
+	assert.equal(replay.sampleReplayPosition([
+		position,
 		{ ...position, timestamp: 3000, x: 10 },
 	], 1500, 3000).x, 0);
 });
@@ -35,6 +39,21 @@ test('actor activity and current cast use their intended playback windows', () =
 	const casts = [{ actorKey: 'one', start: 100, end: 200 }];
 	assert.equal(replay.activeReplayCast(casts, 'one', 199), casts[0]);
 	assert.equal(replay.activeReplayCast(casts, 'one', 200), null);
+});
+
+test('players remain identifiable as dead between active intervals', () => {
+	const actor = {
+		kind: 'player',
+		active: [
+			{ start: 0, end: 3000 },
+			{ start: 5000, end: 10_000 },
+		],
+	};
+	assert.equal(replay.isReplayPlayerDead(actor, 2999, 10_000), false);
+	assert.equal(replay.isReplayPlayerDead(actor, 3000, 10_000), true);
+	assert.equal(replay.isReplayPlayerDead(actor, 4999, 10_000), true);
+	assert.equal(replay.isReplayPlayerDead(actor, 5000, 10_000), false);
+	assert.equal(replay.isReplayPlayerDead(actor, 10_000, 10_000), false);
 });
 
 test('Nymrissa map bounds contain WCL replay coordinates', () => {
