@@ -3,6 +3,15 @@ import { onBeforeUnmount, onMounted, ref, type Ref } from 'vue';
 
 import { IPC_EVENTS } from '@/events';
 import type { ReviewSyncMarkerCapture } from '@/reviewSyncMarker';
+import {
+	createReviewSyncAnchor,
+	evaluateReviewSyncReanchor,
+	getActiveReviewSyncAnchor,
+	getReviewLogTimestampForVideoTime,
+	getReviewVideoTimeForLogTimestamp,
+	type ReviewSyncMarkerAnchor,
+	type ReviewSyncReanchorCandidate,
+} from '@/reviewSynchronization';
 import { decodeReviewSyncMarkerImage } from '@/renderer/reviewSyncMarkerDecoder';
 import type { ReviewSeekCoordinator } from '@/renderer/reviewSeekCoordinator';
 import type YTPlayer from '@/renderer/yt-player';
@@ -34,12 +43,6 @@ const SEEK_MAX_READ_FAILURES = 6;
 const SEEK_READ_FAILURE_BACKOFF_MAX_MS = 2_000;
 
 type ReviewSyncCaptureTrigger = 'manual' | 'periodic' | 'player-state';
-
-type ReviewSyncMarkerAnchor = {
-	videoId: string;
-	videoTimeSeconds: number;
-	timestampMs: number;
-};
 
 type SyncMarkerSeekObservation = {
 	markerTimestampMs: number;
@@ -106,39 +109,30 @@ export function useReviewVideoSynchronization(options: ReviewVideoSynchronizatio
 	let scheduledReadTimeout: number | null = null;
 	let lastAutoFailureLogTime = 0;
 	let lastCaptureStartedAt = 0;
-	let pendingReanchor: {
-		videoId: string;
-		kind: 'initial' | 'adjustment';
-		measurementMs: number;
-		observedAt: number;
-	} | null = null;
+	let pendingReanchor: ReviewSyncReanchorCandidate | null = null;
 	let nextSeekID = 0;
 	let pendingSeek: PendingSyncMarkerSeek | null = null;
 
 	function getActiveAnchor(): ReviewSyncMarkerAnchor | null {
-		const currentAnchor = anchor.value;
-		return currentAnchor?.videoId === options.getSelectedVideoID() ? currentAnchor : null;
+		return getActiveReviewSyncAnchor(anchor.value, options.getSelectedVideoID());
 	}
 
 	function getVideoTimeForAbsoluteLogTimestamp(timestampMs: number): number {
-		const currentAnchor = getActiveAnchor();
-		if (currentAnchor) {
-			return currentAnchor.videoTimeSeconds + (timestampMs - currentAnchor.timestampMs) / 1000;
-		}
-
-		const videoStartTime = options.getSelectedVideo()?.startTime || 0;
-		return (timestampMs - videoStartTime) / 1000 + YOUTUBE_DELAY_OFFSET_SECONDS;
+		return getReviewVideoTimeForLogTimestamp(
+			getActiveAnchor(),
+			options.getSelectedVideo()?.startTime || 0,
+			timestampMs,
+			YOUTUBE_DELAY_OFFSET_SECONDS,
+		);
 	}
 
 	function getAbsoluteLogTimestampForVideoTime(videoTimeSeconds: number): number {
-		const currentAnchor = getActiveAnchor();
-		if (currentAnchor) {
-			return currentAnchor.timestampMs
-				+ (videoTimeSeconds - currentAnchor.videoTimeSeconds) * 1000;
-		}
-
-		const videoStartTime = options.getSelectedVideo()?.startTime || 0;
-		return videoStartTime + (videoTimeSeconds - YOUTUBE_DELAY_OFFSET_SECONDS) * 1000;
+		return getReviewLogTimestampForVideoTime(
+			getActiveAnchor(),
+			options.getSelectedVideo()?.startTime || 0,
+			videoTimeSeconds,
+			YOUTUBE_DELAY_OFFSET_SECONDS,
+		);
 	}
 
 	function clearScheduledRead(): void {
@@ -268,37 +262,20 @@ export function useReviewVideoSynchronization(options: ReviewVideoSynchronizatio
 		differenceMs: number | null,
 		markerTimelineOriginMs: number,
 	): boolean {
-		if (!automatic) {
-			pendingReanchor = null;
-			return differenceMs === null || Math.abs(differenceMs) >= REANCHOR_THRESHOLD_MS;
-		}
-
-		const now = Date.now();
-		const pending = pendingReanchor;
-		const kind = differenceMs === null ? 'initial' : 'adjustment';
-		const measurementMs = differenceMs ?? markerTimelineOriginMs;
-		if (
-			pending?.videoId === videoId
-			&& pending.kind === kind
-			&& now - pending.observedAt <= REANCHOR_CONFIRMATION_MAX_AGE_MS
-			&& Math.abs(pending.measurementMs - measurementMs)
-				<= REANCHOR_CONFIRMATION_TOLERANCE_MS
-		) {
-			const averageMeasurementMs = (pending.measurementMs + measurementMs) / 2;
-			pendingReanchor = null;
-			return kind === 'initial'
-				|| Math.abs(averageMeasurementMs) >= REANCHOR_THRESHOLD_MS;
-		}
-
-		if (kind === 'initial' || Math.abs(measurementMs) >= REANCHOR_THRESHOLD_MS) {
-			pendingReanchor = { videoId, kind, measurementMs, observedAt: now };
-			// Confirm a potentially disruptive adjustment promptly instead of waiting
-			// for the next periodic pass.
-			scheduleAutomaticRead(MIN_AUTO_READ_GAP_MS);
-		} else {
-			pendingReanchor = null;
-		}
-		return false;
+		const decision = evaluateReviewSyncReanchor({
+			automatic,
+			videoId,
+			differenceMs,
+			markerTimelineOriginMs,
+			observedAt: Date.now(),
+			pendingCandidate: pendingReanchor,
+			reanchorThresholdMs: REANCHOR_THRESHOLD_MS,
+			confirmationToleranceMs: REANCHOR_CONFIRMATION_TOLERANCE_MS,
+			confirmationMaxAgeMs: REANCHOR_CONFIRMATION_MAX_AGE_MS,
+		});
+		pendingReanchor = decision.pendingCandidate;
+		if (decision.confirmPromptly) scheduleAutomaticRead(MIN_AUTO_READ_GAP_MS);
+		return decision.apply;
 	}
 
 	function isSeekLandingPlausible(
@@ -333,11 +310,7 @@ export function useReviewVideoSynchronization(options: ReviewVideoSynchronizatio
 		videoTimeSeconds: number,
 		timelineOriginMs: number,
 	): void {
-		anchor.value = {
-			videoId,
-			videoTimeSeconds,
-			timestampMs: timelineOriginMs + videoTimeSeconds * 1000,
-		};
+		anchor.value = createReviewSyncAnchor(videoId, videoTimeSeconds, timelineOriginMs);
 		pendingReanchor = null;
 	}
 
