@@ -6,6 +6,11 @@ import { IPC_EVENTS } from '@/events';
 import type { ReviewTimelineViewMode, ReviewTimelineWindowAction, ReviewTimelineWindowContext } from '@/timelineWindow';
 import { useIpcOn } from '@/renderer/composables/useIpcOn';
 import { createReviewTimelinePlayback } from '@/renderer/composables/useReviewTimelinePlayback';
+import {
+	isExcludedPlayerHotkeyTarget,
+	isReviewPlayerHotkey,
+	normalizeReviewPlayerHotkey,
+} from '@/renderer/reviewPlayerHotkeys';
 import { getElectronStoreRef } from '@/renderer/store/ElectronRefStore';
 import { useReviewsStore } from '@/renderer/store/ReviewsStore';
 import ReviewCooldownTimeline from '@/renderer/components/ReviewCooldownTimeline.vue';
@@ -13,6 +18,11 @@ import WinButtons from '@/renderer/components/WinButtons.vue';
 
 const reviewsStore = useReviewsStore();
 const darkMode = getElectronStoreRef('darkMode', true);
+
+watch(darkMode, enabled => {
+	document.documentElement.classList.toggle('dark', enabled);
+}, { immediate: true });
+
 const context = shallowRef<ReviewTimelineWindowContext | null>(null);
 const cursorPercent = ref(0);
 const isPlayerPlaying = ref(false);
@@ -49,6 +59,20 @@ async function applyContext(nextContext: ReviewTimelineWindowContext | null) {
 
 function sendAction(action: ReviewTimelineWindowAction) {
 	ipc.send(IPC_EVENTS.TIMELINE_WINDOW_ACTION, action);
+}
+
+function forwardPlayerHotkey(event: KeyboardEvent) {
+	if (
+		event.defaultPrevented
+		|| isExcludedPlayerHotkeyTarget(event.target)
+		|| !isReviewPlayerHotkey(event)
+	) return;
+
+	// This renderer has no video player of its own. Capture the shortcut before
+	// timeline/map elements can consume it and let the main Reviews player apply it.
+	event.preventDefault();
+	event.stopImmediatePropagation();
+	sendAction({ type: 'player-hotkey', input: normalizeReviewPlayerHotkey(event) });
 }
 
 function updateViewMode(viewMode: ReviewTimelineViewMode) {
@@ -94,6 +118,7 @@ useIpcOn(IPC_EVENTS.TIMELINE_WINDOW_PLAYBACK_UPDATED, (_event, playing: boolean)
 });
 
 onMounted(async () => {
+	window.addEventListener('keydown', forwardPlayerHotkey, true);
 	window.addEventListener('beforeunload', publishAllTimelineData);
 	try {
 		const initialContext = await ipc.invoke(IPC_EVENTS.TIMELINE_WINDOW_CONTEXT_GET) as ReviewTimelineWindowContext | null;
@@ -110,23 +135,24 @@ onMounted(async () => {
 });
 
 onBeforeUnmount(() => {
+	window.removeEventListener('keydown', forwardPlayerHotkey, true);
 	window.removeEventListener('beforeunload', publishAllTimelineData);
 });
 </script>
 
 <template>
 	<div
-		class="flex h-screen min-h-0 flex-col overflow-hidden bg-light1 font-main text-black dark:bg-dark1 dark:text-gray-50"
+		class="flex h-screen min-h-0 flex-col overflow-hidden bg-light1 font-main text-slate-900 dark:bg-dark1 dark:text-gray-50"
 		:class="{ dark: darkMode }"
 	>
-		<header data-app-title-bar class="drag relative flex h-9 shrink-0 items-center border-b border-sky-500/20 bg-light4 pl-3 pr-24 shadow-md dark:bg-dark4">
+		<header data-app-title-bar class="drag relative flex h-9 shrink-0 items-center border-b border-sky-500/20 bg-gray-800 pl-3 pr-24 text-gray-50 shadow-md">
 			<div class="min-w-0">
 				<div class="truncate text-sm font-semibold tracking-tight">{{ context?.title || 'Fight timeline' }}</div>
-				<div class="truncate text-[9px] uppercase tracking-[0.14em] text-neutral-500 dark:text-neutral-400">Detached from Reviews</div>
+				<div class="truncate text-[9px] uppercase tracking-[0.14em] text-neutral-400">Detached from Reviews</div>
 			</div>
 			<button
 				type="button"
-				class="no-drag ml-auto mr-1 h-6 border border-neutral-500/30 bg-neutral-500/[0.06] px-2 text-[10px] font-medium text-neutral-600 hover:border-sky-500/60 hover:bg-sky-500/10 hover:text-sky-600 focus:outline-none focus:ring-1 focus:ring-sky-500 dark:text-neutral-300 dark:hover:text-sky-300"
+				class="no-drag ml-auto mr-1 h-6 border border-neutral-500/30 bg-neutral-500/[0.06] px-2 text-[10px] font-medium text-neutral-300 hover:border-sky-500/60 hover:bg-sky-500/10 hover:text-sky-300 focus:outline-none focus:ring-1 focus:ring-sky-500"
 				title="Return timeline to the Reviews tab"
 				@click="reattachTimeline"
 			>

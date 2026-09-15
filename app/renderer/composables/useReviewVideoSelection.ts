@@ -1,7 +1,8 @@
 import log from 'electron-log/renderer';
-import { computed, nextTick, ref, type ComputedRef, type Ref } from 'vue';
+import { computed, nextTick, ref, watch, type ComputedRef, type Ref } from 'vue';
 
-import { reviewVideoOverlapsWindow } from '@/reviewVideoSelection';
+import type { ReviewReportListItem } from '@/reviewReports';
+import { reconcileReviewVideoSelection, reviewVideoOverlapsWindow } from '@/reviewVideoSelection';
 
 type YoutubeVideoInfo = {
 	byId?: Record<string, YouTubeVideo>;
@@ -11,7 +12,7 @@ type ReviewVideoSelectionOptions = {
 	youtubeVideoInfo: Ref<YoutubeVideoInfo>;
 	refreshYoutubeVideoInfo: () => Promise<unknown>;
 	selectedReportCode: Ref<string | null>;
-	selectedReport: ComputedRef<reportSummary | null>;
+	selectedReport: ComputedRef<ReviewReportListItem | null>;
 	reportDetails: Ref<reportDetails | null>;
 	selectedFightID: Ref<number | null>;
 	selectedFight: ComputedRef<fightDetails | null>;
@@ -69,11 +70,17 @@ export function useReviewVideoSelection(options: ReviewVideoSelectionOptions) {
 	});
 
 	function ensureSelectedVideoIsAvailable(reportCode: string | null): void {
-		if (
-			reportCode
-			&& !videoList.value.some(video => video.id === selectedVideoInfo.value?.id)
-		) setSelectedVideoInfo(videoList.value[0] || null);
+		const nextSelection = reconcileReviewVideoSelection(
+			selectedVideoInfo.value,
+			videoList.value,
+			Boolean(reportCode),
+		);
+		if (nextSelection !== selectedVideoInfo.value) setSelectedVideoInfo(nextSelection);
 	}
+
+	watch(videoList, () => {
+		ensureSelectedVideoIsAvailable(options.selectedReportCode.value);
+	}, { flush: 'sync' });
 
 	function videoMatchesCurrentSelection(video: YouTubeVideo): boolean {
 		const fightWindow = getSelectedFightAbsoluteWindow();

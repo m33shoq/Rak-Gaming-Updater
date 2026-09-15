@@ -2,6 +2,7 @@ import log from 'electron-log/renderer';
 import { computed, nextTick, ref, shallowRef, watch } from 'vue';
 
 import { IPC_EVENTS } from '@/events';
+import { buildSelectableReviewReports, pinReviewReportCode } from '@/reviewReports';
 import type { ReviewTimelineWindowContext, ReviewTimelineWindowDataSnapshot } from '@/timelineWindow';
 import type { WclRequestResult } from '@/wclRequests';
 
@@ -23,6 +24,7 @@ export function useReviewReportData(options: ReviewReportDataOptions) {
 	const olderReportsLoading = ref(false);
 	const olderReportsError = ref<string | null>(null);
 	const hasOlderReports = ref(true);
+	const pinnedReportCodes = shallowRef<string[]>([]);
 	const selectedReportCode = ref<string | null>(null);
 	const reportDetails = ref<reportDetails | null>(null);
 	const reportDetailsByCode = ref<Record<string, reportDetails>>({});
@@ -39,9 +41,14 @@ export function useReviewReportData(options: ReviewReportDataOptions) {
 	let reportListLoadedAt = 0;
 
 	const getReports = computed(() => reports.value);
+	const getSelectableReports = computed(() => buildSelectableReviewReports(
+		reports.value,
+		reportDetailsByCode.value,
+		pinnedReportCodes.value,
+	));
 	const getSelectedReport = computed(() => (
 		selectedReportCode.value
-			? reports.value.find(report => report.code === selectedReportCode.value) || null
+			? getSelectableReports.value.find(report => report.code === selectedReportCode.value) || null
 			: null
 	));
 	const isReportListLoading = computed(() => (
@@ -70,6 +77,19 @@ export function useReviewReportData(options: ReviewReportDataOptions) {
 
 	function setReportDetails(details: reportDetails | null): void {
 		reportDetails.value = details;
+	}
+
+	function pinReportForSession(reportCode: string): boolean {
+		if (
+			!reports.value.some(report => report.code === reportCode)
+			&& !reportDetailsByCode.value[reportCode]
+		) return false;
+		pinnedReportCodes.value = pinReviewReportCode(pinnedReportCodes.value, reportCode);
+		return true;
+	}
+
+	function isReportPinnedForSession(reportCode: string): boolean {
+		return pinnedReportCodes.value.includes(reportCode);
 	}
 
 	function cacheReportDetails(reportCode: string, details: reportDetails): reportDetails {
@@ -176,13 +196,17 @@ export function useReviewReportData(options: ReviewReportDataOptions) {
 		return request;
 	}
 
-	async function requestReportData(force = false): Promise<boolean> {
-		const reportCode = selectedReportCode.value;
+	async function requestReportDataForCode(
+		reportCode: string | null,
+		force = false,
+	): Promise<boolean> {
 		if (!reportCode) return false;
 		const selectionGeneration = reportSelectionGeneration;
 		const cached = reportDetailsByCode.value[reportCode] || null;
+		let request = reportDataPromises.get(reportCode);
 		if (
-			cached
+			!request
+			&& cached
 			&& !force
 			&& Date.now() - (reportDetailsCachedAt.value[reportCode] || 0) < REPORT_DETAILS_CACHE_TTL_MS
 		) {
@@ -192,7 +216,6 @@ export function useReviewReportData(options: ReviewReportDataOptions) {
 			return true;
 		}
 
-		let request = reportDataPromises.get(reportCode);
 		if (!request) {
 			reportDetailsStatusByCode.value[reportCode] = cached ? 'refreshing' : 'loading';
 			reportDetailsErrorByCode.value[reportCode] = null;
@@ -241,6 +264,10 @@ export function useReviewReportData(options: ReviewReportDataOptions) {
 		return true;
 	}
 
+	function requestReportData(force = false): Promise<boolean> {
+		return requestReportDataForCode(selectedReportCode.value, force);
+	}
+
 	async function refreshReportListAfterWclReady() {
 		const pendingRequest = reportListPromises.get('latest');
 		if (pendingRequest && await pendingRequest) return;
@@ -281,20 +308,24 @@ export function useReviewReportData(options: ReviewReportDataOptions) {
 	return {
 		getReportDetails,
 		getReports,
+		getSelectableReports,
 		getSelectedFight,
 		getSelectedReport,
 		hasOlderReports,
 		hydrateTimelineWindowContext,
 		isReportListLoading,
+		isReportPinnedForSession,
 		isSelectedReportDetailsLoading,
 		olderReportsError,
 		olderReportsLoading,
+		pinReportForSession,
 		refreshAfterWclReady,
 		reportDetails,
 		reportListError,
 		reportListStatus,
 		reports,
 		requestReportData,
+		requestReportDataForCode,
 		requestReports,
 		selectedFightID,
 		selectedReportCode,

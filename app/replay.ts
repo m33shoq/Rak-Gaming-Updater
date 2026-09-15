@@ -1,14 +1,27 @@
-export const REVIEW_REPLAY_VERSION = 12 as const;
+export const REVIEW_REPLAY_VERSION = 21 as const;
 
 export interface ReplayPosition {
 	timestamp: number;
 	x: number;
 	y: number;
 	mapID: number;
-	facingDegrees?: number;
+}
+
+export interface ReplayFacing {
+	timestamp: number;
+	facingDegrees: number;
 }
 
 export type ReplayActorKind = 'player' | 'boss' | 'add' | 'mechanic';
+
+export interface ReplayResurrectionWindow {
+	start: number;
+	end?: number;
+	spellID?: number;
+	name?: string;
+	icon?: string;
+	sourceName?: string;
+}
 
 export interface ReplayActor {
 	key: string;
@@ -23,7 +36,12 @@ export interface ReplayActor {
 	/** Milliseconds to retain the last observed position; null keeps it until the actor becomes inactive. */
 	positionRetentionMs?: number | null;
 	active: Array<{ start: number; end: number }>;
+	/** Explicit player death windows. Older replay payloads may omit these. */
+	deathWindows?: Array<{ start: number; end?: number }>;
+	/** Resurrection offers remain open until post-offer player activity confirms acceptance. */
+	resurrectionWindows?: ReplayResurrectionWindow[];
 	positions: ReplayPosition[];
+	facings: ReplayFacing[];
 }
 
 export interface ReplayCast {
@@ -60,6 +78,8 @@ export interface ReplayOverlay {
 
 export interface FightReplayData {
 	version: typeof REVIEW_REPLAY_VERSION;
+	/** False when an optional encounter-enrichment stream failed to load. */
+	enrichmentComplete: boolean;
 	encounterID: number;
 	duration: number;
 	uiMapIDs: number[];
@@ -71,6 +91,12 @@ export interface FightReplayData {
 export interface SampledReplayPosition extends ReplayPosition {
 	age: number;
 	interpolated: boolean;
+	facingDegrees?: number;
+	facingAge?: number;
+}
+
+export interface SampledReplayFacing extends ReplayFacing {
+	age: number;
 }
 
 export function isReplayActorActive(actor: ReplayActor, timestamp: number): boolean {
@@ -84,7 +110,13 @@ export function isReplayPlayerDead(
 	fightDuration: number,
 ): boolean {
 	if (actor.kind !== 'player' || isReplayActorActive(actor, timestamp)) return false;
+	if (actor.deathWindows) {
+		return actor.deathWindows.some(window => (
+			window.start <= timestamp && (window.end == null || timestamp < window.end)
+		));
+	}
 
+	// Compatibility fallback for payloads created before death windows were explicit.
 	let latestWindow: ReplayActor['active'][number] | undefined;
 	for (let index = actor.active.length - 1; index >= 0; index--) {
 		if (actor.active[index].start > timestamp) continue;
@@ -96,6 +128,20 @@ export function isReplayPlayerDead(
 		&& latestWindow.end < fightDuration
 		&& timestamp >= latestWindow.end,
 	);
+}
+
+export function pendingReplayPlayerResurrection(
+	actor: ReplayActor,
+	timestamp: number,
+): ReplayResurrectionWindow | undefined {
+	if (actor.kind !== 'player') return undefined;
+	for (let index = (actor.resurrectionWindows?.length || 0) - 1; index >= 0; index--) {
+		const window = actor.resurrectionWindows![index];
+		if (window.start <= timestamp && (window.end == null || timestamp < window.end)) {
+			return window;
+		}
+	}
+	return undefined;
 }
 
 /** Interpolate only dense observations. Long gaps stay visibly stale instead of inventing movement. */
@@ -137,6 +183,26 @@ export function sampleReplayPosition(
 	}
 
 	return { ...before, age, interpolated: false };
+}
+
+/** Facing is a discrete observation and must never be interpolated or backfilled from the future. */
+export function sampleReplayFacing(
+	facings: readonly ReplayFacing[],
+	timestamp: number,
+	maxAge: number,
+): SampledReplayFacing | null {
+	let low = 0;
+	let high = facings.length;
+	while (low < high) {
+		const middle = (low + high) >>> 1;
+		if (facings[middle].timestamp <= timestamp) low = middle + 1;
+		else high = middle;
+	}
+
+	const before = facings[low - 1];
+	if (!before) return null;
+	const age = timestamp - before.timestamp;
+	return age <= maxAge ? { ...before, age } : null;
 }
 
 export function activeReplayCast(casts: readonly ReplayCast[], actorKey: string, timestamp: number): ReplayCast | null {

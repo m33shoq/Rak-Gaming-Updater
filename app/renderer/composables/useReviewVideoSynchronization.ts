@@ -1,5 +1,5 @@
 import log from 'electron-log/renderer';
-import { onBeforeUnmount, onMounted, ref, type Ref } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, type Ref } from 'vue';
 
 import { IPC_EVENTS } from '@/events';
 import type { ReviewSyncMarkerCapture } from '@/reviewSyncMarker';
@@ -8,6 +8,7 @@ import {
 	evaluateReviewSyncReanchor,
 	getActiveReviewSyncAnchor,
 	getReviewLogTimestampForVideoTime,
+	getReviewMarkerTimestampForLogTimestamp,
 	getReviewVideoTimeForLogTimestamp,
 	type ReviewSyncMarkerAnchor,
 	type ReviewSyncReanchorCandidate,
@@ -18,6 +19,8 @@ import type YTPlayer from '@/renderer/yt-player';
 import type { ReviewYoutubePlayerState } from '@/renderer/composables/useReviewYoutubePlayer';
 
 const YOUTUBE_DELAY_OFFSET_SECONDS = 5;
+const MANUAL_OFFSET_STORE_KEY = 'reviewVideoManualSyncOffsets';
+const MAX_MANUAL_OFFSET_SECONDS = 300;
 const AUTO_READ_INTERVAL_MS = 10_000;
 const REANCHOR_THRESHOLD_MS = 250;
 const AUTO_FAILURE_LOG_INTERVAL_MS = 5 * 60_000;
@@ -85,6 +88,23 @@ type ReviewVideoSynchronizationOptions = {
 	revealControls: () => void;
 };
 
+type StoredManualOffsets = Record<string, number>;
+
+function normalizeManualOffset(value: number): number {
+	if (!Number.isFinite(value)) return 0;
+	const clamped = Math.max(-MAX_MANUAL_OFFSET_SECONDS, Math.min(value, MAX_MANUAL_OFFSET_SECONDS));
+	const rounded = Math.round(clamped * 1000) / 1000;
+	return Object.is(rounded, -0) ? 0 : rounded;
+}
+
+function parseStoredManualOffsets(value: unknown): StoredManualOffsets {
+	if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+	return Object.fromEntries(Object.entries(value)
+		.filter(([videoID, offset]) => videoID.length > 0 && Number.isFinite(offset))
+		.map(([videoID, offset]) => [videoID, normalizeManualOffset(Number(offset))])
+		.filter(([, offset]) => offset !== 0));
+}
+
 function formatVideoTime(seconds: number): string {
 	const safeSeconds = Math.max(0, seconds);
 	const hours = Math.floor(safeSeconds / 3600);
@@ -102,6 +122,7 @@ function formatSignedSeconds(seconds: number): string {
 
 export function useReviewVideoSynchronization(options: ReviewVideoSynchronizationOptions) {
 	const anchor = ref<ReviewSyncMarkerAnchor | null>(null);
+	const manualOffsets = ref<StoredManualOffsets>({});
 	const status = ref('');
 	const statusTone = ref<'success' | 'error' | 'info'>('info');
 	const isCapturing = ref(false);
@@ -112,17 +133,73 @@ export function useReviewVideoSynchronization(options: ReviewVideoSynchronizatio
 	let pendingReanchor: ReviewSyncReanchorCandidate | null = null;
 	let nextSeekID = 0;
 	let pendingSeek: PendingSyncMarkerSeek | null = null;
+	let manualOffsetEditRevision = 0;
+	const manuallyEditedVideoIDs = new Set<string>();
 
-	function getActiveAnchor(): ReviewSyncMarkerAnchor | null {
-		return getActiveReviewSyncAnchor(anchor.value, options.getSelectedVideoID());
+	function showStatus(message: string, tone: 'success' | 'error' | 'info'): void {
+		statusTone.value = tone;
+		status.value = message;
 	}
 
-	function getVideoTimeForAbsoluteLogTimestamp(timestampMs: number): number {
+	function getManualOffsetForVideo(videoID: string | null | undefined): number {
+		return videoID ? manualOffsets.value[videoID] || 0 : 0;
+	}
+
+	const manualOffsetSeconds = computed(() => (
+		getManualOffsetForVideo(options.getSelectedVideoID())
+	));
+
+	async function loadManualOffsets(): Promise<void> {
+		const editRevision = manualOffsetEditRevision;
+		try {
+			const storedOffsets = parseStoredManualOffsets(await store.get(MANUAL_OFFSET_STORE_KEY));
+			if (editRevision === manualOffsetEditRevision) {
+				manualOffsets.value = storedOffsets;
+				return;
+			}
+
+			const mergedOffsets = { ...storedOffsets };
+			for (const videoID of manuallyEditedVideoIDs) {
+				const editedOffset = manualOffsets.value[videoID];
+				if (editedOffset == null) delete mergedOffsets[videoID];
+				else mergedOffsets[videoID] = editedOffset;
+			}
+			manualOffsets.value = mergedOffsets;
+			await store.set(MANUAL_OFFSET_STORE_KEY, { ...manualOffsets.value });
+		} catch (error) {
+			log.error('Failed to load manual review stream offsets', error);
+		}
+	}
+
+	function setManualOffsetSeconds(value: number, videoID = options.getSelectedVideoID()): number {
+		if (!videoID) return 0;
+		const normalized = normalizeManualOffset(value);
+		const updated = { ...manualOffsets.value };
+		if (normalized === 0) delete updated[videoID];
+		else updated[videoID] = normalized;
+		manualOffsetEditRevision++;
+		manuallyEditedVideoIDs.add(videoID);
+		manualOffsets.value = updated;
+		store.set(MANUAL_OFFSET_STORE_KEY, updated).catch((error: unknown) => {
+			log.error('Failed to persist manual review stream offset', error);
+		});
+		return normalized;
+	}
+
+	function getActiveAnchor(videoID = options.getSelectedVideoID()): ReviewSyncMarkerAnchor | null {
+		return getActiveReviewSyncAnchor(anchor.value, videoID);
+	}
+
+	function getVideoTimeForAbsoluteLogTimestamp(
+		timestampMs: number,
+		video = options.getSelectedVideo(),
+	): number {
 		return getReviewVideoTimeForLogTimestamp(
-			getActiveAnchor(),
-			options.getSelectedVideo()?.startTime || 0,
+			getActiveAnchor(video?.id),
+			video?.startTime || 0,
 			timestampMs,
 			YOUTUBE_DELAY_OFFSET_SECONDS,
+			getManualOffsetForVideo(video?.id),
 		);
 	}
 
@@ -132,6 +209,7 @@ export function useReviewVideoSynchronization(options: ReviewVideoSynchronizatio
 			options.getSelectedVideo()?.startTime || 0,
 			videoTimeSeconds,
 			YOUTUBE_DELAY_OFFSET_SECONDS,
+			manualOffsetSeconds.value,
 		);
 	}
 
@@ -164,7 +242,10 @@ export function useReviewVideoSynchronization(options: ReviewVideoSynchronizatio
 		pendingSeek = {
 			id: ++nextSeekID,
 			videoId,
-			targetMarkerTimestampMs,
+			targetMarkerTimestampMs: getReviewMarkerTimestampForLogTimestamp(
+				targetMarkerTimestampMs,
+				getManualOffsetForVideo(videoId),
+			),
 			startedAt: now,
 			seekIssuedAt: now,
 			requestedVideoTimeSeconds,
@@ -192,8 +273,6 @@ export function useReviewVideoSynchronization(options: ReviewVideoSynchronizatio
 		) {
 			pendingSeek = null;
 			if (expired) {
-				statusTone.value = 'error';
-				status.value = 'Seek completed, but synchronization timed out';
 				options.seekCoordinator.finish(
 					pending.seekRequestID,
 					'unverified',
@@ -318,6 +397,7 @@ export function useReviewVideoSynchronization(options: ReviewVideoSynchronizatio
 		markerTimestampMs: number,
 		videoTimeSeconds: number,
 		observedAt: number,
+		showFeedback: boolean,
 	): boolean {
 		const pending = getPendingSeek();
 		if (!pending) return false;
@@ -330,8 +410,7 @@ export function useReviewVideoSynchronization(options: ReviewVideoSynchronizatio
 				'unverified',
 				'Rendered video frame did not stabilize',
 			);
-			statusTone.value = 'error';
-			status.value = 'Seek sync stopped · rendered frame did not stabilize';
+			if (showFeedback) showStatus('Seek sync stopped · rendered frame did not stabilize', 'error');
 			log.warn('Could not obtain coherent RG sync marker frames after YouTube seek', {
 				videoId: pending.videoId,
 				phase: pending.phase,
@@ -422,8 +501,12 @@ export function useReviewVideoSynchronization(options: ReviewVideoSynchronizatio
 				'unverified',
 				'RG sync marker implied an implausible mapping change',
 			);
-			statusTone.value = 'error';
-			status.value = `Seek sync stopped · implausible ${formatSignedSeconds(mappingErrorMs / 1000)} mapping change`;
+			if (showFeedback) {
+				showStatus(
+					`Seek sync stopped · implausible ${formatSignedSeconds(mappingErrorMs / 1000)} mapping change`,
+					'error',
+				);
+			}
 			log.warn('Rejected an implausible RG sync marker mapping after YouTube seek', {
 				videoId: pending.videoId,
 				phase: pending.phase,
@@ -440,8 +523,9 @@ export function useReviewVideoSynchronization(options: ReviewVideoSynchronizatio
 		if (Math.abs(mappingErrorMs) <= SEEK_CORRECTION_TOLERANCE_MS && targetReached) {
 			pendingSeek = null;
 			options.seekCoordinator.finish(pending.seekRequestID, 'completed');
-			statusTone.value = 'success';
-			status.value = `Seek synchronized · ${formatSignedSeconds(mappingErrorMs / 1000)} residual`;
+			if (showFeedback) {
+				showStatus(`Seek synchronized · ${formatSignedSeconds(mappingErrorMs / 1000)} residual`, 'success');
+			}
 			log.info('Verified YouTube seek against coherent RG sync marker frames', {
 				videoId: pending.videoId,
 				phase: pending.phase,
@@ -463,8 +547,9 @@ export function useReviewVideoSynchronization(options: ReviewVideoSynchronizatio
 				'unverified',
 				'RG sync marker correction did not converge',
 			);
-			statusTone.value = 'error';
-			status.value = `Seek sync stopped · ${formatSignedSeconds(mappingErrorMs / 1000)} residual`;
+			if (showFeedback) {
+				showStatus(`Seek sync stopped · ${formatSignedSeconds(mappingErrorMs / 1000)} residual`, 'error');
+			}
 			log.warn('Could not safely converge YouTube seek with RG sync marker', {
 				videoId: pending.videoId,
 				phase: pending.phase,
@@ -491,8 +576,9 @@ export function useReviewVideoSynchronization(options: ReviewVideoSynchronizatio
 		pending.playbackRateAtStart = options.player.value?.getPlaybackRate() || 1;
 		pending.observationAttempts = 0;
 		pending.readFailures = 0;
-		statusTone.value = 'info';
-		status.value = `Correcting seek · ${formatSignedSeconds(correctionDeltaMs / 1000)}`;
+		if (showFeedback) {
+			showStatus(`Correcting seek · ${formatSignedSeconds(correctionDeltaMs / 1000)}`, 'info');
+		}
 		log.info('Correcting YouTube seek from confirmed RG sync marker mapping', {
 			videoId: pending.videoId,
 			mappingErrorMs,
@@ -526,8 +612,7 @@ export function useReviewVideoSynchronization(options: ReviewVideoSynchronizatio
 		const container = options.videoContainer.value;
 		if (!selectedVideo || !options.player.value || !options.playerLoaded.value || !container) {
 			if (!automatic) {
-				statusTone.value = 'error';
-				status.value = 'Load a YouTube video before reading its sync marker';
+				showStatus('Load a YouTube video before reading its sync marker', 'error');
 			}
 			return;
 		}
@@ -535,8 +620,7 @@ export function useReviewVideoSynchronization(options: ReviewVideoSynchronizatio
 			if (getPendingSeek()) {
 				scheduleAutomaticRead(SEEK_OBSERVATION_INTERVAL_MS);
 			} else if (!automatic) {
-				statusTone.value = 'info';
-				status.value = 'Waiting for the selected YouTube video to load';
+				showStatus('Waiting for the selected YouTube video to load', 'info');
 			}
 			return;
 		}
@@ -544,8 +628,7 @@ export function useReviewVideoSynchronization(options: ReviewVideoSynchronizatio
 			if (getPendingSeek()) {
 				scheduleAutomaticRead(SEEK_OBSERVATION_INTERVAL_MS);
 			} else if (!automatic) {
-				statusTone.value = 'info';
-				status.value = 'Waiting for the YouTube frame to finish loading';
+				showStatus('Waiting for the YouTube frame to finish loading', 'info');
 			}
 			return;
 		}
@@ -557,8 +640,7 @@ export function useReviewVideoSynchronization(options: ReviewVideoSynchronizatio
 		const playerSeekRevisionAtCaptureStart = options.playerSeekRevision.value;
 		const syncMarkerSeekIDAtCaptureStart = getPendingSeek()?.id ?? null;
 		if (!automatic) {
-			statusTone.value = 'info';
-			status.value = 'Reading RG sync marker...';
+			showStatus('Reading RG sync marker...', 'info');
 			options.keepControlsVisible();
 		}
 
@@ -654,6 +736,7 @@ export function useReviewVideoSynchronization(options: ReviewVideoSynchronizatio
 				marker.timestampMs,
 				videoTimeSeconds,
 				frameCapturedAt,
+				!automatic,
 			);
 			const shouldApply = !handledBySeekSynchronization && shouldApplyAnchor(
 				automatic,
@@ -673,15 +756,16 @@ export function useReviewVideoSynchronization(options: ReviewVideoSynchronizatio
 				- (marker.timestampMs - selectedVideo.startTime) / 1000;
 			const correctionSeconds = markerOffsetSeconds - YOUTUBE_DELAY_OFFSET_SECONDS;
 			const markerTime = new Date(marker.timestampMs).toISOString().slice(11, 23);
-			if (!handledBySeekSynchronization && shouldApply) {
-				statusTone.value = 'success';
-				const statusPrefix = automatic
-					? previousAnchor ? 'Sync adjusted' : 'Sync active'
-					: 'Prototype active';
-				status.value = `${statusPrefix} · ${markerTime}Z at ${formatVideoTime(videoTimeSeconds)} · offset ${formatSignedSeconds(markerOffsetSeconds)} · correction ${formatSignedSeconds(correctionSeconds)} · ${Math.round(marker.confidence * 100)}% contrast`;
+			if (!handledBySeekSynchronization && shouldApply && !automatic) {
+				showStatus(
+					`Prototype active · ${markerTime}Z at ${formatVideoTime(videoTimeSeconds)} · offset ${formatSignedSeconds(markerOffsetSeconds)} · correction ${formatSignedSeconds(correctionSeconds)} · ${Math.round(marker.confidence * 100)}% contrast`,
+					'success',
+				);
 			} else if (!handledBySeekSynchronization && !automatic) {
-				statusTone.value = 'success';
-				status.value = `Sync stable · measured change ${formatSignedSeconds((anchorDifferenceMs || 0) / 1000)} · ${Math.round(marker.confidence * 100)}% contrast`;
+				showStatus(
+					`Sync stable · measured change ${formatSignedSeconds((anchorDifferenceMs || 0) / 1000)} · ${Math.round(marker.confidence * 100)}% contrast`,
+					'success',
+				);
 			}
 			if (!handledBySeekSynchronization && (shouldApply || !automatic)) {
 				log[shouldApply ? 'info' : 'debug'](
@@ -709,10 +793,12 @@ export function useReviewVideoSynchronization(options: ReviewVideoSynchronizatio
 					log.debug('Automatic review sync marker capture skipped after a failed read', error);
 				}
 			} else {
-				statusTone.value = 'error';
-				status.value = error instanceof Error
-					? `Sync marker not read: ${error.message}`
-					: 'Sync marker could not be read';
+				showStatus(
+					error instanceof Error
+						? `Sync marker not read: ${error.message}`
+						: 'Sync marker could not be read',
+					'error',
+				);
 				log.warn('Prototype review sync marker capture failed', error);
 			}
 			const activePendingSeek = getPendingSeek();
@@ -728,10 +814,14 @@ export function useReviewVideoSynchronization(options: ReviewVideoSynchronizatio
 							'unverified',
 							'Sync marker could not be read after seeking',
 						);
-						statusTone.value = 'error';
-						status.value = activePendingSeek.phase === 'verification'
-							? 'Seek correction could not be verified'
-							: 'Seek completed, but its sync marker could not be verified';
+						if (!automatic) {
+							showStatus(
+								activePendingSeek.phase === 'verification'
+									? 'Seek correction could not be verified'
+									: 'Seek completed, but its sync marker could not be verified',
+								'error',
+							);
+						}
 						log.debug('Stopped seek synchronization after repeated marker read failures', {
 							videoId: activePendingSeek.videoId,
 							readFailures: activePendingSeek.readFailures,
@@ -813,8 +903,11 @@ export function useReviewVideoSynchronization(options: ReviewVideoSynchronizatio
 	}
 
 	function reportSeekFailure(message: string): void {
-		statusTone.value = 'error';
-		status.value = message;
+		// Automatic marker verification ends as `unverified` and never reaches
+		// this path. Failed/unavailable seek requests are direct action failures,
+		// so keep those visible even while routine sync feedback is suppressed.
+		showStatus(message, 'error');
+		log.warn('Review seek failed', message);
 	}
 
 	function dismissStatus(): void {
@@ -828,6 +921,7 @@ export function useReviewVideoSynchronization(options: ReviewVideoSynchronizatio
 
 	onMounted(() => {
 		document.addEventListener('visibilitychange', onVisibilityChange);
+		void loadManualOffsets();
 		autoReadInterval = window.setInterval(() => {
 			void capture('periodic');
 		}, AUTO_READ_INTERVAL_MS);
@@ -853,12 +947,14 @@ export function useReviewVideoSynchronization(options: ReviewVideoSynchronizatio
 		getPendingSeek,
 		getVideoTimeForAbsoluteLogTimestamp,
 		isCapturing,
+		manualOffsetSeconds,
 		onPlayerBeforeChange,
 		onPlayerSeekDispatched,
 		onPlayerStateChange,
 		onSelectedVideoChange,
 		queueSeek,
 		reportSeekFailure,
+		setManualOffsetSeconds,
 		status,
 		statusTone,
 		updatePlaybackRate,

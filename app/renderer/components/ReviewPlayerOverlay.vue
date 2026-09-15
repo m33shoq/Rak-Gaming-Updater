@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 
 const props = defineProps<{
 	selectedVideo: boolean;
@@ -11,6 +11,7 @@ const props = defineProps<{
 	syncStatus: string;
 	syncStatusTone: 'success' | 'error' | 'info';
 	syncCapturing: boolean;
+	manualSyncOffsetSeconds: number;
 }>();
 
 const emit = defineEmits<{
@@ -18,6 +19,7 @@ const emit = defineEmits<{
 	openVideo: [event: MouseEvent];
 	toggleFullscreen: [];
 	dismissSyncStatus: [];
+	setManualSyncOffset: [seconds: number];
 }>();
 
 const PLAYER_CONTROLS_IDLE_MS = 2200;
@@ -36,11 +38,20 @@ const PLAYER_SHORTCUTS = [
 
 const hotkeyGuide = ref<HTMLElement | null>(null);
 const hotkeyGuideButton = ref<HTMLButtonElement | null>(null);
+const manualOffsetPanel = ref<HTMLElement | null>(null);
+const manualOffsetButton = ref<HTMLButtonElement | null>(null);
 const isHotkeyGuideOpen = ref(false);
+const isManualOffsetOpen = ref(false);
 const areControlsVisible = ref(true);
 const isDockHovered = ref(false);
 const isDockFocused = ref(false);
 let controlsHideTimeout: number | null = null;
+
+const manualOffsetLabel = computed(() => {
+	const value = props.manualSyncOffsetSeconds;
+	const formatted = Math.abs(value).toFixed(3).replace(/0+$/, '').replace(/\.$/, '');
+	return `${value >= 0 ? '+' : '-'}${formatted || '0'}s`;
+});
 
 function clearControlsHideTimeout(): void {
 	if (controlsHideTimeout === null) return;
@@ -58,13 +69,19 @@ function revealControls(): void {
 	if (
 		!props.playing
 		|| isHotkeyGuideOpen.value
+		|| isManualOffsetOpen.value
 		|| isDockHovered.value
 		|| isDockFocused.value
 	) return;
 
 	controlsHideTimeout = window.setTimeout(() => {
 		controlsHideTimeout = null;
-		if (!isHotkeyGuideOpen.value && !isDockHovered.value && !isDockFocused.value) {
+		if (
+			!isHotkeyGuideOpen.value
+			&& !isManualOffsetOpen.value
+			&& !isDockHovered.value
+			&& !isDockFocused.value
+		) {
 			areControlsVisible.value = false;
 		}
 	}, PLAYER_CONTROLS_IDLE_MS);
@@ -76,22 +93,57 @@ function closeHotkeyGuide(): boolean {
 	return true;
 }
 
+function closeManualOffsetPanel(): boolean {
+	if (!isManualOffsetOpen.value) return false;
+	isManualOffsetOpen.value = false;
+	return true;
+}
+
+function closePopovers(): boolean {
+	const closedHotkeys = closeHotkeyGuide();
+	const closedOffset = closeManualOffsetPanel();
+	return closedHotkeys || closedOffset;
+}
+
 function reset(): void {
 	isDockHovered.value = false;
 	isDockFocused.value = false;
-	isHotkeyGuideOpen.value = false;
+	closePopovers();
 	keepControlsVisible();
 }
 
 function toggleHotkeyGuide(event: MouseEvent): void {
 	if (event.detail > 1) return;
+	closeManualOffsetPanel();
 	isHotkeyGuideOpen.value = !isHotkeyGuideOpen.value;
 }
 
-function onOutsidePointer(event: PointerEvent): void {
-	if (!isHotkeyGuideOpen.value || !(event.target instanceof Node)) return;
-	if (hotkeyGuide.value?.contains(event.target) || hotkeyGuideButton.value?.contains(event.target)) return;
+function toggleManualOffset(event: MouseEvent): void {
+	if (event.detail > 1) return;
 	closeHotkeyGuide();
+	isManualOffsetOpen.value = !isManualOffsetOpen.value;
+}
+
+function adjustManualOffset(delta: number): void {
+	emit('setManualSyncOffset', props.manualSyncOffsetSeconds + delta);
+}
+
+function commitManualOffset(event: Event): void {
+	const input = event.currentTarget as HTMLInputElement;
+	const value = Number(input.value);
+	if (Number.isFinite(value)) emit('setManualSyncOffset', value);
+	else input.value = String(props.manualSyncOffsetSeconds);
+}
+
+function onOutsidePointer(event: PointerEvent): void {
+	if ((!isHotkeyGuideOpen.value && !isManualOffsetOpen.value) || !(event.target instanceof Node)) return;
+	if (
+		hotkeyGuide.value?.contains(event.target)
+		|| hotkeyGuideButton.value?.contains(event.target)
+		|| manualOffsetPanel.value?.contains(event.target)
+		|| manualOffsetButton.value?.contains(event.target)
+	) return;
+	closePopovers();
 }
 
 function onDockPointerEnter(): void {
@@ -127,6 +179,11 @@ watch(isHotkeyGuideOpen, open => {
 	else revealControls();
 });
 
+watch(isManualOffsetOpen, open => {
+	if (open) keepControlsVisible();
+	else revealControls();
+});
+
 watch(() => props.playing, playing => {
 	if (playing) revealControls();
 	else keepControlsVisible();
@@ -137,17 +194,17 @@ watch(() => props.selectedVideo, selected => {
 });
 
 onMounted(() => {
-	window.addEventListener('blur', closeHotkeyGuide);
+	window.addEventListener('blur', closePopovers);
 	document.addEventListener('pointerdown', onOutsidePointer);
 });
 
 onBeforeUnmount(() => {
-	window.removeEventListener('blur', closeHotkeyGuide);
+	window.removeEventListener('blur', closePopovers);
 	document.removeEventListener('pointerdown', onOutsidePointer);
 	clearControlsHideTimeout();
 });
 
-defineExpose({ closeHotkeyGuide, keepControlsVisible, reset, revealControls });
+defineExpose({ closeHotkeyGuide, closePopovers, keepControlsVisible, reset, revealControls });
 </script>
 
 <template>
@@ -185,6 +242,23 @@ defineExpose({ closeHotkeyGuide, keepControlsVisible, reset, revealControls });
 			<svg viewBox="0 0 24 24" aria-hidden="true">
 				<path d="M8 3H3v5M16 3h5v5M8 21H3v-5M16 21h5v-5M7 10h10v4H7z" />
 			</svg>
+		</button>
+		<button
+			ref="manualOffsetButton"
+			type="button"
+			class="youtube-player-control-button youtube-player-control-button--offset"
+			:class="{ 'youtube-player-control-button--active': manualSyncOffsetSeconds !== 0 }"
+			:title="$t('reviews.manual_alignment_offset', { offset: manualOffsetLabel })"
+			:aria-label="$t('reviews.adjust_manual_alignment')"
+			aria-controls="youtube-player-manual-offset"
+			:aria-expanded="isManualOffsetOpen"
+			@click.stop="toggleManualOffset"
+			@dblclick.stop
+		>
+			<svg viewBox="0 0 24 24" aria-hidden="true">
+				<path d="M4 7h16M7 4 4 7l3 3M20 17H4m13-3 3 3-3 3M12 10v4" />
+			</svg>
+			<span v-if="manualSyncOffsetSeconds !== 0">{{ manualOffsetLabel }}</span>
 		</button>
 		<button
 			type="button"
@@ -229,6 +303,39 @@ defineExpose({ closeHotkeyGuide, keepControlsVisible, reset, revealControls });
 			</svg>
 		</button>
 	</div>
+	<section
+		v-if="isManualOffsetOpen"
+		id="youtube-player-manual-offset"
+		ref="manualOffsetPanel"
+		class="youtube-player-manual-offset"
+		:aria-label="$t('reviews.manual_stream_alignment')"
+		@dblclick.stop
+	>
+		<div class="youtube-player-manual-offset__heading">
+			<strong>{{ $t('reviews.manual_alignment') }}</strong>
+			<button type="button" :aria-label="$t('reviews.close_manual_alignment')" @click="closeManualOffsetPanel">×</button>
+		</div>
+		<p>{{ $t('reviews.manual_alignment_description') }}</p>
+		<div class="youtube-player-manual-offset__controls">
+			<button type="button" :title="$t('reviews.move_video_earlier', { seconds: 1 })" @click="adjustManualOffset(-1)">−1</button>
+			<button type="button" :title="$t('reviews.move_video_earlier', { seconds: 0.1 })" @click="adjustManualOffset(-0.1)">−0.1</button>
+			<label>
+				<input
+					type="number"
+					:value="String(manualSyncOffsetSeconds)"
+					min="-300"
+					max="300"
+					step="0.1"
+					:aria-label="$t('reviews.manual_alignment_seconds')"
+					@change="commitManualOffset"
+				>
+				<span>s</span>
+			</label>
+			<button type="button" :title="$t('reviews.move_video_later', { seconds: 0.1 })" @click="adjustManualOffset(0.1)">+0.1</button>
+			<button type="button" :title="$t('reviews.move_video_later', { seconds: 1 })" @click="adjustManualOffset(1)">+1</button>
+			<button type="button" class="youtube-player-manual-offset__reset" @click="emit('setManualSyncOffset', 0)">{{ $t('reviews.reset') }}</button>
+		</div>
+	</section>
 	<div
 		v-if="syncStatus"
 		class="youtube-player-sync-prototype"
@@ -351,6 +458,23 @@ defineExpose({ closeHotkeyGuide, keepControlsVisible, reset, revealControls });
 	transition: background-color 80ms linear, color 80ms linear;
 }
 
+.youtube-player-control-button--offset {
+	width: auto;
+	min-width: 2.2rem;
+	gap: 0.25rem;
+	padding: 0 0.45rem;
+}
+
+.youtube-player-control-button--offset span {
+	font-size: 0.68rem;
+	font-variant-numeric: tabular-nums;
+	font-weight: 700;
+}
+
+.youtube-player-control-button--active {
+	color: rgb(125 211 252);
+}
+
 .youtube-player-control-button:first-child {
 	border-left: 0;
 }
@@ -431,6 +555,91 @@ defineExpose({ closeHotkeyGuide, keepControlsVisible, reset, revealControls });
 .youtube-player-sync-prototype button:hover,
 .youtube-player-sync-prototype button:focus-visible {
 	color: white;
+}
+
+.youtube-player-manual-offset {
+	position: absolute;
+	right: 0.65rem;
+	bottom: 5.9rem;
+	z-index: 4;
+	width: min(27rem, calc(100% - 1.3rem));
+	padding: 0.65rem;
+	border: 1px solid rgb(100 116 139 / 58%);
+	border-radius: 0.2rem;
+	background: rgb(7 12 20 / 96%);
+	color: rgb(226 232 240);
+	box-shadow: 0 12px 32px rgb(0 0 0 / 62%);
+	backdrop-filter: blur(5px);
+}
+
+.youtube-player-manual-offset__heading {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	font-size: 0.85rem;
+}
+
+.youtube-player-manual-offset__heading button {
+	color: rgb(148 163 184);
+	font-size: 1.1rem;
+	line-height: 1;
+}
+
+.youtube-player-manual-offset p {
+	margin-top: 0.2rem;
+	color: rgb(148 163 184);
+	font-size: 0.68rem;
+}
+
+.youtube-player-manual-offset__controls {
+	display: flex;
+	align-items: stretch;
+	gap: 0.25rem;
+	margin-top: 0.55rem;
+}
+
+.youtube-player-manual-offset__controls > button,
+.youtube-player-manual-offset__controls label {
+	min-height: 1.9rem;
+	border: 1px solid rgb(71 85 105 / 85%);
+	border-radius: 0.12rem;
+	background: rgb(15 23 42 / 92%);
+}
+
+.youtube-player-manual-offset__controls > button {
+	padding: 0 0.45rem;
+	font-size: 0.7rem;
+	font-weight: 700;
+}
+
+.youtube-player-manual-offset__controls > button:hover,
+.youtube-player-manual-offset__controls > button:focus-visible {
+	border-color: rgb(125 211 252 / 75%);
+	background: rgb(30 41 59);
+}
+
+.youtube-player-manual-offset__controls label {
+	display: flex;
+	min-width: 5.2rem;
+	flex: 1;
+	align-items: center;
+	padding-right: 0.4rem;
+	color: rgb(148 163 184);
+}
+
+.youtube-player-manual-offset__controls input {
+	min-width: 0;
+	width: 100%;
+	padding: 0 0.25rem 0 0.45rem;
+	background: transparent;
+	color: white;
+	font-size: 0.75rem;
+	font-variant-numeric: tabular-nums;
+	outline: none;
+}
+
+.youtube-player-manual-offset__reset {
+	color: rgb(148 163 184);
 }
 
 .youtube-player-hotkey-guide {

@@ -32,6 +32,7 @@ export interface StoreSchema {
 	x: number;
 	y: number;
   };
+  reviewVideoManualSyncOffsets?: Record<string, number>;
 }
 
 const store = new Store<StoreSchema>({

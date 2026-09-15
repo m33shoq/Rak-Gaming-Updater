@@ -4,6 +4,18 @@ export interface ReviewVideoTimeInfo {
 	duration: number;
 }
 
+export function reconcileReviewVideoSelection<T extends { id: string }>(
+	selectedVideo: T | null,
+	availableVideos: readonly T[],
+	selectionIsConstrained: boolean,
+): T | null {
+	const availableSelection = selectedVideo
+		? availableVideos.find(video => video.id === selectedVideo.id)
+		: undefined;
+	if (availableSelection) return availableSelection;
+	return selectionIsConstrained ? availableVideos[0] || null : selectedVideo;
+}
+
 const LIVE_VIDEO_FUTURE_BUFFER_MS = 12 * 60 * 60 * 1000;
 
 export function getReviewVideoEndTime(

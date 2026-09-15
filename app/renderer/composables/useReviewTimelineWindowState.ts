@@ -3,7 +3,12 @@ import { computed, ref, shallowRef } from 'vue';
 
 import { IPC_EVENTS } from '@/events';
 import { useIpcOn } from '@/renderer/composables/useIpcOn';
-import type { ReviewTimelineViewMode, ReviewTimelineWindowAction } from '@/timelineWindow';
+import {
+	shouldExpandTimelineAfterReattach,
+	type ReviewTimelineReattachedPayload,
+	type ReviewTimelineViewMode,
+	type ReviewTimelineWindowAction,
+} from '@/timelineWindow';
 
 type TimelineWindowActionHandler = (action: ReviewTimelineWindowAction) => boolean;
 
@@ -75,6 +80,9 @@ export function useReviewTimelineWindowState(options: ReviewTimelineWindowStateO
 				log.error('Failed to handle detached timeline action', { action, error });
 			}
 		}
+		// Player hotkeys describe a momentary key press and must never execute later
+		// against a newly mounted or newly loaded Reviews player.
+		if (action.type === 'player-hotkey') return;
 		pendingActions.value = coalesceActions([
 			...pendingActions.value,
 			action,
@@ -87,9 +95,13 @@ export function useReviewTimelineWindowState(options: ReviewTimelineWindowStateO
 
 	useIpcOn(
 		IPC_EVENTS.TIMELINE_WINDOW_REATTACHED,
-		(_event, input?: { returnToReviews?: boolean }) => {
+		(_event, input?: ReviewTimelineReattachedPayload) => {
 			detached.value = false;
-			expanded.value = true;
+			// The native close button puts both representations away. "Return to
+			// Reviews" deliberately reattaches the expanded view, while automatic
+			// reattachment caused by the main window being hidden/minimized keeps
+			// the full timeline open as before.
+			expanded.value = shouldExpandTimelineAfterReattach(input);
 			options.onReattached();
 			if (input?.returnToReviews) returnToReviewsRevision.value++;
 		},

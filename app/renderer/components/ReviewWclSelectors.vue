@@ -1,12 +1,20 @@
 <script setup lang="ts">
 import log from 'electron-log/renderer';
-import { computed, onMounted, ref } from 'vue';
+import { computed, nextTick, onMounted, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { IPC_EVENTS } from '@/events';
 import UIButton from '@/renderer/components/Button.vue';
 import Dropdown from '@/renderer/components/Dropdown.vue';
 import { useIpcOn } from '@/renderer/composables/useIpcOn';
 import { useReviewsStore } from '@/renderer/store/ReviewsStore';
+import {
+	buildPullNumberByFightID,
+	findNewReviewFightIDs,
+	getReviewFightPercentage,
+	getReviewFightProgress,
+} from '@/reviewFights';
+import { getReviewEncounterArt } from '@/reviewEncounterArt';
+import { parseWarcraftLogsReportUrl } from '@/wclReportUrl';
 import type { WclRequestResult } from '@/wclRequests';
 
 const WCL_DIFFICULTY_NAMES: Readonly<Record<number, string>> = {
@@ -23,8 +31,18 @@ const { t } = useI18n();
 const isAuthorized = ref(false);
 const authorizing = ref(false);
 const authorizationError = ref('');
+const customReportDialogOpen = ref(false);
+const customReportDialog = ref<HTMLFormElement | null>(null);
+const customReportInput = ref<HTMLInputElement | null>(null);
+const customReportUrl = ref('');
+const customReportError = ref('');
+const customReportLoading = ref(false);
+const newlyFetchedFightIDs = ref<ReadonlySet<number>>(new Set());
+const newlyFetchedFightReportCode = ref<string | null>(null);
 let initialReportsRequested = false;
 let authorizationStatusRevision = 0;
+let fightDropdownOpenRevision = 0;
+let customReportReturnFocus: HTMLElement | null = null;
 
 function formatDuration(seconds: number): string {
 	const hours = Math.floor(seconds / 3600);
@@ -40,6 +58,31 @@ function formatDifficulty(difficulty: number | null | undefined): string {
 	if (typeof difficulty !== 'number' || !Number.isFinite(difficulty)) return '';
 	const difficultyName = WCL_DIFFICULTY_NAMES[difficulty];
 	return difficultyName ? difficultyName.charAt(0) : `[${difficulty}]`;
+}
+
+function formatDifficultyName(difficulty: number | null | undefined): string {
+	if (typeof difficulty !== 'number' || !Number.isFinite(difficulty)) return '';
+	return WCL_DIFFICULTY_NAMES[difficulty] || `[${difficulty}]`;
+}
+
+function formatFightStartTime(timestamp: number): string {
+	return new Date(timestamp).toLocaleTimeString(undefined, {
+		hour: 'numeric',
+		minute: '2-digit',
+	});
+}
+
+function formatReportDate(timestamp: number): string {
+	return new Date(timestamp).toLocaleDateString(undefined, {
+		weekday: 'long',
+		year: 'numeric',
+		month: 'short',
+		day: 'numeric',
+	});
+}
+
+function formatReportDateTime(timestamp: number): string {
+	return `${new Date(timestamp).toLocaleDateString()} ${formatFightStartTime(timestamp)}`;
 }
 
 function applyAuthorizationStatus(authorized: unknown): void {
@@ -96,16 +139,133 @@ async function authorize(): Promise<void> {
 	}
 }
 
+async function openCustomReportDialog(): Promise<void> {
+	const activeElement = document.activeElement instanceof HTMLElement
+		? document.activeElement
+		: null;
+	customReportReturnFocus = activeElement?.closest('.dropdown')?.querySelector('button')
+		|| activeElement;
+	customReportUrl.value = '';
+	customReportError.value = '';
+	customReportLoading.value = false;
+	customReportDialogOpen.value = true;
+	await nextTick();
+	customReportInput.value?.focus();
+}
+
+function closeCustomReportDialog(): void {
+	if (customReportLoading.value) return;
+	customReportDialogOpen.value = false;
+	const returnFocus = customReportReturnFocus;
+	customReportReturnFocus = null;
+	void nextTick(() => {
+		if (returnFocus?.isConnected && !returnFocus.hasAttribute('disabled')) returnFocus.focus();
+	});
+}
+
+function onCustomReportDialogKeydown(event: KeyboardEvent): void {
+	if (event.key === 'Escape') {
+		event.preventDefault();
+		closeCustomReportDialog();
+		return;
+	}
+	if (event.key !== 'Tab') return;
+
+	const dialog = customReportDialog.value;
+	if (!dialog) return;
+	const focusable = Array.from(dialog.querySelectorAll<HTMLElement>(
+		'button:not(:disabled), input:not(:disabled), [href], [tabindex]:not([tabindex="-1"])',
+	)).filter(element => !element.hasAttribute('hidden'));
+	if (focusable.length === 0) {
+		event.preventDefault();
+		dialog.focus();
+		return;
+	}
+
+	const first = focusable[0];
+	const last = focusable.at(-1)!;
+	const activeElement = document.activeElement;
+	if (event.shiftKey && (activeElement === first || !dialog.contains(activeElement))) {
+		event.preventDefault();
+		last.focus();
+	} else if (!event.shiftKey && (activeElement === last || !dialog.contains(activeElement))) {
+		event.preventDefault();
+		first.focus();
+	}
+}
+
+async function selectCustomReport(): Promise<void> {
+	if (customReportLoading.value) return;
+	const location = parseWarcraftLogsReportUrl(customReportUrl.value);
+	if (!location) {
+		customReportError.value = t('reviews.custom_report_invalid_url');
+		return;
+	}
+
+	customReportError.value = '';
+	customReportLoading.value = true;
+	const loaded = await reviewsStore.requestReportDataForCode(location.reportCode);
+	customReportLoading.value = false;
+	if (!loaded) {
+		customReportError.value = t('reviews.custom_report_load_failed');
+		return;
+	}
+	reviewsStore.pinReportForSession(location.reportCode);
+	reviewsStore.selectedReportCode = location.reportCode;
+
+	if (
+		location.fightID
+		&& reviewsStore.getReportDetails?.fights.some(fight => fight.id === location.fightID)
+	) reviewsStore.selectedFightID = location.fightID;
+	closeCustomReportDialog();
+}
+
 const reportOptions = computed(() => {
 	const options: Array<{
 		label: string;
+		menuLabel?: string;
+		meta?: string;
+		section?: string;
 		value: string | null | undefined;
 		disabled?: boolean;
 		overrideAction?: () => void;
+		closeOnAction?: boolean;
 	}> = [{ label: '--', value: null }];
+	options.push({
+		label: t('reviews.select_custom_report'),
+		value: 'custom-report-url',
+		closeOnAction: true,
+		overrideAction: () => {
+			void openCustomReportDialog();
+		},
+	});
 
-	options.push(...reviewsStore.getReports.map(report => ({
-		label: `${report.title} - ${new Date(report.startTime).toLocaleString()}`,
+	const selectedReportCode = reviewsStore.selectedReportCode;
+	if (
+		selectedReportCode
+		&& !reviewsStore.getSelectableReports.some(report => report.code === selectedReportCode)
+	) {
+		const details = reviewsStore.getReportDetails?.code === selectedReportCode
+			? reviewsStore.getReportDetails
+			: null;
+		options.push({
+			label: details
+				? `${details.title} · ${formatReportDateTime(details.startTime)}`
+				: `${t('reviews.custom_report')} · ${selectedReportCode}`,
+			menuLabel: details?.title,
+			meta: details ? formatFightStartTime(details.startTime) : undefined,
+			section: details ? formatReportDate(details.startTime) : undefined,
+			value: selectedReportCode,
+		});
+	}
+
+	options.push(...reviewsStore.getSelectableReports.map(report => ({
+		label: `${report.title} · ${formatReportDateTime(report.startTime)}`,
+		menuLabel: report.title,
+		meta: formatFightStartTime(report.startTime),
+		section: reviewsStore.isReportPinnedForSession(report.code)
+			? t('reviews.pinned_reports')
+			: formatReportDate(report.startTime),
 		value: report.code,
 	})));
 
@@ -138,7 +298,7 @@ const reportDropdownError = computed(() => (
 		: null
 ));
 const reportDropdownEmpty = computed(() => (
-	reviewsStore.reportListStatus === 'ready' && reviewsStore.getReports.length === 0
+	reviewsStore.reportListStatus === 'ready' && reviewsStore.getSelectableReports.length === 0
 ));
 
 function retryReportLoad(): Promise<boolean> {
@@ -149,37 +309,98 @@ function retryReportLoad(): Promise<boolean> {
 	return reviewsStore.requestReports(undefined, true);
 }
 
+function clearNewFightLabels(): void {
+	newlyFetchedFightIDs.value = new Set();
+	newlyFetchedFightReportCode.value = null;
+}
+
+async function refreshFightsOnDropdownOpen(): Promise<boolean> {
+	const openRevision = ++fightDropdownOpenRevision;
+	const reportCode = reviewsStore.selectedReportCode;
+	const previousDetails = reviewsStore.getReportDetails;
+	const previousFights = reportCode && previousDetails?.code === reportCode
+		? previousDetails.fights
+		: null;
+	clearNewFightLabels();
+	if (!reportCode) return false;
+
+	const loaded = await reviewsStore.requestReportData();
+	if (
+		!loaded
+		|| openRevision !== fightDropdownOpenRevision
+		|| reviewsStore.selectedReportCode !== reportCode
+	) return loaded;
+
+	const currentDetails = reviewsStore.getReportDetails;
+	if (currentDetails?.code !== reportCode) return loaded;
+	newlyFetchedFightIDs.value = new Set(
+		findNewReviewFightIDs(previousFights, currentDetails.fights),
+	);
+	newlyFetchedFightReportCode.value = reportCode;
+	return loaded;
+}
+
+function closeFightDropdown(): void {
+	fightDropdownOpenRevision++;
+	clearNewFightLabels();
+}
+
 const fightOptions = computed(() => {
 	const options: Array<{
 		label: string;
+		menuLabel?: string;
+		meta?: string;
+		secondaryMeta?: string;
+		meterValue?: number | null;
+		meterColor?: string;
+		section?: string;
+		sectionImage?: string;
+		fullWidth?: boolean;
 		value: number | null;
-		color?: string;
-	}> = [{ label: '--', value: null }];
+		badge?: string;
+		badgeBackgroundColor?: string;
+		badgeColor?: string;
+		badgeDarkColor?: string;
+		statusLabel?: string;
+	}> = [{ label: '--', value: null, fullWidth: true }];
 	const fights = reviewsStore.getReportDetails?.fights;
 	if (!fights) return options;
 
-	const pullCounts = new Map<number, number>();
-	const countsByEncounterAndDifficulty = new Map<string, number>();
-	const chronologicalFights = [...fights].sort((left, right) => left.startTime - right.startTime);
-	for (const fight of chronologicalFights) {
-		const scope = `${fight.encounterID}:${fight.difficulty ?? 'unknown'}`;
-		const count = (countsByEncounterAndDifficulty.get(scope) || 0) + 1;
-		countsByEncounterAndDifficulty.set(scope, count);
-		pullCounts.set(fight.id, count);
-	}
+	const newestFirstFights = [...fights].sort((left, right) => (
+		right.startTime - left.startTime
+		|| right.id - left.id
+	));
+	const pullNumberByFightID = buildPullNumberByFightID(fights);
 
-	for (const fight of chronologicalFights.reverse()) {
+	for (const fight of newestFirstFights) {
 		const difficulty = formatDifficulty(fight.difficulty);
+		const difficultyName = formatDifficultyName(fight.difficulty);
 		const difficultyLabel = difficulty ? ` ${difficulty}` : '';
-		const result = fight.kill ? 'KILL' : `${fight.bossPercentage.toFixed(1)}%`;
+		const progress = getReviewFightProgress(fight, reviewsStore.getReportDetails?.phases);
+		const fightPercentage = getReviewFightPercentage(fight);
 		const duration = formatDuration((fight.endTime - fight.startTime) / 1000);
-		const localStartTime = new Date(
+		const localStartTime = formatFightStartTime(
 			reviewsStore.getReportTimeOffset + fight.startTime,
-		).toLocaleTimeString();
+		);
+		const pullNumber = pullNumberByFightID.get(fight.id) || 0;
 		options.push({
-			label: `#${pullCounts.get(fight.id) || 0}${difficultyLabel} ${fight.name} ${result} ${duration} (${localStartTime})`,
+			label: `#${pullNumber}${difficultyLabel} ${fight.name} ${duration} (${localStartTime})`,
+			menuLabel: `#${pullNumber}`,
+			meta: duration,
+			secondaryMeta: localStartTime,
+			meterValue: fightPercentage,
+			meterColor: progress.color,
+			section: difficultyName ? `${fight.name} · ${difficultyName}` : fight.name,
+			sectionImage: getReviewEncounterArt(fight.encounterID),
 			value: fight.id,
-			color: fight.kill ? 'green' : undefined,
+			badge: progress.label,
+			badgeBackgroundColor: fight.kill ? progress.color : `${progress.color}24`,
+			badgeColor: fight.kill ? '#052e16' : `color-mix(in srgb, ${progress.color} 46%, #0f172a)`,
+			badgeDarkColor: fight.kill ? '#052e16' : progress.color,
+			statusLabel: newlyFetchedFightReportCode.value === reviewsStore.selectedReportCode
+				&& newlyFetchedFightIDs.value.has(fight.id)
+				? t('reviews.new_pull')
+				: undefined,
 		});
 	}
 
@@ -217,6 +438,8 @@ const fightDropdownEmpty = computed(() => (
 			<Dropdown
 				v-model="reviewsStore.selectedFightID"
 				:options="fightOptions"
+				:columns="2"
+				:max-visible="13"
 				class="min-w-[34rem]"
 				:placeholder="$t('reviews.select_fight')"
 				:disabled="!reviewsStore.selectedReportCode"
@@ -225,7 +448,8 @@ const fightDropdownEmpty = computed(() => (
 				:empty="fightDropdownEmpty"
 				:empty-label="$t('reviews.no_fights')"
 				:error="fightDropdownError"
-				:on-open="reviewsStore.requestReportData"
+				:on-open="refreshFightsOnDropdownOpen"
+				:on-close="closeFightDropdown"
 				:on-retry="() => reviewsStore.requestReportData(true)"
 			/>
 		</template>
@@ -239,9 +463,67 @@ const fightDropdownEmpty = computed(() => (
 				:disabled="authorizing"
 				@click="authorize"
 			/>
-			<p v-if="authorizationError" role="alert" class="max-w-[34rem] text-center text-xs text-red-400">
+			<p v-if="authorizationError" role="alert" class="max-w-[34rem] text-center text-xs text-red-700 dark:text-red-400">
 				{{ authorizationError }}
 			</p>
 		</div>
+
+		<Teleport to="body">
+			<div
+				v-if="customReportDialogOpen"
+				class="fixed inset-0 z-[2147483647] flex items-center justify-center bg-black/65 p-6"
+				role="presentation"
+				@mousedown.self="closeCustomReportDialog"
+			>
+				<form
+					ref="customReportDialog"
+					class="w-full max-w-xl rounded-lg border border-slate-300 bg-light2 p-4 text-slate-900 shadow-2xl dark:border-neutral-500/45 dark:bg-dark2 dark:text-white"
+					role="dialog"
+					aria-modal="true"
+					:aria-busy="customReportLoading"
+					:aria-label="$t('reviews.select_custom_report')"
+					tabindex="-1"
+					novalidate
+					@submit.prevent="selectCustomReport"
+					@keydown="onCustomReportDialogKeydown"
+				>
+					<label for="custom-wcl-report-url" class="mb-2 block text-sm font-semibold">
+						{{ $t('reviews.custom_report_url') }}
+					</label>
+					<input
+						id="custom-wcl-report-url"
+						ref="customReportInput"
+						v-model.trim="customReportUrl"
+						type="url"
+						class="h-9 w-full rounded-md border border-slate-300 bg-light4 px-3 text-sm text-slate-900 shadow-sm outline-none placeholder:text-slate-500 focus:border-sky-500 focus:ring-2 focus:ring-sky-500/20 dark:border-neutral-500/45 dark:bg-dark4 dark:text-white dark:placeholder:text-neutral-400"
+						placeholder="https://www.warcraftlogs.com/reports/…"
+						:readonly="customReportLoading"
+						autocomplete="off"
+						spellcheck="false"
+					/>
+					<p v-if="customReportError" role="alert" class="mt-2 text-xs text-red-700 dark:text-red-400">
+						{{ customReportError }}
+					</p>
+					<div class="mt-4 flex justify-end gap-2">
+						<button
+							type="button"
+							class="h-8 rounded-md border border-neutral-500/45 bg-light4 px-4 text-sm font-semibold hover:bg-light3 disabled:cursor-wait disabled:opacity-50 dark:bg-dark4 dark:hover:bg-dark3"
+							:disabled="customReportLoading"
+							@click="closeCustomReportDialog"
+						>
+							{{ $t('reviews.cancel') }}
+						</button>
+						<UIButton
+							type="submit"
+							class="h-8 px-4 text-sm"
+							:label="customReportLoading
+								? $t('reviews.opening_custom_report')
+								: $t('reviews.open_custom_report')"
+							:disabled="customReportLoading"
+						/>
+					</div>
+				</form>
+			</div>
+		</Teleport>
 	</div>
 </template>

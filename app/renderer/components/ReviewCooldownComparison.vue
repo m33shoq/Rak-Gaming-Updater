@@ -10,6 +10,8 @@ import ReviewPlaybackCursor from '@/renderer/components/ReviewPlaybackCursor.vue
 import ReviewRaidMarker from '@/renderer/components/ReviewRaidMarker.vue';
 import type { ReviewTimelineCursorMapping } from '@/renderer/composables/useReviewTimelinePlayback';
 import { useReviewsStore } from '@/renderer/store/ReviewsStore';
+import { getReviewBossCastAction, getReviewBossCastActionMetadata } from '@/reviewBossCastActions';
+import { buildPullNumberByFightID } from '@/reviewFights';
 import { buildCollapsedBossCastMarkers, sortBossCastAbilitiesByFirstOccurrence } from '@/renderer/utils/bossCastAggregation';
 import { useBossCastTooltipLayout } from '@/renderer/utils/bossCastTooltipLayout';
 import {
@@ -473,11 +475,7 @@ function onPlayerPickerFocusOut(event: FocusEvent) {
 }
 
 const pullNumberByFightID = computed(() => {
-	const anchor = anchorFight.value;
-	const matching = (reportDetails.value?.fights || [])
-		.filter(fight => anchor && fight.encounterID === anchor.encounterID && fight.difficulty === anchor.difficulty)
-		.sort((left, right) => left.startTime - right.startTime);
-	return new Map(matching.map((fight, index) => [fight.id, index + 1]));
+	return buildPullNumberByFightID(reportDetails.value?.fights || []);
 });
 const eligiblePulls = computed(() => {
 	const playerID = selectedPlayerID.value;
@@ -1142,6 +1140,51 @@ function getBossCastDurationClass(marker: BossCastMarker) {
 		? 'review-boss-cast-rail--interrupted'
 		: 'review-boss-cast-rail--completed';
 }
+function isBossCastStartEvent(marker: BossCastMarker) {
+	return marker.event.type.toLowerCase() === 'begincast';
+}
+function getBossCastOutcomeVerb(marker: BossCastMarker, completedVerb = 'completed') {
+	if (isBossCastStartEvent(marker)) return 'started';
+	return marker.event.bossCast.interrupt ? 'interrupted' : completedVerb;
+}
+function getBossCastActionHint(fight: fightDetails, lane: BossCastLane) {
+	return getReviewBossCastActionMetadata(fight, lane.ability)?.hint || null;
+}
+function getBossCastMarkerAriaLabel(
+	fight: fightDetails,
+	lane: BossCastLane,
+	marker: BossCastMarker,
+	occurrences: BossCastMarker[],
+) {
+	const label = occurrences.length > 1
+		? `${lane.ability.name}, ${occurrences.length} occurrences, first at ${formatBossCastTime(fight, marker.timestampSeconds)}`
+		: `${lane.ability.name} ${getBossCastOutcomeVerb(marker)} for ${marker.event.source?.name || 'Unknown enemy'}`;
+	const actionHint = getBossCastActionHint(fight, lane);
+	return actionHint ? `${label}. ${actionHint}` : label;
+}
+function openBossCastAction(
+	fight: fightDetails,
+	lane: BossCastLane,
+	marker: BossCastMarker,
+	event: MouseEvent,
+) {
+	const reportCode = anchorReportCode.value;
+	if (!reportCode) return;
+	const action = getReviewBossCastAction({
+		reportCode,
+		fight,
+		ability: lane.ability,
+		occurrenceKind: isBossCastStartEvent(marker) ? 'start' : 'outcome',
+		occurrenceStartTimestampSeconds: marker.event.bossCast.startTimestamp == null
+			? null
+			: Math.max(0, (marker.event.bossCast.startTimestamp - fight.startTime) / 1000),
+		occurrenceTimestampSeconds: marker.timestampSeconds,
+	});
+	if (!action) return;
+	event.preventDefault();
+	event.stopPropagation();
+	window.open(action.url, '_blank', 'noopener,noreferrer');
+}
 function getSpellIconURL(icon?: string) {
 	if (!icon) return '';
 	return /^https?:\/\//i.test(icon) ? icon : `https://wow.zamimg.com/images/wow/icons/large/${icon.toLowerCase()}`;
@@ -1150,9 +1193,24 @@ function getActorIconURL(icon?: string) {
 	if (!icon) return '';
 	return /^https?:\/\//i.test(icon) ? icon : `https://assets.rpglogs.com/img/warcraft/icons/${encodeURIComponent(icon)}.jpg`;
 }
-function getClassColor(className?: string) {
-	const colors: Record<string, string> = { deathknight: 'text-[#C41E3A]', demonhunter: 'text-[#A330C9]', druid: 'text-[#FF7C0A]', evoker: 'text-[#33937F]', hunter: 'text-[#AAD372]', mage: 'text-[#3FC7EB]', monk: 'text-[#00FF98]', paladin: 'text-[#F48CBA]', priest: 'text-white', rogue: 'text-[#FFF468]', shaman: 'text-[#0070DD]', warlock: 'text-[#8788EE]', warrior: 'text-[#C69B6D]' };
-	return colors[className?.toLowerCase() || ''] || 'text-inherit';
+function getClassColor(className?: string, darkSurface = false) {
+	const normalizedClassName = className?.toLowerCase() || '';
+	const darkSurfaceColors: Record<string, string> = {
+		deathknight: 'text-[#C41E3A]', demonhunter: 'text-[#A330C9]', druid: 'text-[#FF7C0A]', evoker: 'text-[#33937F]',
+		hunter: 'text-[#AAD372]', mage: 'text-[#3FC7EB]', monk: 'text-[#00FF98]', paladin: 'text-[#F48CBA]',
+		priest: 'text-white', rogue: 'text-[#FFF468]', shaman: 'text-[#0070DD]', warlock: 'text-[#8788EE]', warrior: 'text-[#C69B6D]',
+	};
+	if (darkSurface) return darkSurfaceColors[normalizedClassName] || 'text-inherit';
+	const surfaceColors: Record<string, string> = {
+		deathknight: 'text-[#9F1239] dark:text-[#C41E3A]', demonhunter: 'text-[#7E22CE] dark:text-[#A330C9]',
+		druid: 'text-[#C2410C] dark:text-[#FF7C0A]', evoker: 'text-[#047857] dark:text-[#33937F]',
+		hunter: 'text-[#4D7C0F] dark:text-[#AAD372]', mage: 'text-[#0369A1] dark:text-[#3FC7EB]',
+		monk: 'text-[#047857] dark:text-[#00FF98]', paladin: 'text-[#BE185D] dark:text-[#F48CBA]',
+		priest: 'text-slate-600 dark:text-white', rogue: 'text-[#A16207] dark:text-[#FFF468]',
+		shaman: 'text-[#0059B3] dark:text-[#0070DD]', warlock: 'text-[#4F46E5] dark:text-[#8788EE]',
+		warrior: 'text-[#92400E] dark:text-[#C69B6D]',
+	};
+	return surfaceColors[normalizedClassName] || 'text-inherit';
 }
 function getBorderColor(event: reviewCooldownEvent) {
 	const group = getReviewCooldownGroups(event).find(groupID => enabledGroupIDSet.value.has(groupID))
@@ -1628,7 +1686,7 @@ onBeforeUnmount(() => {
 				<div class="relative min-w-0 flex-1 tabular-nums">
 					<template v-if="alignmentPhaseName">
 						<span class="absolute left-1 top-1.5">{{ formatSignedTime(timelineDomain.minSeconds) }}</span>
-						<span class="absolute top-1.5 -translate-x-1/2 font-semibold text-sky-500" :style="{ left: `${alignmentAnchorPercent * 100}%` }">{{ alignmentPhaseName }} 0:00</span>
+						<span class="absolute top-1.5 -translate-x-1/2 font-semibold text-sky-700 dark:text-sky-300" :style="{ left: `${alignmentAnchorPercent * 100}%` }">{{ alignmentPhaseName }} 0:00</span>
 						<span class="absolute right-2 top-1.5">{{ formatSignedTime(timelineDomain.maxSeconds) }}</span>
 					</template>
 					<template v-else>
@@ -1658,12 +1716,12 @@ onBeforeUnmount(() => {
 								<div v-for="marker in minuteMarkers" :key="`boss-head-minute:${marker.seconds}`" class="pointer-events-none absolute inset-y-0 z-[1] w-px bg-neutral-500/20" :style="{ left: `${marker.percent * 100}%` }"></div>
 								<template v-if="bossReferenceIsAligned">
 									<button v-for="phase in bossReferencePhases" :key="`boss-head-phase:${phase.key}`" type="button" class="group absolute inset-y-0 z-10 w-3 -translate-x-1/2 focus:outline-none" :style="{ left: `${phase.percent * 100}%` }" :title="`Align pulls to ${formatPhaseLabel(phase)}`" @click.stop="alignToPhase(phase.key)">
-										<span class="pointer-events-none absolute inset-y-0 left-1/2 w-0.5 -translate-x-1/2 bg-sky-400/75" :class="phase.key === alignmentPhaseKey ? 'bg-sky-300 shadow-[0_0_5px_rgba(125,211,252,0.65)]' : ''"></span>
-										<span class="pointer-events-none absolute left-[calc(50%+3px)] top-0 whitespace-nowrap bg-slate-950/80 px-1 text-[9px] font-semibold normal-case tracking-normal text-sky-300">{{ formatPhaseLabel(phase) }}</span>
+									<span class="pointer-events-none absolute inset-y-0 left-1/2 w-0.5 -translate-x-1/2 bg-sky-500/80 dark:bg-sky-400/75" :class="phase.key === alignmentPhaseKey ? 'bg-sky-700 shadow-[0_0_5px_rgba(2,132,199,0.4)] dark:bg-sky-300 dark:shadow-[0_0_5px_rgba(125,211,252,0.65)]' : ''"></span>
+										<span class="pointer-events-none absolute left-[calc(50%+3px)] top-0 whitespace-nowrap bg-sky-100 px-1 text-[9px] font-semibold normal-case tracking-normal text-sky-700 dark:bg-slate-950/80 dark:text-sky-300">{{ formatPhaseLabel(phase) }}</span>
 									</button>
 								</template>
 								<div v-if="isBossCastsLoading" class="absolute inset-0 flex items-center justify-center text-[10px] text-neutral-500">Loading longest-pull boss casts...</div>
-								<div v-else-if="bossCastError" class="absolute inset-0 flex items-center justify-center text-[10px] text-red-500">Boss casts unavailable</div>
+								<div v-else-if="bossCastError" class="absolute inset-0 flex items-center justify-center text-[10px] text-red-700 dark:text-red-400">Boss casts unavailable</div>
 								<div v-else-if="!bossReferenceIsAligned" class="absolute inset-0 flex items-center justify-center text-[10px] text-neutral-500">{{ alignmentPhaseLabel }} not reached in longest pull</div>
 								<template v-if="reviewsStore.bossCastDisplayMode === 'collapsed' && bossReferenceIsAligned && !isBossCastsLoading && !bossCastError">
 									<div v-if="bossReferenceBounds.start > 0" class="pointer-events-none absolute inset-y-0 left-0 z-[2] bg-black/20" :style="{ width: `${bossReferenceBounds.start * 100}%` }"></div>
@@ -1671,11 +1729,11 @@ onBeforeUnmount(() => {
 									<div class="pointer-events-none absolute inset-y-0 z-[4] w-0.5" :class="longestEligiblePull.kill ? 'bg-emerald-500/80' : 'bg-red-500/70'" :style="{ left: `${bossReferenceBounds.end * 100}%` }"></div>
 									<ReviewPlaybackCursor v-if="longestEligiblePull.id === reviewsStore.selectedFightID && currentFightCursorMapping" :mapping="currentFightCursorMapping" show-at-bounds class="pointer-events-none absolute inset-y-0 z-30 w-0.5 bg-amber-400 shadow-[0_0_4px_rgba(251,191,36,0.8)]" />
 									<span v-for="marker in collapsedBossCastDurationMarkers.filter(entry => entry.durationSeconds > 0)" :key="`collapsed-head-duration:${marker.key}`" class="review-boss-cast-rail review-boss-cast-rail--compact pointer-events-none absolute top-[10px] z-[6] h-[3px] min-w-px" :class="getBossCastDurationClass(marker)" :style="{ left: `${marker.startPercent * 100}%`, width: `${Math.max(0, marker.percent - marker.startPercent) * 100}%` }"></span>
-									<button v-for="item in collapsedBossCastMarkers" :key="`collapsed-head:${item.marker.key}`" type="button" class="absolute top-0.5 z-20 size-5 overflow-visible rounded-none border bg-black shadow-[0_1px_4px_rgba(0,0,0,.45)] transition-none hover:z-30 hover:scale-110 focus:z-30 focus:outline-none focus:ring-1 focus:ring-amber-200" :class="getBossCastMarkerClass(item.occurrences)" :style="{ left: `clamp(0px, calc(${item.marker.percent * 100}% + ${item.offsetPixels}px), calc(100% - 20px))` }" :aria-label="item.occurrences.length > 1 ? `${item.lane.ability.name}, ${item.occurrences.length} outcomes, first at ${formatBossCastTime(longestEligiblePull, item.marker.timestampSeconds)}` : `${item.lane.ability.name} ${item.marker.event.bossCast.interrupt ? 'interrupted' : 'completed'} for ${item.marker.event.source?.name || 'Unknown enemy'}`" @click.stop="emit('seekPull', longestEligiblePull.id, item.marker.timestampSeconds)" @mouseenter="showBossCast(longestEligiblePull, item.lane, item.marker, $event, item.occurrences)" @mousemove="updateTooltip" @mouseleave="hideDetail">
+									<button v-for="item in collapsedBossCastMarkers" :key="`collapsed-head:${item.marker.key}`" type="button" class="absolute top-0.5 z-20 size-5 overflow-visible rounded-none border bg-black shadow-[0_1px_4px_rgba(0,0,0,.45)] transition-none hover:z-30 hover:scale-110 focus:z-30 focus:outline-none focus:ring-1 focus:ring-amber-200" :class="getBossCastMarkerClass(item.occurrences)" :style="{ left: `clamp(0px, calc(${item.marker.percent * 100}% + ${item.offsetPixels}px), calc(100% - 20px))` }" :aria-label="getBossCastMarkerAriaLabel(longestEligiblePull, item.lane, item.marker, item.occurrences)" @click.stop="emit('seekPull', longestEligiblePull.id, item.marker.timestampSeconds)" @contextmenu="openBossCastAction(longestEligiblePull, item.lane, item.marker, $event)" @mouseenter="showBossCast(longestEligiblePull, item.lane, item.marker, $event, item.occurrences)" @mousemove="updateTooltip" @mouseleave="hideDetail">
 										<img v-if="item.lane.ability.icon" :src="getSpellIconURL(item.lane.ability.icon)" :alt="item.lane.ability.name" class="block size-full" draggable="false" /><span v-else class="flex size-full items-center justify-center text-[9px] text-white">?</span>
 						<span v-if="item.occurrences.length > 1" class="pointer-events-none absolute bottom-0 right-0 z-10 min-w-3 border border-amber-200/80 bg-amber-500 px-0.5 text-center text-[8px] font-bold leading-[11px] text-black shadow">{{ item.occurrences.length }}</span>
 									</button>
-									<div v-if="timelineHover.visible" class="pointer-events-none absolute inset-y-0 z-40 w-px bg-white/55" :style="{ left: `${timelineHover.percent * 100}%` }"></div>
+									<div v-if="timelineHover.visible" class="pointer-events-none absolute inset-y-0 z-40 w-px bg-slate-700/60 dark:bg-white/55" :style="{ left: `${timelineHover.percent * 100}%` }"></div>
 								</template>
 							</div>
 						</div>
@@ -1698,14 +1756,14 @@ onBeforeUnmount(() => {
 								<div v-if="bossReferenceBounds.start > 0" class="pointer-events-none absolute inset-y-0 left-0 z-[2] bg-black/20" :style="{ width: `${bossReferenceBounds.start * 100}%` }"></div>
 								<div v-if="bossReferenceBounds.end < 1" class="pointer-events-none absolute inset-y-0 right-0 z-[2] bg-black/20" :style="{ left: `${bossReferenceBounds.end * 100}%` }"></div>
 								<div class="pointer-events-none absolute inset-y-0 z-[4] w-0.5" :class="longestEligiblePull.kill ? 'bg-emerald-500/80' : 'bg-red-500/70'" :style="{ left: `${bossReferenceBounds.end * 100}%` }"></div>
-								<div v-for="phase in bossReferencePhases" :key="`boss-phase:${lane.ability.spellID}:${phase.key}`" class="pointer-events-none absolute inset-y-0 z-10 w-0.5 bg-sky-400/75" :class="phase.key === alignmentPhaseKey ? 'bg-sky-300 shadow-[0_0_5px_rgba(125,211,252,0.65)]' : ''" :style="{ left: `${phase.percent * 100}%` }"></div>
+								<div v-for="phase in bossReferencePhases" :key="`boss-phase:${lane.ability.spellID}:${phase.key}`" class="pointer-events-none absolute inset-y-0 z-10 w-0.5 bg-sky-500/80 dark:bg-sky-400/75" :class="phase.key === alignmentPhaseKey ? 'bg-sky-700 shadow-[0_0_5px_rgba(2,132,199,0.4)] dark:bg-sky-300 dark:shadow-[0_0_5px_rgba(125,211,252,0.65)]' : ''" :style="{ left: `${phase.percent * 100}%` }"></div>
 								<ReviewPlaybackCursor v-if="longestEligiblePull.id === reviewsStore.selectedFightID && currentFightCursorMapping" :mapping="currentFightCursorMapping" show-at-bounds class="pointer-events-none absolute inset-y-0 z-30 w-0.5 bg-amber-400 shadow-[0_0_4px_rgba(251,191,36,0.8)]" />
 								<span v-for="marker in lane.markers.filter(item => item.durationSeconds > 0)" :key="`boss-duration:${marker.key}`" class="review-boss-cast-rail pointer-events-none absolute top-[14px] z-[6] h-[5px] min-w-px" :class="getBossCastDurationClass(marker)" :style="{ left: `${marker.startPercent * 100}%`, width: `${Math.max(0, marker.percent - marker.startPercent) * 100}%` }"></span>
-								<button v-for="item in lane.markerGroups" :key="item.marker.key" type="button" class="absolute top-1 z-20 size-6 overflow-visible rounded-none border bg-black shadow-[0_1px_4px_rgba(0,0,0,.45)] transition-none hover:z-30 hover:scale-105 focus:z-30 focus:outline-none focus:ring-1 focus:ring-amber-200" :class="getBossCastMarkerClass(item.occurrences)" :style="{ left: `clamp(0px, calc(${item.marker.percent * 100}% + ${item.offsetPixels}px), calc(100% - 24px))` }" :aria-label="item.occurrences.length > 1 ? `${lane.ability.name}, ${item.occurrences.length} outcomes, first at ${formatBossCastTime(longestEligiblePull, item.marker.timestampSeconds)}` : `${lane.ability.name} ${item.marker.event.bossCast.interrupt ? 'interrupted' : 'completed'} for ${item.marker.event.source?.name || 'Unknown enemy'}`" @click.stop="emit('seekPull', longestEligiblePull.id, item.marker.timestampSeconds)" @mouseenter="showBossCast(longestEligiblePull, lane, item.marker, $event, item.occurrences)" @mousemove="updateTooltip" @mouseleave="hideDetail">
+								<button v-for="item in lane.markerGroups" :key="item.marker.key" type="button" class="absolute top-1 z-20 size-6 overflow-visible rounded-none border bg-black shadow-[0_1px_4px_rgba(0,0,0,.45)] transition-none hover:z-30 hover:scale-105 focus:z-30 focus:outline-none focus:ring-1 focus:ring-amber-200" :class="getBossCastMarkerClass(item.occurrences)" :style="{ left: `clamp(0px, calc(${item.marker.percent * 100}% + ${item.offsetPixels}px), calc(100% - 24px))` }" :aria-label="getBossCastMarkerAriaLabel(longestEligiblePull, lane, item.marker, item.occurrences)" @click.stop="emit('seekPull', longestEligiblePull.id, item.marker.timestampSeconds)" @contextmenu="openBossCastAction(longestEligiblePull, lane, item.marker, $event)" @mouseenter="showBossCast(longestEligiblePull, lane, item.marker, $event, item.occurrences)" @mousemove="updateTooltip" @mouseleave="hideDetail">
 									<img v-if="lane.ability.icon" :src="getSpellIconURL(lane.ability.icon)" :alt="lane.ability.name" class="size-full" draggable="false" /><span v-else class="flex size-full items-center justify-center text-[10px] text-white">?</span>
 									<span v-if="item.occurrences.length > 1" class="pointer-events-none absolute bottom-0 right-0 z-10 min-w-3 border border-amber-200/80 bg-amber-500 px-0.5 text-center text-[8px] font-bold leading-[11px] text-black shadow">{{ item.occurrences.length }}</span>
 								</button>
-								<div v-if="timelineHover.visible" class="pointer-events-none absolute inset-y-0 z-40 w-px bg-white/55" :style="{ left: `${timelineHover.percent * 100}%` }"></div>
+								<div v-if="timelineHover.visible" class="pointer-events-none absolute inset-y-0 z-40 w-px bg-slate-700/60 dark:bg-white/55" :style="{ left: `${timelineHover.percent * 100}%` }"></div>
 							</div>
 						</div>
 						</template>
@@ -1720,14 +1778,14 @@ onBeforeUnmount(() => {
 								:aria-label="`Open pull #${row.pullNumber} in Warcraft Logs`"
 								@click="emit('openPull', row.fight.id)"
 							></button>
-							<div class="pointer-events-none relative z-10 flex min-w-0 flex-1 items-center gap-1.5 peer-hover:text-sky-500">
+							<div class="pointer-events-none relative z-10 flex min-w-0 flex-1 items-center gap-1.5 peer-hover:text-sky-700 dark:peer-hover:text-sky-400">
 								<img v-if="row.actorIcon" :src="getActorIconURL(row.actorIcon)" alt="" class="size-5 shrink-0 rounded-none border border-neutral-500/45 bg-black" />
 								<span class="min-w-0 flex-1 leading-tight">
-									<span class="flex items-center gap-1.5 font-semibold"><span>#{{ row.pullNumber }}</span><span v-if="row.fight.id === anchorFightID" class="text-[9px] uppercase tracking-wider text-amber-500">Current</span><span :class="row.fight.kill ? 'text-emerald-500' : 'text-neutral-500'">{{ row.fight.kill ? 'KILL' : `${row.fight.bossPercentage?.toFixed(1) ?? '?'}%` }}</span></span>
+									<span class="flex items-center gap-1.5 font-semibold"><span>#{{ row.pullNumber }}</span><span v-if="row.fight.id === anchorFightID" class="text-[9px] uppercase tracking-wider text-amber-700 dark:text-amber-500">Current</span><span :class="row.fight.kill ? 'text-emerald-700 dark:text-emerald-500' : 'text-neutral-500'">{{ row.fight.kill ? 'KILL' : `${row.fight.bossPercentage?.toFixed(1) ?? '?'}%` }}</span></span>
 									<span class="block truncate text-[10px] tabular-nums text-neutral-500">{{ formatTime(row.durationSeconds, true) }}</span>
 								</span>
 							</div>
-							<button v-if="getPullError(row.fight.id)" type="button" class="relative z-20 shrink-0 text-[10px] text-red-500 hover:underline" :title="getPullError(row.fight.id) || ''" @click.stop="retryPull(row.fight.id)">Retry</button>
+							<button v-if="getPullError(row.fight.id)" type="button" class="relative z-20 shrink-0 text-[10px] text-red-700 hover:underline dark:text-red-400" :title="getPullError(row.fight.id) || ''" @click.stop="retryPull(row.fight.id)">Retry</button>
 							<span v-else-if="isPullLoading(row.fight.id) || !hasPullData(row.fight.id)" class="pointer-events-none relative z-10 size-3 shrink-0 animate-pulse border border-sky-400/60 bg-sky-500/20"></span>
 						</div>
 						<div data-pull-plot class="relative min-w-0 flex-1 cursor-pointer overflow-hidden hover:bg-sky-500/[0.025]" @click="seekAtEvent(row, $event)" @mousemove="onTimelineMove(row, $event)" @mouseleave="onTimelineLeave">
@@ -1738,32 +1796,32 @@ onBeforeUnmount(() => {
 							<div v-if="row.isAligned" class="pointer-events-none absolute inset-y-0 z-[4] w-0.5" :class="row.fight.kill ? 'bg-emerald-500/80' : 'bg-red-500/70'" :style="{ left: `${row.endPercent * 100}%` }"></div>
 							<ReviewPlaybackCursor v-if="row.isAligned && row.fight.id === reviewsStore.selectedFightID && currentFightCursorMapping" :mapping="currentFightCursorMapping" :minimum-percent="row.startPercent" :maximum-percent="row.endPercent" show-at-bounds caret class="pointer-events-none absolute inset-y-0 z-30 w-0.5 bg-amber-400 shadow-[0_0_4px_rgba(251,191,36,0.8)]" />
 							<button v-for="phase in row.phases" :key="`${row.fight.id}:${phase.key}`" type="button" class="group absolute inset-y-0 z-10 w-3 -translate-x-1/2 focus:outline-none" :style="{ left: `${phase.percent * 100}%` }" @click.stop="alignToPhase(phase.key)" @mouseenter="showPhase(row, phase, $event)" @mousemove="updateTooltip" @mouseleave="hideDetail">
-								<span class="pointer-events-none absolute inset-y-0 left-1/2 w-0.5 -translate-x-1/2 bg-sky-400/75 group-focus-visible:bg-white" :class="phase.key === alignmentPhaseKey ? 'bg-sky-300 shadow-[0_0_5px_rgba(125,211,252,0.65)]' : hoveredPhaseKey === phase.key ? 'bg-white shadow-[0_0_6px_rgba(125,211,252,0.9)]' : ''"></span>
-								<span class="pointer-events-none absolute left-[calc(50%+3px)] top-0 whitespace-nowrap bg-slate-950/75 px-1 text-[9px] font-semibold text-sky-300">{{ formatPhaseLabel(phase) }}</span>
+								<span class="pointer-events-none absolute inset-y-0 left-1/2 w-0.5 -translate-x-1/2 bg-sky-500/80 group-focus-visible:bg-slate-900 dark:bg-sky-400/75 dark:group-focus-visible:bg-white" :class="phase.key === alignmentPhaseKey ? 'bg-sky-600 shadow-[0_0_5px_rgba(2,132,199,0.45)] dark:bg-sky-300 dark:shadow-[0_0_5px_rgba(125,211,252,0.65)]' : hoveredPhaseKey === phase.key ? 'bg-slate-900 shadow-[0_0_6px_rgba(15,23,42,0.45)] dark:bg-white dark:shadow-[0_0_6px_rgba(125,211,252,0.9)]' : ''"></span>
+								<span class="pointer-events-none absolute left-[calc(50%+3px)] top-0 whitespace-nowrap bg-sky-100 px-1 text-[9px] font-semibold text-sky-700 dark:bg-slate-950/75 dark:text-sky-300">{{ formatPhaseLabel(phase) }}</span>
 							</button>
 							<template v-for="marker in row.alerts" :key="marker.key">
 								<div class="pointer-events-none absolute inset-y-0 z-[11] w-0.5 bg-amber-400/80 shadow-[0_0_5px_rgba(245,158,11,0.25)]" :style="{ left: `${marker.percent * 100}%` }"></div>
-								<button type="button" class="absolute top-1 z-30 flex size-4 items-center justify-center overflow-visible border border-amber-200/90 bg-amber-500 text-xs font-black leading-none text-black shadow-[0_0_7px_rgba(245,158,11,0.4)] hover:z-40 hover:bg-amber-300 focus:z-40 focus:outline-none focus:ring-1 focus:ring-white" :style="{ left: `clamp(0px, ${marker.percent * 100}%, calc(100% - 16px))` }" :aria-label="marker.occurrences.length > 1 ? `${marker.event.encounterAlert?.label || 'Encounter alert'}, ${marker.occurrences.length} occurrences, first at ${formatCooldownTime(row, marker.timestampSeconds)}` : `${marker.event.encounterAlert?.label || 'Encounter alert'} at ${formatCooldownTime(row, marker.timestampSeconds)}`" @click.stop="emit('seekPull', row.fight.id, marker.timestampSeconds)" @mouseenter="showEncounterAlert(row, marker, $event)" @mousemove="updateTooltip" @mouseleave="hideDetail">
+								<button type="button" class="absolute top-1 z-30 flex size-4 items-center justify-center overflow-visible border border-amber-200/90 bg-amber-500 text-xs font-black leading-none text-black shadow-[0_0_7px_rgba(245,158,11,0.4)] hover:z-40 hover:bg-amber-300 focus:z-40 focus:outline-none focus:ring-1 focus:ring-slate-700 dark:focus:ring-white" :style="{ left: `clamp(0px, ${marker.percent * 100}%, calc(100% - 16px))` }" :aria-label="marker.occurrences.length > 1 ? `${marker.event.encounterAlert?.label || 'Encounter alert'}, ${marker.occurrences.length} occurrences, first at ${formatCooldownTime(row, marker.timestampSeconds)}` : `${marker.event.encounterAlert?.label || 'Encounter alert'} at ${formatCooldownTime(row, marker.timestampSeconds)}`" @click.stop="emit('seekPull', row.fight.id, marker.timestampSeconds)" @mouseenter="showEncounterAlert(row, marker, $event)" @mousemove="updateTooltip" @mouseleave="hideDetail">
 									!
 									<span v-if="marker.occurrences.length > 1" class="pointer-events-none absolute -bottom-1 -right-1 z-10 min-w-3 border border-amber-200/80 bg-amber-600 px-0.5 text-center text-[8px] font-bold leading-[11px] text-white shadow">{{ marker.occurrences.length }}</span>
 								</button>
 							</template>
 							<button v-for="death in row.deaths" :key="death.key" type="button" class="absolute inset-y-0 z-[6] min-w-[3px] border-x border-red-400/70 bg-red-800/45 hover:z-20 hover:bg-red-700/65 focus:outline-none" :style="{ left: death.percent >= 1 ? 'calc(100% - 3px)' : `${death.percent * 100}%`, width: `${Math.max(0, death.endPercent - death.percent) * 100}%`, backgroundImage: 'repeating-linear-gradient(135deg, rgba(248,113,113,.22) 0, rgba(248,113,113,.22) 4px, transparent 4px, transparent 8px)' }" @click.stop="emit('seekPull', row.fight.id, Math.max(0, death.timestampSeconds - 10))" @contextmenu.prevent.stop="emit('openDeath', row.fight.id, death.id)" @mouseenter="showDeath(row, death, $event)" @mousemove="updateTooltip" @mouseleave="hideDetail"></button>
-							<button v-for="cooldown in row.cooldowns" :key="cooldown.key" type="button" class="absolute z-20 size-6 overflow-hidden rounded-none border bg-black shadow-[0_1px_4px_rgba(0,0,0,.45)] transition-none hover:z-30 hover:scale-105 focus:z-30 focus:outline-none focus:ring-1 focus:ring-white/70" :class="getBorderColor(cooldown.event)" :style="{ left: `clamp(0px, ${cooldown.percent * 100}%, calc(100% - 24px))`, top: `${18 + cooldown.track * 27}px` }" :aria-label="`${cooldown.event.source?.name || 'Unknown player'} used ${cooldown.event.ability?.name || `Spell ${cooldown.event.cooldown.spellID}`}${cooldown.event.cooldown.interruptSuccessful == null ? '' : cooldown.event.cooldown.interruptSuccessful ? ', interrupt successful' : ', no interrupt recorded'}`" @click.stop="emit('seekPull', row.fight.id, cooldown.timestampSeconds)" @mouseenter="showCooldown(row, cooldown, $event)" @mousemove="updateTooltip" @mouseleave="hideDetail">
+							<button v-for="cooldown in row.cooldowns" :key="cooldown.key" type="button" class="absolute z-20 size-6 overflow-hidden rounded-none border bg-black shadow-[0_1px_4px_rgba(0,0,0,.45)] transition-none hover:z-30 hover:scale-105 focus:z-30 focus:outline-none focus:ring-1 focus:ring-sky-500 dark:focus:ring-white/70" :class="getBorderColor(cooldown.event)" :style="{ left: `clamp(0px, ${cooldown.percent * 100}%, calc(100% - 24px))`, top: `${18 + cooldown.track * 27}px` }" :aria-label="`${cooldown.event.source?.name || 'Unknown player'} used ${cooldown.event.ability?.name || `Spell ${cooldown.event.cooldown.spellID}`}${cooldown.event.cooldown.interruptSuccessful == null ? '' : cooldown.event.cooldown.interruptSuccessful ? ', interrupt successful' : ', no interrupt recorded'}`" @click.stop="emit('seekPull', row.fight.id, cooldown.timestampSeconds)" @mouseenter="showCooldown(row, cooldown, $event)" @mousemove="updateTooltip" @mouseleave="hideDetail">
 								<img v-if="cooldown.event.ability?.abilityIcon" :src="getSpellIconURL(cooldown.event.ability.abilityIcon)" alt="" class="size-full" draggable="false" /><span v-else class="flex size-full items-center justify-center text-[10px] text-white">?</span>
 								<span v-if="cooldown.event.cooldown.interruptSuccessful != null" class="pointer-events-none absolute bottom-0 right-0 flex size-3 items-center justify-center border-l border-t border-black/70 text-[9px] font-black leading-none text-white" :class="cooldown.event.cooldown.interruptSuccessful ? 'bg-emerald-600' : 'bg-red-700'">{{ cooldown.event.cooldown.interruptSuccessful ? '✓' : '×' }}</span>
 							</button>
-							<div v-if="row.isAligned && timelineHover.visible" class="pointer-events-none absolute inset-y-0 z-40 w-px bg-white/55" :style="{ left: `${timelineHover.percent * 100}%` }"></div>
+							<div v-if="row.isAligned && timelineHover.visible" class="pointer-events-none absolute inset-y-0 z-40 w-px bg-slate-700/60 dark:bg-white/55" :style="{ left: `${timelineHover.percent * 100}%` }"></div>
 							<div v-if="!row.isAligned" class="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/15 text-[10px] font-medium text-neutral-500">{{ alignmentPhaseName }} not reached</div>
 							<div v-else-if="hasPullData(row.fight.id) && row.cooldowns.length === 0 && row.deaths.length === 0 && row.alerts.length === 0" class="pointer-events-none absolute inset-0 flex items-center justify-center text-[10px] text-neutral-500">{{ deathsEnabled ? 'No matching cooldowns, deaths, or alerts' : 'No matching cooldowns or alerts' }}</div>
 						</div>
 					</div>
 				</div>
-				<div ref="scrollbarTrack" class="absolute inset-y-0 right-0 z-50 w-2.5 border-l border-neutral-500/25 bg-slate-950/25 transition-opacity duration-300" :class="!scrollbar.visible ? 'pointer-events-none opacity-0' : scrollbar.active ? 'pointer-events-auto opacity-100' : 'pointer-events-none opacity-0 focus-within:pointer-events-auto focus-within:opacity-100'" @pointerdown="onTrackPointer">
+				<div ref="scrollbarTrack" class="absolute inset-y-0 right-0 z-50 w-2.5 border-l border-slate-300 bg-slate-200/70 transition-opacity duration-300 dark:border-neutral-500/25 dark:bg-slate-950/25" :class="!scrollbar.visible ? 'pointer-events-none opacity-0' : scrollbar.active ? 'pointer-events-auto opacity-100' : 'pointer-events-none opacity-0 focus-within:pointer-events-auto focus-within:opacity-100'" @pointerdown="onTrackPointer">
 					<button
 						v-show="scrollbar.visible"
 						type="button"
-						class="absolute inset-x-0 touch-none cursor-grab border-y border-neutral-200/25 bg-neutral-400/65 hover:bg-neutral-300/75 active:cursor-grabbing focus:outline-none focus:ring-1 focus:ring-inset focus:ring-sky-300"
+						class="absolute inset-x-0 touch-none cursor-grab border-y border-slate-600/25 bg-slate-500/70 hover:bg-slate-600/75 active:cursor-grabbing focus:outline-none focus:ring-1 focus:ring-inset focus:ring-sky-500 dark:border-neutral-200/25 dark:bg-neutral-400/65 dark:hover:bg-neutral-300/75 dark:focus:ring-sky-300"
 						:style="{ top: `${scrollbar.thumbTop}px`, height: `${scrollbar.thumbHeight}px` }"
 						role="scrollbar"
 						aria-label="Scroll pull comparison"
@@ -1794,7 +1852,7 @@ onBeforeUnmount(() => {
 			/>
 			<div v-else-if="detailTooltip?.kind === 'cooldown'" class="pointer-events-none fixed z-[999] w-max max-w-80 -translate-x-1/2 -translate-y-full rounded-md border border-neutral-500/60 bg-black/90 px-3 py-2 text-xs text-white shadow-xl" :style="{ left: `${detailTooltip.x}px`, top: `${detailTooltip.y}px` }">
 				<div class="flex items-center gap-2"><img v-if="detailTooltip.marker.event.ability?.abilityIcon" :src="getSpellIconURL(detailTooltip.marker.event.ability.abilityIcon)" alt="" class="size-8 rounded-none" />
-					<div><div class="font-semibold">{{ detailTooltip.marker.event.ability?.name || `Spell ${detailTooltip.marker.event.cooldown.spellID}` }}</div><div><span :class="getClassColor(detailTooltip.marker.event.source?.type)">{{ detailTooltip.marker.event.source?.name }}</span><span v-if="detailTooltip.marker.event.sourcePet?.name" class="text-neutral-400"> via {{ detailTooltip.marker.event.sourcePet.name }}</span> at {{ formatCooldownTime(detailTooltip.row, detailTooltip.marker.timestampSeconds) }}</div></div>
+					<div><div class="font-semibold">{{ detailTooltip.marker.event.ability?.name || `Spell ${detailTooltip.marker.event.cooldown.spellID}` }}</div><div><span :class="getClassColor(detailTooltip.marker.event.source?.type, true)">{{ detailTooltip.marker.event.source?.name }}</span><span v-if="detailTooltip.marker.event.sourcePet?.name" class="text-neutral-400"> via {{ detailTooltip.marker.event.sourcePet.name }}</span> at {{ formatCooldownTime(detailTooltip.row, detailTooltip.marker.timestampSeconds) }}</div></div>
 				</div>
 				<ReviewCooldownTarget v-if="detailTooltip.marker.event.target" :target="detailTooltip.marker.event.target" :target-marker="detailTooltip.marker.event.targetMarker" :target-instance="detailTooltip.marker.event.targetInstance" />
 				<div v-if="detailTooltip.marker.event.cooldown.interruptSuccessful != null" class="mt-1 text-[11px] font-medium" :class="detailTooltip.marker.event.cooldown.interruptSuccessful ? 'text-emerald-300' : 'text-red-300'">
@@ -1822,7 +1880,7 @@ onBeforeUnmount(() => {
 							<ReviewRaidMarker :marker="detailTooltip.marker.event.sourceMarker" />
 							<span>{{ detailTooltip.marker.event.source?.name || 'Unknown enemy' }}</span>
 							<span v-if="detailTooltip.marker.event.sourceInstance != null && detailTooltip.marker.event.sourceInstance > 0" class="text-neutral-400">· Spawn #{{ detailTooltip.marker.event.sourceInstance }}</span>
-							{{ detailTooltip.marker.event.bossCast.interrupt ? 'interrupted' : 'finished' }} at {{ formatBossCastTime(detailTooltip.fight, detailTooltip.marker.timestampSeconds) }}
+							{{ getBossCastOutcomeVerb(detailTooltip.marker, 'finished') }} at {{ formatBossCastTime(detailTooltip.fight, detailTooltip.marker.timestampSeconds) }}
 						</div>
 					</div>
 				</div>
@@ -1841,10 +1899,13 @@ onBeforeUnmount(() => {
 							<ReviewBossCastTargets v-if="occurrence.event.bossCast.targetDebuffs?.length" :targets="occurrence.event.bossCast.targetDebuffs" />
 							<ReviewBossCastInterrupt v-if="occurrence.event.bossCast.interrupt" :interrupt="occurrence.event.bossCast.interrupt" />
 							<div v-else class="mt-1 flex items-center gap-1 text-[11px]">
-								<svg viewBox="0 0 16 16" fill="none" class="size-4 shrink-0 border border-amber-500/55 bg-amber-500/10 p-0.5 text-amber-200" aria-hidden="true">
+								<svg v-if="isBossCastStartEvent(occurrence)" viewBox="0 0 16 16" class="size-4 shrink-0 border border-amber-500/55 bg-amber-500/10 p-0.5 text-amber-200" aria-hidden="true">
+									<path d="M5 3.5 12 8l-7 4.5z" fill="currentColor" />
+								</svg>
+								<svg v-else viewBox="0 0 16 16" fill="none" class="size-4 shrink-0 border border-amber-500/55 bg-amber-500/10 p-0.5 text-amber-200" aria-hidden="true">
 									<path d="m3 8.25 3 3L13 4.5" stroke="currentColor" stroke-width="1.75" stroke-linecap="square" stroke-linejoin="miter" />
 								</svg>
-								<span class="font-medium text-amber-200">Cast finished</span>
+								<span class="font-medium text-amber-200">Cast {{ isBossCastStartEvent(occurrence) ? 'started' : 'finished' }}</span>
 							</div>
 						</div>
 					</div>
@@ -1855,7 +1916,9 @@ onBeforeUnmount(() => {
 					<div v-if="detailTooltip.marker.durationSeconds > 0" class="mt-1 text-[11px]" :class="detailTooltip.marker.event.bossCast.interrupt ? 'text-emerald-300' : 'text-neutral-300'">Cast time {{ formatDuration(detailTooltip.marker.durationSeconds) }}</div>
 					<ReviewBossCastInterrupt v-if="detailTooltip.marker.event.bossCast.interrupt" :interrupt="detailTooltip.marker.event.bossCast.interrupt" />
 				</template>
-				<div class="mt-1 text-[10px] text-neutral-400">Longest pull #{{ pullNumberByFightID.get(detailTooltip.fight.id) || detailTooltip.fight.id }} · Spell #{{ detailTooltip.lane.ability.spellID }} · Click to open and seek<span v-if="detailTooltip.occurrences.length > 1"> to first outcome</span></div>
+				<div class="mt-1 text-[10px] text-neutral-400">
+					Longest pull #{{ pullNumberByFightID.get(detailTooltip.fight.id) || detailTooltip.fight.id }} · Spell #{{ detailTooltip.lane.ability.spellID }} · Click to open and seek<span v-if="detailTooltip.occurrences.length > 1"> to first occurrence</span><template v-if="getBossCastActionHint(detailTooltip.fight, detailTooltip.lane)"> · {{ getBossCastActionHint(detailTooltip.fight, detailTooltip.lane) }}</template>
+				</div>
 			</div>
 			<div v-else-if="detailTooltip?.kind === 'death'" class="pointer-events-none fixed z-[999] w-max max-w-80 -translate-x-1/2 -translate-y-full rounded-md border border-red-500/60 bg-black/90 px-3 py-2 text-xs text-white shadow-xl" :style="{ left: `${detailTooltip.x}px`, top: `${detailTooltip.y}px` }">
 				<div class="font-semibold">{{ formatAbsoluteAndAlignedTime(detailTooltip.row, detailTooltip.death.timestampSeconds) }} {{ actorByID.get(selectedPlayerID || -1)?.name }} died</div>

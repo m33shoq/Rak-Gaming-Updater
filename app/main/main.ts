@@ -28,6 +28,7 @@ import WclRequestTransport, {
 	normalizeWclFightRequest,
 	normalizeWclReportCode,
 } from '@/main/wclRequestTransport';
+import WclDevelopmentBridge, { type DevelopmentWclQueryResult } from '@/main/wclDevelopmentBridge';
 
 
 // @ts-ignore
@@ -117,6 +118,14 @@ function notifyRenderersWclReady(connectionID?: string) {
 	});
 }
 
+async function requestDevelopmentWclQuery(
+	query: string,
+	variables: Record<string, unknown>,
+): Promise<DevelopmentWclQueryResult> {
+	if (!isDev) return { success: false, error: 'WCL development queries are only available in development' };
+	return wclRequestTransport.requestDevelopmentQuery(query, variables);
+}
+
 function notifyRenderersWclAuthorizationStatus(authorized: boolean, connectionID?: string) {
 	if (connectionID && (!socket.connected || socket.id !== connectionID)) return;
 	isWclAuthorized = authorized;
@@ -128,6 +137,13 @@ function notifyRenderersWclAuthorizationStatus(authorized: boolean, connectionID
 }
 
 const isDev = process.env.npm_lifecycle_event === 'app:dev' ? true : false;
+const wclDevelopmentBridgeDescriptorPath = path.join(
+	app.getPath('logs'),
+	'dev-tools',
+	'wcl-development-bridge.json',
+);
+let wclDevelopmentBridge: WclDevelopmentBridge | null = null;
+
 if (isDev) {
 	// store.delete('authToken'); // Clear auth token on startup for testing
 	// store.delete('WCL_REFRESH_TOKEN'); // Clear auth token on startup for testing
@@ -698,7 +714,6 @@ async function createWindow() {
 		log.info(`Ready to show. Start args: ${process.argv.join(' ')}`);
 
 		log.debug('AUTH TOKEN:', store.get('authToken') ? 'SET' : 'NOT SET');
-		// mainWindow?.webContents.openDevTools({ mode: "detach" });
 	});
 
 	mainWindow?.webContents.once('did-finish-load', () => {
@@ -713,7 +728,6 @@ async function createWindow() {
 	if (isDev) {
 		log.info('Running in development mode');
 		mainWindow.loadURL('http://localhost:5173/');
-		mainWindow.webContents.openDevTools({ mode: 'detach' }); // Open the DevTools.
 	} else {
 		log.info(`Loading File: ${html}`);
 		mainWindow?.loadFile(html);
@@ -859,6 +873,19 @@ if (!app.requestSingleInstanceLock()) {
 		});
 
 		startProcess();
+		if (isDev) {
+			wclDevelopmentBridge = new WclDevelopmentBridge({
+				descriptorPath: wclDevelopmentBridgeDescriptorPath,
+				requestQuery: requestDevelopmentWclQuery,
+				log,
+			});
+			try {
+				await wclDevelopmentBridge.start();
+			} catch (error) {
+				log.warn('Failed to start development WCL bridge', { error });
+				wclDevelopmentBridge = null;
+			}
+		}
 
 		const initialDeepLinkUrl = extractDeepLinkUrlFromArgv(process.argv);
 		if (initialDeepLinkUrl) {
@@ -883,6 +910,7 @@ app.on('before-quit', (event) => {
 		return;
 	}
 	timelineWindowController.destroyForQuit();
+	void wclDevelopmentBridge?.stop();
 });
 
 app.on('will-quit', (event) => {
@@ -928,14 +956,21 @@ app.on('open-url', (event, url) => {
 	queueDeepLinkUrl(url, 'open-url');
 });
 
-// Ctrl+Shift+I to open devTools, Ctrl+Shift+R to reload
-app.on('web-contents-created', (webContentsCreatedEvent, webContents) => {
+// DevTools stay closed on development startup, but remain available in the
+// currently focused app window through the standard Ctrl+Shift+I or F12 shortcuts.
+app.on('web-contents-created', (_event, webContents) => {
 	webContents.on('before-input-event', (beforeInputEvent, input) => {
 		const { code, key, alt, control, shift, meta, type, isAutoRepeat } = input;
 
-		// Shortcut: toggle devTools
-		if (shift && control && !alt && !meta && code === 'KeyI') {
-			mainWindow?.webContents.openDevTools({ mode: 'detach' });
+		const isDevToolsShortcut = (
+			shift && control && !alt && !meta && code === 'KeyI'
+		) || (
+			!shift && !control && !alt && !meta && code === 'F12'
+		);
+		if (isDev && type === 'keyDown' && !isAutoRepeat && isDevToolsShortcut && !webContents.isDestroyed()) {
+			beforeInputEvent.preventDefault();
+			webContents.toggleDevTools();
+			return;
 		}
 
 		if (webContents !== mainWindow?.webContents || type !== 'keyDown') return;

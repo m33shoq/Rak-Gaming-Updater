@@ -20,3 +20,15 @@ test('report filtering includes streams overlapping any part of the report', () 
 	assert.equal(selection.reviewVideoOverlapsWindow(video('during', 150_000, 20_000), reportStart, reportEnd, now), true);
 	assert.equal(selection.reviewVideoOverlapsWindow(video('after', 200_001, 20_000), reportStart, reportEnd, now), false);
 });
+
+test('constrained selection follows the available report or fight videos', () => {
+	const oldVideo = video('old', 100_000, 20_000);
+	const replacement = video('replacement', 200_000, 20_000);
+
+	assert.equal(
+		selection.reconcileReviewVideoSelection(oldVideo, [replacement], true),
+		replacement,
+	);
+	assert.equal(selection.reconcileReviewVideoSelection(oldVideo, [], true), null);
+	assert.equal(selection.reconcileReviewVideoSelection(oldVideo, [], false), oldVideo);
+});

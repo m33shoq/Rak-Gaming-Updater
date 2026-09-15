@@ -26,7 +26,7 @@ const reviewsStore = useReviewsStore();
 const playerIframe = useTemplateRef<HTMLIFrameElement | null>('playerIframe');
 const videoContainer = useTemplateRef<HTMLElement | null>('videoContainer');
 type ReviewPlayerOverlayHandle = {
-	closeHotkeyGuide: () => boolean;
+	closePopovers: () => boolean;
 	keepControlsVisible: () => void;
 	reset: () => void;
 	revealControls: () => void;
@@ -64,12 +64,14 @@ const {
 	dispatchPlayerSeek,
 	failSynchronizationSeek,
 	isSyncPrototypeCapturing,
+	manualSyncOffsetSeconds,
 	rememberCurrentFightTime,
 	requestSelectedVideoPlayback,
 	requestVideoTimeSeek,
 	resetSynchronizationForPlayerChange,
 	seekToFightTimestamp,
 	seekToPullTimestamp,
+	setManualSyncOffset,
 	syncPrototypeStatus,
 	syncPrototypeStatusTone,
 	updatePendingSyncMarkerSeekPlaybackRate,
@@ -100,13 +102,14 @@ const {
 	playerLoaded,
 	hasSelectedVideo: () => Boolean(reviewsStore.getSelectedVideoId),
 	closeHotkeyGuide: () => {
-		playerOverlay.value?.closeHotkeyGuide();
+		playerOverlay.value?.closePopovers();
 	},
 	revealControls: () => revealPlayerControls(),
 });
 
 const {
 	clearQueuedSeek: clearQueuedHotkeySeekHandler,
+	handlePlayerHotkey,
 	onPlayerDoubleClick,
 	onPlayerTimeUpdate: onHotkeySeekTimeUpdate,
 	queuedSeekDeltaLabel,
@@ -118,7 +121,7 @@ const {
 	isPlaying: isPlayerPlaying,
 	hasSelectedVideo: () => Boolean(reviewsStore.getSelectedVideoId),
 	revealControls: () => revealPlayerControls(),
-	closeHotkeyGuide: () => playerOverlay.value?.closeHotkeyGuide() ?? false,
+	closeHotkeyGuide: () => playerOverlay.value?.closePopovers() ?? false,
 	requestFullscreenToggle: () => requestFullscreenToggle(),
 	requestQueuedSeek: seconds => {
 		void requestVideoTimeSeek(seconds, 'hotkey', false);
@@ -189,6 +192,7 @@ const {
 		seekToPullTimestamp(fightID, timestampSeconds, source);
 	},
 	togglePlayback: () => togglePlayPause(),
+	handlePlayerHotkey,
 });
 
 const {
@@ -240,10 +244,12 @@ const {
 							:sync-status="syncPrototypeStatus"
 							:sync-status-tone="syncPrototypeStatusTone"
 							:sync-capturing="isSyncPrototypeCapturing"
+							:manual-sync-offset-seconds="manualSyncOffsetSeconds"
 							@read-sync-marker="captureReviewSyncMarker('manual')"
 							@open-video="openSelectedYoutubeVideo"
 							@toggle-fullscreen="requestFullscreenToggle"
 							@dismiss-sync-status="dismissReviewSyncStatus"
+							@set-manual-sync-offset="setManualSyncOffset"
 						/>
 					</div>
 				</div>

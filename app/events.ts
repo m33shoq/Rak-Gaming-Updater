@@ -201,6 +201,7 @@ export const SOCKET_EVENTS = {
 	WCL_REQUEST_FIGHT_COOLDOWNS: 'wcl-fight-cooldowns',
 	WCL_REQUEST_FIGHT_BOSS_CASTS: 'wcl-fight-boss-casts',
 	WCL_REQUEST_FIGHT_REPLAY: 'wcl-fight-replay',
+	WCL_DEV_QUERY: 'wcl-dev-query',
 
 	UPDATER_DOWNLOAD_REQUEST: 'updater-download-request',
 	UPDATER_DOWNLOAD_CHUNK: 'updater-download-chunk',

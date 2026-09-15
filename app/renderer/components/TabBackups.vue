@@ -184,7 +184,7 @@ onMounted(() => {
 				<p class="backup-text">{{ nextBackupTimeDisplay }}</p>
 				<p class="backup-text">{{ backupsStatusStore.backupStatusText }}</p>
 				<div v-if="backupsStatusStore.backupProgress" class="mt-2 max-w-xl">
-					<div class="relative h-2 overflow-hidden border border-slate-600/80 bg-slate-800">
+					<div class="relative h-2 overflow-hidden border border-slate-300 bg-slate-200 dark:border-slate-600/80 dark:bg-slate-800">
 						<div
 							v-if="backupProgressPercent === null"
 							class="backup-progress-indeterminate absolute inset-y-0 w-1/3 bg-primary"
@@ -198,7 +198,7 @@ onMounted(() => {
 					<p v-if="backupProgressText" class="mt-1 font-mono text-xs tabular-nums opacity-75">
 						{{ backupProgressText }}
 					</p>
-					<p v-if="lowDiskSpaceWarning" class="mt-2 text-sm font-medium text-amber-300">
+					<p v-if="lowDiskSpaceWarning" class="mt-2 text-sm font-medium text-amber-700 dark:text-amber-300">
 						{{ lowDiskSpaceWarning }}
 					</p>
 				</div>

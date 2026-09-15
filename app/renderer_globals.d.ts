@@ -24,7 +24,7 @@ declare type fightDetails = {
 	startTime: number;
 	endTime: number;
 	bossPercentage: number;
-	// fightPercentage: number;
+	fightPercentage?: number;
 	kill: boolean;
 	friendlyPlayers: number[];
 	friendlySpecs: string[];

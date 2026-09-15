@@ -15,6 +15,23 @@ const AUTOPLAY_REVIEW_SEEK_SOURCES: ReadonlySet<ReviewSeekSource> = new Set([
 	'deep-link',
 ]);
 
+export function getReviewSeekConfirmationTolerance(
+	fromSeconds: number,
+	targetSeconds: number,
+): number {
+	return Math.min(0.35, Math.max(0.012, Math.abs(targetSeconds - fromSeconds) * 0.15));
+}
+
+export function hasReviewSeekReachedTarget(
+	fromSeconds: number,
+	targetSeconds: number,
+	observedSeconds: number,
+): boolean {
+	if (![fromSeconds, targetSeconds, observedSeconds].every(Number.isFinite)) return false;
+	const tolerance = getReviewSeekConfirmationTolerance(fromSeconds, targetSeconds);
+	return Math.abs(observedSeconds - targetSeconds) <= tolerance;
+}
+
 /**
  * Selection and deep-link navigation retain their existing autoplay behavior.
  * Interactive seeks preserve whether playback was running when they were queued.

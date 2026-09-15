@@ -28,6 +28,7 @@ import {
 	getReviewCooldownPrimaryGroup,
 } from '@/renderer/utils/reviewCooldownEvents';
 import { refreshWowheadTooltips } from '@/renderer/utils/wowheadTooltips';
+import { getReviewBossCastAction } from '@/reviewBossCastActions';
 import type { ReviewTimelineViewMode } from '@/timelineWindow';
 
 const props = withDefaults(defineProps<{
@@ -1313,6 +1314,51 @@ function getBossCastInterruptCount(occurrences: BossCastMarker[]) {
 	return occurrences.filter(occurrence => occurrence.event.bossCast.interrupt != null).length;
 }
 
+function isBossCastStartEvent(marker: BossCastMarker) {
+	return marker.event.type.toLowerCase() === 'begincast';
+}
+
+function getBossCastOutcomeVerb(marker: BossCastMarker, completedVerb = 'completed') {
+	if (isBossCastStartEvent(marker)) return 'started';
+	return marker.event.bossCast.interrupt ? 'interrupted' : completedVerb;
+}
+
+function getBossCastAction(lane: BossCastLane, marker: BossCastMarker) {
+	const fight = selectedFight.value;
+	const reportCode = reviewsStore.selectedReportCode;
+	if (!fight || !reportCode) return null;
+	return getReviewBossCastAction({
+		reportCode,
+		fight,
+		ability: lane.ability,
+		occurrenceKind: isBossCastStartEvent(marker) ? 'start' : 'outcome',
+		occurrenceStartTimestampSeconds: marker.event.bossCast.startTimestamp == null
+			? null
+			: Math.max(0, (marker.event.bossCast.startTimestamp - fight.startTime) / 1000),
+		occurrenceTimestampSeconds: marker.timestampSeconds,
+	});
+}
+
+function getBossCastMarkerAriaLabel(
+	lane: BossCastLane,
+	marker: BossCastMarker,
+	occurrences: BossCastMarker[],
+) {
+	const baseLabel = occurrences.length > 1
+		? `${lane.ability.name}, ${occurrences.length} occurrences, first at ${formatCooldownTimestamp(marker.timestampSeconds)}`
+		: `${lane.ability.name} ${getBossCastOutcomeVerb(marker)} for ${marker.event.source?.name || 'Unknown enemy'} at ${formatCooldownTimestamp(marker.timestampSeconds)}`;
+	const action = getBossCastAction(lane, marker);
+	return action ? `${baseLabel}. ${action.hint}` : baseLabel;
+}
+
+function openBossCastAction(lane: BossCastLane, marker: BossCastMarker, event: MouseEvent) {
+	const action = getBossCastAction(lane, marker);
+	if (!action) return;
+	event.preventDefault();
+	event.stopPropagation();
+	window.open(action.url, '_blank', 'noopener,noreferrer');
+}
+
 function getBossCastMarkerClass(occurrences: BossCastMarker[]) {
 	const interruptCount = getBossCastInterruptCount(occurrences);
 	if (interruptCount === 0) return 'border-amber-400/70 hover:border-amber-200';
@@ -1343,40 +1389,43 @@ function getSpellClassGroupSortOrder(key: string) {
 	return 0;
 }
 
-function getClassTextColor(className?: string) {
-	switch (className?.toLowerCase()) {
-		case 'deathknight': return 'text-[#C41E3A]';
-		case 'demonhunter': return 'text-[#A330C9]';
-		case 'druid': return 'text-[#FF7C0A]';
-		case 'evoker': return 'text-[#33937F]';
-		case 'hunter': return 'text-[#AAD372]';
-		case 'mage': return 'text-[#3FC7EB]';
-		case 'monk': return 'text-[#00FF98]';
-		case 'paladin': return 'text-[#F48CBA]';
-		case 'priest': return 'text-white';
-		case 'rogue': return 'text-[#FFF468]';
-		case 'shaman': return 'text-[#0070DD]';
-		case 'warlock': return 'text-[#8788EE]';
-		case 'warrior': return 'text-[#C69B6D]';
-		default: return 'text-inherit';
+function getClassTextColor(className?: string, darkSurface = false) {
+	const normalizedClassName = className?.toLowerCase();
+	if (darkSurface) {
+		return {
+			deathknight: 'text-[#C41E3A]', demonhunter: 'text-[#A330C9]', druid: 'text-[#FF7C0A]',
+			evoker: 'text-[#33937F]', hunter: 'text-[#AAD372]', mage: 'text-[#3FC7EB]', monk: 'text-[#00FF98]',
+			paladin: 'text-[#F48CBA]', priest: 'text-white', rogue: 'text-[#FFF468]', shaman: 'text-[#0070DD]',
+			warlock: 'text-[#8788EE]', warrior: 'text-[#C69B6D]',
+		}[normalizedClassName || ''] || 'text-inherit';
 	}
+
+	return {
+		deathknight: 'text-[#9F1239] dark:text-[#C41E3A]', demonhunter: 'text-[#7E22CE] dark:text-[#A330C9]',
+		druid: 'text-[#C2410C] dark:text-[#FF7C0A]', evoker: 'text-[#047857] dark:text-[#33937F]',
+		hunter: 'text-[#4D7C0F] dark:text-[#AAD372]', mage: 'text-[#0369A1] dark:text-[#3FC7EB]',
+		monk: 'text-[#047857] dark:text-[#00FF98]', paladin: 'text-[#BE185D] dark:text-[#F48CBA]',
+		priest: 'text-slate-600 dark:text-white', rogue: 'text-[#A16207] dark:text-[#FFF468]',
+		shaman: 'text-[#0059B3] dark:text-[#0070DD]', warlock: 'text-[#4F46E5] dark:text-[#8788EE]',
+		warrior: 'text-[#92400E] dark:text-[#C69B6D]',
+	}[normalizedClassName || ''] || 'text-inherit';
 }
 
 function getClassAccentColor(className?: string) {
 	switch (className?.toLowerCase()) {
-		case 'deathknight': return 'bg-[#C41E3A]';
-		case 'demonhunter': return 'bg-[#A330C9]';
-		case 'druid': return 'bg-[#FF7C0A]';
-		case 'evoker': return 'bg-[#33937F]';
-		case 'hunter': return 'bg-[#AAD372]';
-		case 'mage': return 'bg-[#3FC7EB]';
-		case 'monk': return 'bg-[#00FF98]';
-		case 'paladin': return 'bg-[#F48CBA]';
-		case 'priest': return 'bg-white';
-		case 'rogue': return 'bg-[#FFF468]';
-		case 'shaman': return 'bg-[#0070DD]';
-		case 'warlock': return 'bg-[#8788EE]';
-		case 'warrior': return 'bg-[#C69B6D]';
+		case 'deathknight': return 'bg-[#9F1239] dark:bg-[#C41E3A]';
+		case 'demonhunter': return 'bg-[#7E22CE] dark:bg-[#A330C9]';
+		case 'druid': return 'bg-[#C2410C] dark:bg-[#FF7C0A]';
+		case 'evoker': return 'bg-[#047857] dark:bg-[#33937F]';
+		case 'hunter': return 'bg-[#4D7C0F] dark:bg-[#AAD372]';
+		case 'mage': return 'bg-[#0369A1] dark:bg-[#3FC7EB]';
+		case 'monk': return 'bg-[#047857] dark:bg-[#00FF98]';
+		case 'paladin': return 'bg-[#BE185D] dark:bg-[#F48CBA]';
+		case 'priest': return 'bg-slate-500 dark:bg-white';
+		case 'rogue': return 'bg-[#A16207] dark:bg-[#FFF468]';
+		case 'shaman': return 'bg-[#0059B3] dark:bg-[#0070DD]';
+		case 'warlock': return 'bg-[#4F46E5] dark:bg-[#8788EE]';
+		case 'warrior': return 'bg-[#92400E] dark:bg-[#C69B6D]';
 		default: return 'bg-neutral-500';
 	}
 }
@@ -2381,7 +2430,7 @@ function onCompactTimelineHeaderClick() {
 							v-for="marker in encounterAlertMarkers"
 							:key="`axis:${marker.key}`"
 							type="button"
-							class="absolute top-0.5 z-30 flex size-4 items-center justify-center overflow-visible border border-amber-200/90 bg-amber-500 text-xs font-black leading-none text-black shadow-[0_0_7px_rgba(245,158,11,0.45)] hover:z-40 hover:bg-amber-300 focus:z-40 focus:outline-none focus:ring-1 focus:ring-white"
+							class="absolute top-0.5 z-30 flex size-4 items-center justify-center overflow-visible border border-amber-200/90 bg-amber-500 text-xs font-black leading-none text-black shadow-[0_0_7px_rgba(245,158,11,0.45)] hover:z-40 hover:bg-amber-300 focus:z-40 focus:outline-none focus:ring-1 focus:ring-slate-700 dark:focus:ring-white"
 							:style="{ left: `clamp(0px, ${marker.percent * 100}%, calc(100% - 16px))` }"
 							:aria-label="marker.occurrences.length > 1 ? `${marker.event.encounterAlert?.label || 'Encounter alert'}, ${marker.occurrences.length} occurrences, first at ${formatCooldownTimestamp(marker.timestampSeconds)}` : `${marker.event.encounterAlert?.label || 'Encounter alert'} at ${formatCooldownTimestamp(marker.timestampSeconds)}`"
 							@click.stop="emit('seek', marker.timestampSeconds)"
@@ -2512,7 +2561,7 @@ function onCompactTimelineHeaderClick() {
 							/>
 							<div
 								v-if="timelineHover.visible && timelineHover.context === 'expanded'"
-								class="pointer-events-none absolute inset-y-0 z-40 w-0.5 bg-white/60"
+								class="pointer-events-none absolute inset-y-0 z-40 w-0.5 bg-slate-700/60 dark:bg-white/60"
 								:style="{ left: `${timelineHover.percent * 100}%` }"
 							></div>
 
@@ -2527,11 +2576,11 @@ function onCompactTimelineHeaderClick() {
 									<div v-for="phase in visiblePhases" :key="`collapsed-head-phase:${phase.name}:${phase.percent}`" class="pointer-events-none absolute inset-y-0 z-10 w-0.5 bg-sky-400/80" :style="{ left: `${phase.percent * 100}%` }"></div>
 									<ReviewPlaybackCursor class="pointer-events-none absolute inset-y-0 z-30 w-0.5 bg-amber-400" />
 									<span v-for="marker in collapsedBossCastDurationMarkers.filter(entry => entry.durationSeconds > 0)" :key="`collapsed-head-duration:${marker.key}`" class="review-boss-cast-rail review-boss-cast-rail--compact pointer-events-none absolute top-[9px] z-[6] h-[3px] min-w-px" :class="getBossCastDurationClass(marker)" :style="{ left: `${marker.startPercent * 100}%`, width: `${Math.max(0, marker.percent - marker.startPercent) * 100}%` }"></span>
-									<button v-for="item in collapsedBossCastMarkers" :key="`collapsed-head:${item.marker.key}`" type="button" class="absolute top-0 z-20 size-5 overflow-visible rounded-none border bg-black shadow-[0_1px_4px_rgba(0,0,0,0.45)] transition-none hover:z-30 hover:scale-110 focus:z-30 focus:outline-none focus:ring-1 focus:ring-amber-200" :class="getBossCastMarkerClass(item.occurrences)" :style="{ left: `clamp(0px, calc(${item.marker.percent * 100}% + ${item.offsetPixels}px), calc(100% - 20px))` }" :aria-label="item.occurrences.length > 1 ? `${item.lane.ability.name}, ${item.occurrences.length} outcomes, first at ${formatCooldownTimestamp(item.marker.timestampSeconds)}` : `${item.lane.ability.name} ${item.marker.event.bossCast.interrupt ? 'interrupted' : 'completed'} for ${item.marker.event.source?.name || 'Unknown enemy'} at ${formatCooldownTimestamp(item.marker.timestampSeconds)}`" @click.stop="emit('seek', item.marker.timestampSeconds)" @mouseenter="showBossCastTooltip(item.lane, item.marker, $event, item.occurrences)" @mousemove="updateDetailTooltipPosition" @mouseleave="hideDetailTooltip">
+									<button v-for="item in collapsedBossCastMarkers" :key="`collapsed-head:${item.marker.key}`" type="button" class="absolute top-0 z-20 size-5 overflow-visible rounded-none border bg-black shadow-[0_1px_4px_rgba(0,0,0,0.45)] transition-none hover:z-30 hover:scale-110 focus:z-30 focus:outline-none focus:ring-1 focus:ring-amber-200" :class="getBossCastMarkerClass(item.occurrences)" :style="{ left: `clamp(0px, calc(${item.marker.percent * 100}% + ${item.offsetPixels}px), calc(100% - 20px))` }" :aria-label="getBossCastMarkerAriaLabel(item.lane, item.marker, item.occurrences)" @click.stop="emit('seek', item.marker.timestampSeconds)" @contextmenu="openBossCastAction(item.lane, item.marker, $event)" @mouseenter="showBossCastTooltip(item.lane, item.marker, $event, item.occurrences)" @mousemove="updateDetailTooltipPosition" @mouseleave="hideDetailTooltip">
 										<img v-if="item.lane.ability.icon" :src="getSpellIconURL(item.lane.ability.icon)" :alt="item.lane.ability.name" class="block size-full" draggable="false" /><span v-else class="flex size-full items-center justify-center text-[9px] text-white">{{ item.lane.ability.name.slice(0, 1) }}</span>
 						<span v-if="item.occurrences.length > 1" class="pointer-events-none absolute bottom-0 right-0 z-10 min-w-3 border border-amber-200/80 bg-amber-500 px-0.5 text-center text-[8px] font-bold leading-[11px] text-black shadow">{{ item.occurrences.length }}</span>
 									</button>
-									<div v-if="timelineHover.visible && timelineHover.context === 'expanded'" class="pointer-events-none absolute inset-y-0 z-40 w-0.5 bg-white/60" :style="{ left: `${timelineHover.percent * 100}%` }"></div>
+									<div v-if="timelineHover.visible && timelineHover.context === 'expanded'" class="pointer-events-none absolute inset-y-0 z-40 w-0.5 bg-slate-700/60 dark:bg-white/60" :style="{ left: `${timelineHover.percent * 100}%` }"></div>
 								</template>
 							</div>
 							<template v-if="bossCastLanes.length > 0 && reviewsStore.bossCastDisplayMode === 'full'">
@@ -2559,8 +2608,9 @@ function onCompactTimelineHeaderClick() {
 									class="absolute top-1 z-20 size-6 overflow-visible rounded-none border bg-black shadow-[0_1px_4px_rgba(0,0,0,0.45)] transition-none hover:z-30 hover:scale-105 focus:z-30 focus:outline-none focus:ring-1 focus:ring-amber-200"
 									:class="getBossCastMarkerClass(item.occurrences)"
 									:style="{ left: `clamp(0px, calc(${item.marker.percent * 100}% + ${item.offsetPixels}px), calc(100% - 24px))` }"
-									:aria-label="item.occurrences.length > 1 ? `${lane.ability.name}, ${item.occurrences.length} outcomes, first at ${formatCooldownTimestamp(item.marker.timestampSeconds)}` : `${lane.ability.name} ${item.marker.event.bossCast.interrupt ? 'interrupted' : 'completed'} for ${item.marker.event.source?.name || 'Unknown enemy'} at ${formatCooldownTimestamp(item.marker.timestampSeconds)}`"
+									:aria-label="getBossCastMarkerAriaLabel(lane, item.marker, item.occurrences)"
 									@click.stop="emit('seek', item.marker.timestampSeconds)"
+									@contextmenu="openBossCastAction(lane, item.marker, $event)"
 									@mouseenter="showBossCastTooltip(lane, item.marker, $event, item.occurrences)"
 									@mousemove="updateDetailTooltipPosition"
 									@mouseleave="hideDetailTooltip"
@@ -2608,7 +2658,7 @@ function onCompactTimelineHeaderClick() {
 									v-for="cooldown in row.lane.cooldowns"
 									:key="cooldown.key"
 									type="button"
-									class="absolute z-20 size-6 overflow-hidden rounded-none border bg-black shadow-[0_1px_4px_rgba(0,0,0,0.45)] transition-[transform,box-shadow] hover:z-30 hover:scale-110 hover:shadow-lg focus:z-30 focus:scale-110 focus:outline-none focus:ring-2 focus:ring-white/70"
+									class="absolute z-20 size-6 overflow-hidden rounded-none border bg-black shadow-[0_1px_4px_rgba(0,0,0,0.45)] transition-[transform,box-shadow] hover:z-30 hover:scale-110 hover:shadow-lg focus:z-30 focus:scale-110 focus:outline-none focus:ring-2 focus:ring-sky-500 dark:focus:ring-white/70"
 									:class="getCooldownBorderColor(cooldown.event)"
 									:style="{
 										left: `clamp(0px, ${cooldown.percent * 100}%, calc(100% - 24px))`,
@@ -2645,7 +2695,7 @@ function onCompactTimelineHeaderClick() {
 				</div>
 					<div
 						ref="customScrollbarTrack"
-						class="absolute inset-y-0 right-0 z-50 w-2.5 border-l border-neutral-400/20 bg-slate-950/25 shadow-inner transition-opacity duration-300 ease-out dark:border-neutral-500/25"
+						class="absolute inset-y-0 right-0 z-50 w-2.5 border-l border-slate-300 bg-slate-200/70 shadow-inner transition-opacity duration-300 ease-out dark:border-neutral-500/25 dark:bg-slate-950/25"
 						:class="!customScrollbarState.visible
 							? 'pointer-events-none opacity-0'
 							: isCustomScrollbarActive
@@ -2657,7 +2707,7 @@ function onCompactTimelineHeaderClick() {
 						<button
 							v-show="customScrollbarState.visible"
 							type="button"
-							class="absolute inset-x-0 touch-none cursor-grab border-y border-neutral-200/25 bg-neutral-400/65 shadow-sm hover:bg-neutral-300/75 active:cursor-grabbing active:bg-sky-400/65 focus:outline-none focus:ring-1 focus:ring-inset focus:ring-sky-300"
+							class="absolute inset-x-0 touch-none cursor-grab border-y border-slate-600/25 bg-slate-500/70 shadow-sm hover:bg-slate-600/75 active:cursor-grabbing active:bg-sky-500/75 focus:outline-none focus:ring-1 focus:ring-inset focus:ring-sky-500 dark:border-neutral-200/25 dark:bg-neutral-400/65 dark:hover:bg-neutral-300/75 dark:active:bg-sky-400/65 dark:focus:ring-sky-300"
 							:style="{
 								top: `${customScrollbarState.thumbTop}px`,
 								height: `${customScrollbarState.thumbHeight}px`,
@@ -2752,7 +2802,7 @@ function onCompactTimelineHeaderClick() {
 					class="pointer-events-none absolute inset-y-0 z-10 w-0.5 bg-sky-400"
 					:style="{ left: `${phase.percent * 100}%` }"
 				>
-					<span class="absolute left-1 top-0 text-xs font-semibold leading-none text-sky-500">{{ phase.name }}</span>
+					<span class="absolute left-1 top-0 text-xs font-semibold leading-none text-sky-700 dark:text-sky-400">{{ phase.name }}</span>
 				</div>
 
 				<template v-for="marker in encounterAlertMarkers" :key="`compact:${marker.key}`">
@@ -2762,7 +2812,7 @@ function onCompactTimelineHeaderClick() {
 					></div>
 					<button
 						type="button"
-						class="absolute top-0.5 z-30 flex size-4 items-center justify-center overflow-visible border border-amber-200/90 bg-amber-500 text-xs font-black leading-none text-black shadow-[0_0_7px_rgba(245,158,11,0.4)] hover:z-40 hover:bg-amber-300 focus:z-40 focus:outline-none focus:ring-1 focus:ring-white"
+						class="absolute top-0.5 z-30 flex size-4 items-center justify-center overflow-visible border border-amber-200/90 bg-amber-500 text-xs font-black leading-none text-black shadow-[0_0_7px_rgba(245,158,11,0.4)] hover:z-40 hover:bg-amber-300 focus:z-40 focus:outline-none focus:ring-1 focus:ring-slate-700 dark:focus:ring-white"
 						:style="{ left: `clamp(0px, ${marker.percent * 100}%, calc(100% - 16px))` }"
 						:aria-label="marker.occurrences.length > 1 ? `${marker.event.encounterAlert?.label || 'Encounter alert'}, ${marker.occurrences.length} occurrences, first at ${formatCooldownTimestamp(marker.timestampSeconds)}` : `${marker.event.encounterAlert?.label || 'Encounter alert'} at ${formatCooldownTimestamp(marker.timestampSeconds)}`"
 						@click.stop="emit('seek', marker.timestampSeconds)"
@@ -2782,7 +2832,7 @@ function onCompactTimelineHeaderClick() {
 					></div>
 					<button
 						type="button"
-						class="absolute top-0 z-30 -translate-x-1/2 cursor-pointer text-sm leading-none text-red-500 transition-transform hover:scale-125 focus:scale-125 focus:outline-none"
+						class="absolute top-0 z-30 -translate-x-1/2 cursor-pointer text-sm leading-none text-red-700 transition-transform hover:scale-125 focus:scale-125 focus:outline-none dark:text-red-500"
 						:style="{ left: `${death.percent * 100}%` }"
 						:aria-label="`${death.name} died at ${formatEventTime(death.timestampSeconds)}`"
 						@click.stop="seekToDeath(death)"
@@ -2800,13 +2850,13 @@ function onCompactTimelineHeaderClick() {
 				/>
 				<div
 					v-if="timelineHover.visible && timelineHover.context === 'compact'"
-					class="pointer-events-none absolute inset-y-0 z-40 w-0.5 bg-white/60"
+					class="pointer-events-none absolute inset-y-0 z-40 w-0.5 bg-slate-700/60 dark:bg-white/60"
 					:style="{ left: `${timelineHover.percent * 100}%` }"
 				></div>
 
 				<span
 					v-if="error"
-					class="pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 text-[10px] text-red-500"
+					class="pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 text-[10px] text-red-700 dark:text-red-400"
 				>
 					Timeline data incomplete
 				</span>
@@ -2854,7 +2904,7 @@ function onCompactTimelineHeaderClick() {
 							{{ detailTooltip.cooldown.event.ability?.name || `Spell ${detailTooltip.cooldown.event.cooldown.spellID}` }}
 						</div>
 						<div>
-							<span :class="getClassTextColor(detailTooltip.cooldown.event.source?.type)">
+							<span :class="getClassTextColor(detailTooltip.cooldown.event.source?.type, true)">
 								{{ detailTooltip.cooldown.event.source?.name || 'Unknown player' }}
 							</span>
 							<span v-if="detailTooltip.cooldown.event.sourcePet?.name" class="text-neutral-400">
@@ -2919,7 +2969,7 @@ function onCompactTimelineHeaderClick() {
 							<span v-if="detailTooltip.marker.event.sourceInstance != null && detailTooltip.marker.event.sourceInstance > 0" class="text-neutral-400">
 								· Spawn #{{ detailTooltip.marker.event.sourceInstance }}
 							</span>
-							{{ detailTooltip.marker.event.bossCast.interrupt ? 'interrupted' : 'finished' }} at {{ formatCooldownTimestamp(detailTooltip.marker.timestampSeconds) }}
+							{{ getBossCastOutcomeVerb(detailTooltip.marker, 'finished') }} at {{ formatCooldownTimestamp(detailTooltip.marker.timestampSeconds) }}
 						</div>
 					</div>
 				</div>
@@ -2938,10 +2988,13 @@ function onCompactTimelineHeaderClick() {
 							<ReviewBossCastTargets v-if="occurrence.event.bossCast.targetDebuffs?.length" :targets="occurrence.event.bossCast.targetDebuffs" />
 							<ReviewBossCastInterrupt v-if="occurrence.event.bossCast.interrupt" :interrupt="occurrence.event.bossCast.interrupt" />
 							<div v-else class="mt-1 flex items-center gap-1 text-[11px]">
-								<svg viewBox="0 0 16 16" fill="none" class="size-4 shrink-0 border border-amber-500/55 bg-amber-500/10 p-0.5 text-amber-200" aria-hidden="true">
+								<svg v-if="isBossCastStartEvent(occurrence)" viewBox="0 0 16 16" class="size-4 shrink-0 border border-amber-500/55 bg-amber-500/10 p-0.5 text-amber-200" aria-hidden="true">
+									<path d="M5 3.5 12 8l-7 4.5z" fill="currentColor" />
+								</svg>
+								<svg v-else viewBox="0 0 16 16" fill="none" class="size-4 shrink-0 border border-amber-500/55 bg-amber-500/10 p-0.5 text-amber-200" aria-hidden="true">
 									<path d="m3 8.25 3 3L13 4.5" stroke="currentColor" stroke-width="1.75" stroke-linecap="square" stroke-linejoin="miter" />
 								</svg>
-								<span class="font-medium text-amber-200">Cast finished</span>
+								<span class="font-medium text-amber-200">Cast {{ isBossCastStartEvent(occurrence) ? 'started' : 'finished' }}</span>
 							</div>
 						</div>
 					</div>
@@ -2952,7 +3005,9 @@ function onCompactTimelineHeaderClick() {
 					<div v-if="detailTooltip.marker.durationSeconds > 0" class="mt-1 text-[11px]" :class="detailTooltip.marker.event.bossCast.interrupt ? 'text-emerald-300' : 'text-neutral-300'">Cast time {{ formatDuration(detailTooltip.marker.durationSeconds) }}</div>
 					<ReviewBossCastInterrupt v-if="detailTooltip.marker.event.bossCast.interrupt" :interrupt="detailTooltip.marker.event.bossCast.interrupt" />
 				</template>
-				<div class="mt-1 text-[10px] text-neutral-400">Spell #{{ detailTooltip.lane.ability.spellID }} · Click to seek<span v-if="detailTooltip.occurrences.length > 1"> to first outcome</span></div>
+				<div class="mt-1 text-[10px] text-neutral-400">
+					Spell #{{ detailTooltip.lane.ability.spellID }} · Click to seek<span v-if="detailTooltip.occurrences.length > 1"> to first occurrence</span><span v-if="getBossCastAction(detailTooltip.lane, detailTooltip.marker)"> · {{ getBossCastAction(detailTooltip.lane, detailTooltip.marker)?.hint }}</span>
+				</div>
 			</div>
 
 			<div
@@ -2962,7 +3017,7 @@ function onCompactTimelineHeaderClick() {
 			>
 				<div class="font-semibold">
 					{{ formatEventTime(detailTooltip.death.timestampSeconds) }}
-					<span :class="getClassTextColor(detailTooltip.death.className)">{{ detailTooltip.death.name }}</span>
+					<span :class="getClassTextColor(detailTooltip.death.className, true)">{{ detailTooltip.death.name }}</span>
 					died
 				</div>
 				<div class="mt-1 flex items-center gap-2">
@@ -3002,7 +3057,7 @@ function onCompactTimelineHeaderClick() {
 							/>
 							<span>
 								Resurrected by
-								<span :class="getClassTextColor(detailTooltip.death.resurrectionEvent?.source?.type)">
+								<span :class="getClassTextColor(detailTooltip.death.resurrectionEvent?.source?.type, true)">
 									{{ detailTooltip.death.resurrectionEvent?.source?.name || 'Unknown player' }}
 								</span>
 								with {{ detailTooltip.death.resurrectionEvent?.ability?.name || 'an unknown spell' }}

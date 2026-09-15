@@ -356,7 +356,6 @@ export default class ObsWebsocketService {
 	private async refreshStreamServiceSettings() {
 		try {
 			const serviceState = await this.obs.call('GetStreamServiceSettings') as any;
-			this.callbacks.log.info('[OBS] Current stream service settings', { serviceState });
 			const streamServiceType = typeof serviceState?.streamServiceType === 'string'
 				? serviceState.streamServiceType
 				: null;
@@ -367,6 +366,11 @@ export default class ObsWebsocketService {
 			const broadcastId = typeof streamServiceSettings?.broadcast_id === 'string' && streamServiceSettings.broadcast_id.trim()
 				? streamServiceSettings.broadcast_id.trim()
 				: null;
+			this.callbacks.log.info('[OBS] Current stream service settings', {
+				streamServiceType,
+				streamServer,
+				hasBroadcastId: Boolean(broadcastId),
+			});
 			this.youtubeUrl = broadcastId ? `https://youtube.com/live/${broadcastId}?feature=share` : null;
 			this.updateStatus({ serviceName: streamServiceType, server: streamServer });
 		} catch (error) {

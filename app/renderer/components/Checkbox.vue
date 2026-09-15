@@ -16,11 +16,12 @@ const model = defineModel();
 			<input
 				type="checkbox"
 				class="peer absolute inset-0 cursor-pointer appearance-none
-					rounded-md transition-all ease-in
-					dark:border-dark4 border-light4
-					dark:bg-dark3 bg-light3
+					rounded-md border border-slate-300 bg-white shadow-sm transition-all ease-in
+					dark:border-dark4 dark:bg-dark3 dark:shadow-none
 					checked:bg-primary checked:border-primary
-					hover:bg-indigo-400 checked:hover:bg-indigo-500"
+					hover:border-sky-400 hover:bg-sky-50 checked:hover:bg-blue-700
+					dark:hover:border-transparent dark:hover:bg-indigo-400 dark:checked:hover:bg-indigo-500
+					focus:outline-none focus:ring-2 focus:ring-sky-500/25"
 				v-model="model"
 			/>
 			<svg

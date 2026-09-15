@@ -4,14 +4,19 @@ import ReviewReplayActor from '@/renderer/components/ReviewReplayActor.vue';
 import ReviewReplayMapBackground from '@/renderer/components/ReviewReplayMapBackground.vue';
 import { useReviewTimelinePlayback } from '@/renderer/composables/useReviewTimelinePlayback';
 import { useReplayViewport } from '@/renderer/composables/useReplayViewport';
-import { getReplayExtensionRenderer } from '@/renderer/replay/replayExtensions';
+import {
+	getReplayExtensionRenderer,
+	sampleReplayExtensionActorPosition,
+} from '@/renderer/replay/replayExtensions';
 import { useReviewsStore } from '@/renderer/store/ReviewsStore';
 import { projectReplayMapPosition, resolveReplayMapDefinition } from '@/replayMaps';
 import {
 	activeReplayCast,
 	isReplayActorActive,
 	isReplayPlayerDead,
+	pendingReplayPlayerResurrection,
 	replayActorIconURLs,
+	sampleReplayFacing,
 	sampleReplayPosition,
 	type ReplayActor,
 	type ReplayActorKind,
@@ -106,7 +111,12 @@ function maxPositionAge(actor: ReplayActor): number {
 	if (Number.isFinite(actor.positionRetentionMs)) {
 		return Math.max(0, actor.positionRetentionMs!);
 	}
-	if (actor.kind === 'player' || actor.kind === 'add') return OBSERVED_POSITION_RETENTION_MS;
+	// Players are known roster members, so a lack of fresh WCL position samples
+	// must not remove them from the replay. In particular, a death commonly ends
+	// their position stream before its lifecycle event is reflected in the UI.
+	// Adds still expire because otherwise despawned enemies permanently clutter
+	// the map when WCL does not provide a reliable lifecycle event for them.
+	if (actor.kind === 'add') return OBSERVED_POSITION_RETENTION_MS;
 	return Number.POSITIVE_INFINITY;
 }
 
@@ -114,15 +124,25 @@ const rawSampledActors = computed(() => (replay.value?.actors || []).flatMap(act
 	if (!visibleKinds.value.has(actor.kind)) return [];
 	const active = isReplayActorActive(actor, timestamp.value);
 	const dead = isReplayPlayerDead(actor, timestamp.value, replay.value?.duration || 0);
-	if (!active && !dead) return [];
+	const resurrection = pendingReplayPlayerResurrection(actor, timestamp.value);
+	if (!active && !dead && !resurrection) return [];
 
-	const position = sampleReplayPosition(
-		actor.positions,
-		timestamp.value,
-		dead ? Number.POSITIVE_INFINITY : maxPositionAge(actor),
-		!dead,
-	);
-	if (!position) return [];
+	const observedPosition = sampleReplayExtensionActorPosition(replay.value!, actor, timestamp.value)
+		|| sampleReplayPosition(
+			actor.positions,
+			timestamp.value,
+			dead ? Number.POSITIVE_INFINITY : maxPositionAge(actor),
+			!dead,
+		);
+	if (!observedPosition) return [];
+	const facing = sampleReplayFacing(actor.facings || [], timestamp.value, Number.POSITIVE_INFINITY);
+	const position = facing
+		? {
+			...observedPosition,
+			facingDegrees: facing.facingDegrees,
+			facingAge: facing.age,
+		}
+		: observedPosition;
 
 	return [{
 		actor: displayActorsByKey.value.get(actor.key) || actor,
@@ -131,6 +151,7 @@ const rawSampledActors = computed(() => (replay.value?.actors || []).flatMap(act
 			? null
 			: activeReplayCast(castsByActor.value.get(actor.key) || [], actor.key, timestamp.value),
 		dead,
+		resurrection,
 	}];
 }));
 
@@ -364,6 +385,7 @@ function formatTime(timestampMs: number): string {
 						:show-name="showNames"
 						:selected="selectedActorKey === entry.actor.key"
 						:dead="entry.dead"
+						:resurrection="entry.resurrection"
 						:opacity="!entry.dead && !entry.cast && entry.position.age > 3000 && entry.actor.positionRetentionMs !== null ? 0.55 : 1"
 						@select="selectActor(entry.actor.key)"
 					/>
@@ -494,14 +516,48 @@ function formatTime(timestampMs: number): string {
 
 <style scoped>
 .replay {
+	--replay-shell: #f8fafc;
+	--replay-deck: linear-gradient(180deg, rgb(255 255 255 / 98%), rgb(241 245 249 / 98%));
+	--replay-border: rgb(100 116 139 / 32%);
+	--replay-border-subtle: rgb(100 116 139 / 20%);
+	--replay-text: #334155;
+	--replay-strong: #0f172a;
+	--replay-muted: #64748b;
+	--replay-control: rgb(255 255 255 / 84%);
+	--replay-control-hover: #e0f2fe;
+	--replay-accent: #0369a1;
+	--replay-accent-soft: rgb(14 165 233 / 12%);
+	--replay-track: rgb(148 163 184 / 58%);
+	--replay-shadow: 0 -3px 12px rgb(15 23 42 / 12%);
+	--replay-error: #b91c1c;
+	--replay-thumb-border: rgb(3 105 161 / 72%);
 	display: flex;
 	min-width: 0;
 	min-height: 0;
 	flex: 1;
 	flex-direction: column;
 	overflow: hidden;
-	background: rgb(15 23 42 / 38%);
-	color: #d4d4d8;
+	background: var(--replay-shell);
+	color: var(--replay-text);
+}
+
+/* In scoped CSS, :global(.dark) would discard the trailing .replay selector. */
+.dark .replay {
+	--replay-shell: rgb(15 23 42 / 38%);
+	--replay-deck: linear-gradient(180deg, rgb(30 39 52 / 96%), rgb(20 28 39 / 98%));
+	--replay-border: rgb(113 113 122 / 38%);
+	--replay-border-subtle: rgb(113 113 122 / 24%);
+	--replay-text: #d4d4d8;
+	--replay-strong: #e0f2fe;
+	--replay-muted: #8f96a1;
+	--replay-control: rgb(5 10 17 / 48%);
+	--replay-control-hover: rgb(14 165 233 / 9%);
+	--replay-accent: #bae6fd;
+	--replay-accent-soft: rgb(14 165 233 / 14%);
+	--replay-track: rgb(113 113 122 / 48%);
+	--replay-shadow: 0 -3px 9px rgb(0 0 0 / 24%);
+	--replay-error: #f87171;
+	--replay-thumb-border: rgb(186 230 253 / 80%);
 }
 
 .replay-state {
@@ -510,25 +566,27 @@ function formatTime(timestampMs: number): string {
 	align-items: center;
 	justify-content: center;
 	gap: 10px;
-	color: #737b87;
+	color: var(--replay-muted);
 	font-size: 12px;
 }
 
 .replay-error {
-	color: #ef4444;
+	color: var(--replay-error);
 }
 
 .replay-state button {
-	border: 1px solid rgb(113 113 122 / 35%);
+	border: 1px solid var(--replay-border);
+	background: var(--replay-control);
+	color: var(--replay-text);
 	padding: 3px 9px;
 }
 
 .replay-control-deck {
 	z-index: 2;
 	flex-shrink: 0;
-	border-top: 1px solid rgb(113 113 122 / 32%);
-	background: linear-gradient(180deg, rgb(30 39 52 / 96%), rgb(20 28 39 / 98%));
-	box-shadow: 0 -3px 9px rgb(0 0 0 / 24%);
+	border-top: 1px solid var(--replay-border);
+	background: var(--replay-deck);
+	box-shadow: var(--replay-shadow);
 	font-size: 10px;
 }
 
@@ -538,7 +596,7 @@ function formatTime(timestampMs: number): string {
 	grid-template-columns: 54px minmax(80px, 1fr) 54px;
 	align-items: center;
 	gap: 9px;
-	border-bottom: 1px solid rgb(113 113 122 / 24%);
+	border-bottom: 1px solid var(--replay-border-subtle);
 	padding: 0 10px;
 }
 
@@ -549,12 +607,12 @@ function formatTime(timestampMs: number): string {
 }
 
 .replay-time {
-	color: #e0f2fe;
+	color: var(--replay-strong);
 	text-align: right;
 }
 
 .replay-duration {
-	color: #7f8792;
+	color: var(--replay-muted);
 }
 
 .replay-progress-row input {
@@ -562,7 +620,7 @@ function formatTime(timestampMs: number): string {
 	height: 4px;
 	appearance: none;
 	cursor: ew-resize;
-	background: rgb(113 113 122 / 48%);
+	background: var(--replay-track);
 }
 
 .replay-progress-row input::-webkit-slider-thumb {
@@ -570,7 +628,7 @@ function formatTime(timestampMs: number): string {
 	height: 17px;
 	appearance: none;
 	cursor: ew-resize;
-	border: 1px solid rgb(186 230 253 / 80%);
+	border: 1px solid var(--replay-thumb-border);
 	border-radius: 0;
 	background: #38bdf8;
 	box-shadow: 0 0 5px rgb(56 189 248 / 28%);
@@ -604,12 +662,12 @@ function formatTime(timestampMs: number): string {
 .control-group {
 	height: 25px;
 	gap: 3px;
-	border-right: 1px solid rgb(113 113 122 / 28%);
+	border-right: 1px solid var(--replay-border-subtle);
 	padding-right: 6px;
 }
 
 .control-label {
-	color: #89919c;
+	color: var(--replay-muted);
 	font-size: 9px;
 	font-weight: 700;
 	letter-spacing: 0.07em;
@@ -619,33 +677,38 @@ function formatTime(timestampMs: number): string {
 .replay-control-deck select {
 	height: 23px;
 	max-width: 150px;
-	border: 1px solid rgb(113 113 122 / 38%);
-	background: rgb(5 10 17 / 48%);
+	border: 1px solid var(--replay-border);
+	background: var(--replay-control);
 	padding: 0 5px;
-	color: #d4d4d8;
+	color: var(--replay-text);
 	outline: none;
 }
 
 .replay-control-deck button {
 	height: 23px;
 	cursor: pointer;
-	border: 1px solid rgb(113 113 122 / 32%);
-	background: rgb(0 0 0 / 12%);
+	border: 1px solid var(--replay-border);
+	background: var(--replay-control);
 	padding: 0 7px;
-	color: #a1a1aa;
+	color: var(--replay-text);
 	font-weight: 500;
 }
 
 .replay-control-deck button:hover {
 	border-color: rgb(56 189 248 / 48%);
-	background: rgb(14 165 233 / 9%);
-	color: #bae6fd;
+	background: var(--replay-control-hover);
+	color: var(--replay-accent);
+}
+
+.replay-control-deck button:disabled {
+	cursor: progress;
+	opacity: 0.62;
 }
 
 .replay-control-deck button[aria-pressed="true"] {
 	border-color: rgb(56 189 248 / 55%);
-	background: rgb(14 165 233 / 14%);
-	color: #7dd3fc;
+	background: var(--replay-accent-soft);
+	color: var(--replay-accent);
 }
 
 .replay-visibility {
@@ -677,8 +740,8 @@ function formatTime(timestampMs: number): string {
 	width: 34px;
 	height: 31px;
 	border-color: rgb(56 189 248 / 52%);
-	background: rgb(14 165 233 / 13%);
-	color: #bae6fd;
+	background: var(--replay-accent-soft);
+	color: var(--replay-accent);
 }
 
 .replay-transport .playback-toggle svg {
@@ -704,7 +767,7 @@ function formatTime(timestampMs: number): string {
 
 .replay-zoom span {
 	width: 38px;
-	color: #8f96a1;
+	color: var(--replay-muted);
 	font-variant-numeric: tabular-nums;
 	text-align: center;
 }

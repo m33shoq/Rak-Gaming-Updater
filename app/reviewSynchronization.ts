@@ -41,11 +41,16 @@ export function getReviewVideoTimeForLogTimestamp(
 	videoStartTimeMs: number,
 	timestampMs: number,
 	defaultDelaySeconds: number,
+	manualOffsetSeconds = 0,
 ): number {
 	if (anchor) {
-		return anchor.videoTimeSeconds + (timestampMs - anchor.timestampMs) / 1000;
+		return anchor.videoTimeSeconds
+			+ (timestampMs - anchor.timestampMs) / 1000
+			+ manualOffsetSeconds;
 	}
-	return (timestampMs - videoStartTimeMs) / 1000 + defaultDelaySeconds;
+	return (timestampMs - videoStartTimeMs) / 1000
+		+ defaultDelaySeconds
+		+ manualOffsetSeconds;
 }
 
 export function getReviewLogTimestampForVideoTime(
@@ -53,11 +58,22 @@ export function getReviewLogTimestampForVideoTime(
 	videoStartTimeMs: number,
 	videoTimeSeconds: number,
 	defaultDelaySeconds: number,
+	manualOffsetSeconds = 0,
 ): number {
 	if (anchor) {
-		return anchor.timestampMs + (videoTimeSeconds - anchor.videoTimeSeconds) * 1000;
+		return anchor.timestampMs
+			+ (videoTimeSeconds - anchor.videoTimeSeconds - manualOffsetSeconds) * 1000;
 	}
-	return videoStartTimeMs + (videoTimeSeconds - defaultDelaySeconds) * 1000;
+	return videoStartTimeMs
+		+ (videoTimeSeconds - defaultDelaySeconds - manualOffsetSeconds) * 1000;
+}
+
+/** The sync strip frame expected when a manually shifted WCL moment is requested. */
+export function getReviewMarkerTimestampForLogTimestamp(
+	timestampMs: number,
+	manualOffsetSeconds: number,
+): number {
+	return timestampMs + manualOffsetSeconds * 1000;
 }
 
 export function createReviewSyncAnchor(

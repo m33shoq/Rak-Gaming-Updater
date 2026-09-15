@@ -10,6 +10,7 @@
 	"type": "module",
 	"scripts": {
 		"app:dev": "vite",
+		"wcl:query": "node ./scripts/run-wcl-query.mjs",
 		"app:build": "vue-tsc && vite build && electron-builder",
 		"app:build:linux": "vue-tsc && vite build && electron-builder --linux",
 		"app:preview": "vue-tsc && vite build && electron .",

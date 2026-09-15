@@ -36,6 +36,10 @@ const connectedClientsStore = useConnectedClientsStore();
 const backupStatusStore = useBackupStatusStore();
 const darkMode = getElectronStoreRef('darkMode', true);
 
+watch(darkMode, enabled => {
+	document.documentElement.classList.toggle('dark', enabled);
+}, { immediate: true });
+
 const { appVersionInfo } = useAppVersion();
 
 const selectedTab = ref('main');
@@ -150,10 +154,8 @@ useIpcOn(IPC_EVENTS.APP_DEEP_LINK_CALLBACK, (event, payload: AppDeepLinkPayload)
 </script>
 
 <template>
-	<div class="m-0 p-0 text-base font-main flex flex-col h-screen
-	dark:bg-dark1 dark:text-gray-50
-	bg-light1 text-black" :class="{'dark': darkMode}">
-		<div data-app-title-bar class="m-0 flex items-center justify-between w-full p-0 drag">
+	<div class="m-0 flex h-screen flex-col bg-light1 p-0 font-main text-base text-slate-900 dark:bg-dark1 dark:text-gray-50" :class="{'dark': darkMode}">
+		<div data-app-title-bar class="drag m-0 flex w-full items-center justify-between border-b border-slate-700/40 bg-slate-900 p-0 text-gray-50">
 			<div class="flex items-center gap-2">
 				<img :src="icon" alt="icon" class="h-10 mx-1 vertical-align align-middle" />
 				<h1 class="font-bold text-3xl bg-gradient-to-r from-sky-600 via-blue-500 to-blue-600 text-transparent bg-clip-text animate-gradient">RG Updater</h1>
@@ -184,7 +186,7 @@ useIpcOn(IPC_EVENTS.APP_DEEP_LINK_CALLBACK, (event, payload: AppDeepLinkPayload)
 			class="bottom-0 flex w-full justify-between p-1 text-center text-sm font-medium"
 			:class="loginStore.isConnected && loginStore.getServerRevision === 'dev'
 				? 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300'
-				: 'bg-light1 text-neutral-500 dark:bg-dark1'"
+				: 'border-t border-slate-300/70 bg-light1 text-slate-600 dark:border-slate-700/40 dark:bg-dark1 dark:text-neutral-500'"
 		>
 			<p>
 				<template v-if="loginStore.isConnected">

@@ -3,9 +3,9 @@
 @theme {
 	--font-main: 'Segoe UI', 'Tahoma', 'Geneva', 'Verdana', 'sans-serif';
 
-	--color-primary: var(--color-blue-500);
+	--color-primary: var(--color-blue-600);
 	--color-primary-faded-dark: var(--color-sky-700);
-	--color-primary-faded-light: var(--color-sky-600);
+	--color-primary-faded-light: var(--color-sky-300);
 	--color-secondary: var(--color-amber-400);
 
 	--color-dark1: var(--color-gray-900);
@@ -13,23 +13,48 @@
 	--color-dark3: var(--color-gray-600);
 	--color-dark4: var(--color-gray-800);
 
-	--color-light1: var(--color-slate-900);
-	--color-light2: var(--color-slate-300);
-	--color-light3: var(--color-slate-400);
-	--color-light4: var(--color-slate-500);
+	--color-light1: var(--color-slate-100);
+	--color-light2: var(--color-slate-50);
+	--color-light3: var(--color-slate-200);
+	--color-light4: var(--color-white);
 }
 
 @custom-variant dark (&:where(.dark, .dark *));
 
-body {
-  font-weight: 600;
-  overflow: hidden;
-  user-select: none;
-  scrollbar-color: #555 transparent;
+:root {
+	color-scheme: light;
+	background: var(--color-light1);
 }
 
-body .dark {
-  scrollbar-color: #888 transparent;
+:root.dark {
+	color-scheme: dark;
+	background: var(--color-dark1);
+}
+
+.dark {
+	color-scheme: dark;
+	font-weight: 600;
+	scrollbar-color: #888 transparent;
+}
+
+body {
+	background: var(--color-light1);
+	color: var(--color-slate-900);
+	font-weight: 500;
+	overflow: hidden;
+	user-select: none;
+	scrollbar-color: var(--color-slate-400) var(--color-slate-200);
+}
+
+.dark body {
+	background: var(--color-dark1);
+	color: var(--color-gray-50);
+	font-weight: 600;
+	scrollbar-color: #888 transparent;
+}
+
+::selection {
+	background: rgb(14 165 233 / 28%);
 }
 
 /* Wowhead owns the spell data; this shell matches the timeline's boss-cast tooltips. */

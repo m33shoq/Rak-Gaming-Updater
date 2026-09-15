@@ -24,11 +24,10 @@ defineProps<{
 				text-sm
 				border-2
 				border-transparent
-				dark:xtext-zinc-400 xtext-zinc-300
-				text-gray-300
+				text-slate-700 dark:text-gray-300
 				whitespace-nowrap
 				dark:bg-dark4 dark:hover:bg-dark4/80
-				bg-light4 hover:bg-light4/80
+				bg-light4 shadow-sm hover:bg-light3
 				hover:border-2 hover:border-primary
 				box-border
 				transition-all
@@ -36,6 +35,7 @@ defineProps<{
 				disabled:cursor-not-allowed
 				disabled:opacity-50
 				disabled:hover:border-transparent
+				focus:border-sky-500 focus:outline-none focus:ring-2 focus:ring-sky-500/20
 				overflow-hidden"
 				@click="click"
 				:disabled="disabled"

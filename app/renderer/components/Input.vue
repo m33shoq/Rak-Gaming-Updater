@@ -9,18 +9,17 @@ const model = defineModel()
 
 <template>
 	<input class="
-	dark:bg-dark4 dark:hover:bg-dark4/80
-	bg-light4 hover:bg-light4/80
+	dark:border-transparent dark:bg-dark4 dark:text-white dark:hover:bg-dark4/80
+	border border-slate-300 bg-light4 text-slate-900 shadow-sm hover:border-slate-400 hover:bg-slate-50
 	p-2
 	m-1
 	cursor-text
 	whitespace-nowrap
-	text-white
 	rounded-md
-	placeholder:text-gray-300
+	placeholder:text-slate-500 dark:placeholder:text-gray-300
 	placeholder:text-sm
 	placeholder:select-none
-	focus:outline-hidden
+	focus:border-sky-500 focus:outline-hidden focus:ring-2 focus:ring-sky-500/20
 	transition-all
 	ease-in
 "

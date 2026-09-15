@@ -1,5 +1,15 @@
 export type ReviewTimelineViewMode = 'fight' | 'comparison' | 'replay';
 
+export type ReviewPlayerHotkeyInput = {
+	key: string;
+	code: string;
+	altKey: boolean;
+	ctrlKey: boolean;
+	metaKey: boolean;
+	repeat: boolean;
+	shiftKey: boolean;
+};
+
 export type ReviewTimelineWindowContext = {
 	reportCode: string;
 	fightID: number;
@@ -21,6 +31,7 @@ export type ReviewTimelineWindowAction =
 	| { type: 'open-death'; deathID: number }
 	| { type: 'open-pull-death'; fightID: number; deathID: number }
 	| { type: 'toggle-playback' }
+	| { type: 'player-hotkey'; input: ReviewPlayerHotkeyInput }
 	| { type: 'view-mode'; viewMode: ReviewTimelineViewMode };
 
 export type ReviewTimelineWindowFightData = {
@@ -45,3 +56,14 @@ export type ReviewTimelineReattachReason =
 	| 'main-hidden'
 	| 'main-minimized'
 	| 'context-unavailable';
+
+export type ReviewTimelineReattachedPayload = {
+	reason: ReviewTimelineReattachReason;
+	returnToReviews: boolean;
+};
+
+export function shouldExpandTimelineAfterReattach(
+	payload?: Partial<ReviewTimelineReattachedPayload>,
+): boolean {
+	return payload?.reason !== 'timeline-closed' || payload.returnToReviews === true;
+}

@@ -501,6 +501,7 @@ export function useReviewFightData(options: ReviewFightDataOptions) {
 				if (
 					!replay
 					|| replay.version !== REVIEW_REPLAY_VERSION
+					|| typeof replay.enrichmentComplete !== 'boolean'
 					|| !Array.isArray(replay.actors)
 					|| !Array.isArray(replay.casts)
 					|| !Array.isArray(replay.uiMapIDs)
@@ -527,7 +528,8 @@ export function useReviewFightData(options: ReviewFightDataOptions) {
 					delete fightReplayErrors.value[oldestKey];
 				}
 				savedFightReplays.value = nextReplays;
-				fightReplayCachedAt.value[cacheKey] = Date.now();
+				if (replay.enrichmentComplete) fightReplayCachedAt.value[cacheKey] = Date.now();
+				else delete fightReplayCachedAt.value[cacheKey];
 				return replay;
 			} catch (error) {
 				const message = error instanceof Error ? error.message : 'Failed to request fight replay';

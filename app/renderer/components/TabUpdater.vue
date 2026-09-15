@@ -81,7 +81,7 @@ async function RefreshFiles() {
 						<span class="scroll-list-item-main-text">
 							{{ fileData.displayName }}
 						</span>
-						<span class="scroll-list-item-secondary-text text-sm dark:text-zinc-400 text-zinc-300 font-normal">
+						<span class="scroll-list-item-secondary-text text-sm font-normal text-slate-600 dark:text-zinc-400">
 							{{ fileData.relativePath }}
 						</span>
 					</div>

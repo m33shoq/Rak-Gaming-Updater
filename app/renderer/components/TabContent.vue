@@ -3,7 +3,7 @@
 </script>
 
 <template>
-	<div class="dark:bg-dark2 bg-light2 px-6 py-1 w-full h-full m-0 box-border">
+	<div class="m-0 h-full w-full box-border bg-light2 px-6 py-1 text-slate-900 dark:bg-dark2 dark:text-gray-50">
 		<slot />
 	</div>
 </template>

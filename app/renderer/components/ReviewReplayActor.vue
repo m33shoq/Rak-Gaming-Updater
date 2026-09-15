@@ -5,6 +5,7 @@ import {
 	replaySpellIconURL,
 	type ReplayActor,
 	type ReplayCast,
+	type ReplayResurrectionWindow,
 	type SampledReplayPosition,
 } from '@/replay';
 
@@ -17,6 +18,7 @@ const props = defineProps<{
 	showName: boolean;
 	selected: boolean;
 	dead: boolean;
+	resurrection?: ReplayResurrectionWindow;
 }>();
 
 const emit = defineEmits<{
@@ -26,6 +28,7 @@ const emit = defineEmits<{
 const iconFailed = ref(false);
 const iconSourceIndex = ref(0);
 const castIconFailed = ref(false);
+const resurrectionIconFailed = ref(false);
 const radius = computed(() => {
 	if (props.actor.kind === 'boss') return props.unit * 17;
 	if (props.actor.kind === 'player') return props.unit * 13;
@@ -35,6 +38,11 @@ const iconURLs = computed(() => replayActorIconURLs(props.actor));
 const iconURL = computed(() => iconURLs.value[iconSourceIndex.value] || '');
 const iconClipID = computed(() => `replay-actor-icon-${props.actor.key.replace(/[^a-zA-Z0-9_-]/g, '-')}`);
 const castIconURL = computed(() => replaySpellIconURL(props.cast?.icon));
+const resurrectionIconURL = computed(() => (
+	props.resurrection
+		? replaySpellIconURL(props.resurrection.icon || 'spell_holy_resurrection')
+		: ''
+));
 const castProgress = computed(() => {
 	if (!props.cast) return 0;
 	const expectedEnd = props.cast.expectedEnd || props.cast.end;
@@ -75,6 +83,10 @@ watch(castIconURL, () => {
 	castIconFailed.value = false;
 });
 
+watch(resurrectionIconURL, () => {
+	resurrectionIconFailed.value = false;
+});
+
 function tryNextIcon(): void {
 	if (iconSourceIndex.value + 1 < iconURLs.value.length) {
 		iconSourceIndex.value++;
@@ -90,7 +102,10 @@ function tryNextIcon(): void {
 		:class="[`replay-actor-${actor.kind}`, { 'replay-actor-dead': dead }]"
 		@click.stop="emit('select')"
 	>
-		<title v-if="dead">{{ actor.name }} is dead</title>
+		<title v-if="resurrection">
+			{{ actor.name }} can accept {{ resurrection.name || 'a resurrection' }}{{ resurrection.sourceName ? ` from ${resurrection.sourceName}` : '' }}
+		</title>
+		<title v-else-if="dead">{{ actor.name }} is dead</title>
 		<defs>
 			<clipPath :id="iconClipID" clipPathUnits="userSpaceOnUse">
 				<circle
@@ -120,7 +135,7 @@ function tryNextIcon(): void {
 			v-if="actor.kind !== 'add'"
 			:r="radius"
 			fill="#05080d"
-			:stroke="dead ? '#fb7185' : selected ? '#7dd3fc' : actorColor"
+			:stroke="resurrection ? '#fde047' : dead ? '#fb7185' : selected ? '#7dd3fc' : actorColor"
 			:stroke-width="unit * (selected ? 3 : 2)"
 		/>
 		<path
@@ -152,7 +167,30 @@ function tryNextIcon(): void {
 			class="actor-icon"
 			@error="tryNextIcon"
 		/>
-		<g v-if="dead" class="death-indicator" pointer-events="none">
+		<g v-if="resurrection" class="resurrection-indicator" pointer-events="none">
+			<circle :r="radius - unit * 1.5" fill="rgb(5 8 13 / 78%)" />
+			<image
+				v-if="resurrectionIconURL && !resurrectionIconFailed"
+				:x="-radius + unit * 2"
+				:y="-radius + unit * 2"
+				:width="(radius - unit * 2) * 2"
+				:height="(radius - unit * 2) * 2"
+				:href="resurrectionIconURL"
+				:clip-path="`url(#${iconClipID})`"
+				preserveAspectRatio="xMidYMid slice"
+				@error="resurrectionIconFailed = true"
+			/>
+			<text
+				v-else
+				text-anchor="middle"
+				:y="unit * 6"
+				:font-size="unit * 20"
+				font-family="Arial, sans-serif"
+				font-weight="700"
+				fill="#fef08a"
+			>+</text>
+		</g>
+		<g v-else-if="dead" class="death-indicator" pointer-events="none">
 			<circle :r="radius - unit * 1.5" fill="rgb(5 8 13 / 68%)" />
 			<text
 				text-anchor="middle"

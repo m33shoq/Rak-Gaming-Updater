@@ -1,6 +1,7 @@
 import log from 'electron-log/renderer';
 import { onBeforeUnmount, ref, watch, type Ref } from 'vue';
 
+import { hasReviewSeekReachedTarget } from '@/renderer/reviewSeekCoordinator';
 import YTPlayer from '@/renderer/yt-player';
 
 export type ReviewYoutubePlayerState =
@@ -25,6 +26,13 @@ type ReviewYoutubePlayerOptions = {
 };
 
 const VIDEO_TIME_UPDATE_HZ = 16;
+const SEEK_STALE_TIME_UPDATE_GUARD_MS = 10_000;
+
+type PendingPlayerTimeSeek = {
+	fromSeconds: number;
+	targetSeconds: number;
+	issuedAt: number;
+};
 
 export function useReviewYoutubePlayer(options: ReviewYoutubePlayerOptions) {
 	const player = ref<YTPlayer | null>(null);
@@ -35,6 +43,7 @@ export function useReviewYoutubePlayer(options: ReviewYoutubePlayerOptions) {
 	const stateRevision = ref(0);
 	const seekRevision = ref(0);
 	let reloadTimeout: number | null = null;
+	let pendingPlayerTimeSeek: PendingPlayerTimeSeek | null = null;
 
 	function reload(): void {
 		reloadRevision.value++;
@@ -51,12 +60,44 @@ export function useReviewYoutubePlayer(options: ReviewYoutubePlayerOptions) {
 
 	function dispatchSeek(seconds: number): void {
 		seekRevision.value++;
-		player.value?.seek(seconds);
+		const targetSeconds = Math.max(0, seconds);
+		pendingPlayerTimeSeek = {
+			fromSeconds: player.value?.getCurrentTime() ?? currentTime.value,
+			targetSeconds,
+			issuedAt: performance.now(),
+		};
+		// The iframe may report its old time while entering buffering and then stop
+		// emitting updates when a seek remains paused. Move the application clock
+		// immediately; the next coherent iframe observation confirms it.
+		currentTime.value = targetSeconds;
+		player.value?.seek(targetSeconds);
 	}
 
 	function dispatchLoad(videoID: string, autoplay: boolean, seconds: number): void {
 		seekRevision.value++;
-		player.value?.load(videoID, autoplay, seconds);
+		const targetSeconds = Math.max(0, seconds);
+		pendingPlayerTimeSeek = {
+			fromSeconds: player.value?.getCurrentTime() ?? currentTime.value,
+			targetSeconds,
+			issuedAt: performance.now(),
+		};
+		currentTime.value = targetSeconds;
+		player.value?.load(videoID, autoplay, targetSeconds);
+	}
+
+	function acceptPlayerTimeUpdate(seconds: number): boolean {
+		const pending = pendingPlayerTimeSeek;
+		if (!pending) return true;
+		if (
+			performance.now() - pending.issuedAt < SEEK_STALE_TIME_UPDATE_GUARD_MS
+			&& !hasReviewSeekReachedTarget(
+				pending.fromSeconds,
+				pending.targetSeconds,
+				seconds,
+			)
+		) return false;
+		pendingPlayerTimeSeek = null;
+		return true;
 	}
 
 	function emitStoppedState(state: Exclude<ReviewYoutubePlayerState, 'playing'>): void {
@@ -68,6 +109,7 @@ export function useReviewYoutubePlayer(options: ReviewYoutubePlayerOptions) {
 
 	watch(options.iframe, (element) => {
 		options.onBeforePlayerChange();
+		pendingPlayerTimeSeek = null;
 		stateRevision.value++;
 		isPlaying.value = false;
 		options.keepControlsVisible();
@@ -96,6 +138,7 @@ export function useReviewYoutubePlayer(options: ReviewYoutubePlayerOptions) {
 		player.value = nextPlayer;
 
 		nextPlayer.on('unplayable', ({ videoId, errorCode, data }) => {
+			pendingPlayerTimeSeek = null;
 			options.onPlaybackUnavailable('YouTube could not play the selected video');
 			log.info('YouTube video unplayable:', videoId, errorCode);
 			log.info(nextPlayer._player);
@@ -112,6 +155,7 @@ export function useReviewYoutubePlayer(options: ReviewYoutubePlayerOptions) {
 		});
 
 		nextPlayer.on('error', (error) => {
+			pendingPlayerTimeSeek = null;
 			stateRevision.value++;
 			options.onPlaybackError('YouTube player error');
 			log.info('YouTube embed error:', error);
@@ -119,6 +163,7 @@ export function useReviewYoutubePlayer(options: ReviewYoutubePlayerOptions) {
 		});
 
 		nextPlayer.on('timeupdate', (seconds) => {
+			if (!acceptPlayerTimeUpdate(seconds)) return;
 			currentTime.value = seconds;
 			options.onTimeUpdate(seconds);
 		});
@@ -153,6 +198,7 @@ export function useReviewYoutubePlayer(options: ReviewYoutubePlayerOptions) {
 			reloadTimeout = null;
 		}
 		player.value?.destroy();
+		pendingPlayerTimeSeek = null;
 		player.value = null;
 		isLoaded.value = false;
 		isPlaying.value = false;

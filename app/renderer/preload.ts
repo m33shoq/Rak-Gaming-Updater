@@ -135,6 +135,7 @@ const ALLOWED_STORE_KEYS = new Set([
 	'reviewCooldownTimelineExpandedHeight',
 	'reviewCooldownTimelineGroupFilters',
 	'reviewCooldownTimelineSpellFilters',
+	'reviewVideoManualSyncOffsets',
 	'startMinimized',
 	'startWithWindows',
 	'updatePath',

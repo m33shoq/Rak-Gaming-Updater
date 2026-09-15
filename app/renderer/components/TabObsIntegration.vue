@@ -130,7 +130,7 @@ async function installSyncMarker() {
 					min="1"
 					max="65535"
 					v-model.number="obsPort"
-					class="dark:bg-dark4 dark:hover:bg-dark4/80 bg-light4 hover:bg-light4/80 p-2 rounded-md focus:outline-hidden transition-all ease-in w-full"
+					class="w-full rounded-md border border-slate-300 bg-light4 p-2 text-slate-900 shadow-sm transition-all ease-in hover:border-slate-400 hover:bg-slate-50 focus:border-sky-500 focus:outline-hidden focus:ring-2 focus:ring-sky-500/20 dark:border-transparent dark:bg-dark4 dark:text-white dark:shadow-none dark:hover:bg-dark4/80"
 				/>
 			</div>
 
@@ -140,7 +140,7 @@ async function installSyncMarker() {
 					type="password"
 					v-model="obsPassword"
 					:placeholder="$t('obs.password_placeholder')"
-					class="dark:bg-dark4 dark:hover:bg-dark4/80 bg-light4 hover:bg-light4/80 p-2 rounded-md focus:outline-hidden transition-all ease-in w-full"
+					class="w-full rounded-md border border-slate-300 bg-light4 p-2 text-slate-900 shadow-sm transition-all ease-in placeholder:text-slate-500 hover:border-slate-400 hover:bg-slate-50 focus:border-sky-500 focus:outline-hidden focus:ring-2 focus:ring-sky-500/20 dark:border-transparent dark:bg-dark4 dark:text-white dark:shadow-none dark:placeholder:text-neutral-400 dark:hover:bg-dark4/80"
 				/>
 			</div>
 
@@ -158,7 +158,7 @@ async function installSyncMarker() {
 			<p
 				v-if="syncMarkerStatus"
 				class="text-xs mt-1"
-				:class="syncMarkerStatusIsError ? 'text-red-400' : 'text-teal-300'"
+				:class="syncMarkerStatusIsError ? 'text-red-700 dark:text-red-400' : 'text-teal-700 dark:text-teal-300'"
 			>{{ syncMarkerStatus }}</p>
 
 			<div class="mt-4 border border-gray-500/30 rounded-lg p-3 dark:bg-dark3 bg-light3">
@@ -199,7 +199,7 @@ async function installSyncMarker() {
 				<p class="text-xs opacity-80 break-words"><span class="opacity-60">{{ $t('obs.service') }}:</span> {{ obsStatus.serviceName || '-' }}</p>
 				<p class="text-xs opacity-80 break-words mt-0.5"><span class="opacity-60">{{ $t('obs.server') }}:</span> {{ obsStatus.server || '-' }}</p>
 				<p class="text-xs opacity-80 break-words mt-0.5"><span class="opacity-60">{{ $t('obs.last_update') }}:</span> {{ statusUpdatedAtLabel }}</p>
-				<p v-if="obsStatus.lastError" class="text-xs text-red-400 break-words mt-1">{{ obsStatus.lastError }}</p>
+				<p v-if="obsStatus.lastError" class="mt-1 break-words text-xs text-red-700 dark:text-red-400">{{ obsStatus.lastError }}</p>
 			</div>
 		</div>
 	</TabContent>

@@ -90,7 +90,7 @@ function deleteVideo(videoId: string): void {
 					class="min-h-8 m-0.5 rounded-md flex-1 cursor-pointer disabled:cursor-auto"
 					:disabled="video.id === reviewsStore.getSelectedVideoId"
 					:class="{
-						'border-1 border-secondary dark:bg-dark1 bg-light1': video.id === reviewsStore.getSelectedVideoId,
+						'border-1 border-sky-500 bg-sky-50 shadow-sm dark:border-secondary dark:bg-dark1 dark:shadow-none': video.id === reviewsStore.getSelectedVideoId,
 						'dark:bg-dark4 dark:hover:bg-dark3 bg-light4 hover:bg-light3': video.id !== reviewsStore.getSelectedVideoId,
 					}"
 					@click="reviewsStore.setSelectedVideoInfo(video)"
@@ -101,7 +101,7 @@ function deleteVideo(videoId: string): void {
 					</div>
 				</button>
 				<button
-					class="flex-none hover:text-yellow-200 cursor-pointer"
+					class="flex-none cursor-pointer text-slate-600 hover:text-sky-700 dark:text-inherit dark:hover:text-yellow-200"
 					title="Open stream on YouTube at the current playback time"
 					:aria-label="`Open ${video.author}'s stream on YouTube at the current playback time`"
 					@click="emit('openStream', video)"
@@ -112,7 +112,7 @@ function deleteVideo(videoId: string): void {
 				</button>
 				<button
 					v-if="loginStore.isAdmin && video.duration === 0"
-					class="flex-none hover:text-yellow-200 cursor-pointer"
+					class="flex-none cursor-pointer text-slate-600 hover:text-sky-700 dark:text-inherit dark:hover:text-yellow-200"
 					@click="refreshVideo(video.id)"
 				>
 					<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="size-6 inline-block">

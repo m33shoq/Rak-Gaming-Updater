@@ -11,7 +11,7 @@ defineProps<ButtonProps>()
 </script>
 
 <template>
-	<button class="min-w-14 h-9 max-h-9 px-2 bg-white rounded-md m-0.5 p-1.5 text-black font-semibold cursor-pointer no-drag disabled:bg-primary disabled:cursor-not-allowed disabled:pointer-events-none hover:bg-amber-200 disabled:text-white transition-all ease-in"
+	<button class="no-drag m-0.5 h-9 max-h-9 min-w-14 cursor-pointer rounded-md bg-white p-1.5 px-2 font-semibold text-black transition-all ease-in hover:bg-amber-200 disabled:pointer-events-none disabled:cursor-not-allowed disabled:bg-primary disabled:text-white"
 		@click="click">
 		<template v-if="svg==='home'">
 			<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="size-6 inline-block">

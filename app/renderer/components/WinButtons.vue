@@ -51,7 +51,7 @@ ipc.on(IPC_EVENTS.WINDOW_MAXIMIZE_TOGGLE_CALLBACK, (event, maximized: boolean) =
 <style scoped>
 
 #button-container button {
-	color: #FFFFFF;
+	color: #fff;
 	border: none;
 	-webkit-app-region: no-drag;
 	background-color: transparent;
@@ -66,12 +66,11 @@ ipc.on(IPC_EVENTS.WINDOW_MAXIMIZE_TOGGLE_CALLBACK, (event, maximized: boolean) =
 }
 
 #button-container button:hover {
-	background-color: #333333;
+	background-color: #333;
 }
 
 #close-btn:hover {
 	background-color: red !important;
 }
-
 
 </style>

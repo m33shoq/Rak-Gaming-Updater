@@ -1,7 +1,6 @@
 import log from 'electron-log/renderer';
 import { computed, nextTick, watch, type Ref } from 'vue';
 
-import { getReviewVideoEndTime } from '@/reviewVideoSelection';
 import { useReviewVideoSynchronization } from '@/renderer/composables/useReviewVideoSynchronization';
 import {
 	ReviewSeekCoordinator,
@@ -76,6 +75,31 @@ export function useReviewPlaybackCoordinator(options: ReviewPlaybackCoordinatorO
 		options.dispatchYoutubePlayerLoad(videoID, autoplay, seconds);
 	}
 
+	function setManualSyncOffset(seconds: number): void {
+		const previousOffset = synchronization.manualOffsetSeconds.value;
+		const nextOffset = synchronization.setManualOffsetSeconds(seconds);
+		const delta = nextOffset - previousOffset;
+		if (Math.abs(delta) < 0.0005) return;
+
+		options.clearQueuedSeek();
+		seekCoordinator.cancel('Manual stream offset changed');
+		synchronization.cancelPendingSeek('Manual stream offset changed');
+		const activePlayer = options.player.value;
+		if (
+			!activePlayer
+			|| !options.playerLoaded.value
+			|| activePlayer.getVideoId() !== reviewsStore.getSelectedVideoId
+		) return;
+
+		const currentTime = activePlayer.getCurrentTime();
+		if (!Number.isFinite(currentTime)) return;
+		const duration = activePlayer.getDuration();
+		dispatchPlayerSeek(Math.max(0, Math.min(
+			currentTime + delta,
+			duration > 0 ? duration : Number.POSITIVE_INFINITY,
+		)));
+	}
+
 	function requestSelectedVideoPlayback(source: ReviewSeekSource = 'video-selection'): void {
 		const videoID = reviewsStore.getSelectedVideoId;
 		if (!videoID || !options.player.value || !options.playerLoaded.value) return;
@@ -101,8 +125,13 @@ export function useReviewPlaybackCoordinator(options: ReviewPlaybackCoordinatorO
 	}
 
 	function videoContainsTimestamp(video: YouTubeVideo, timestampMs: number): boolean {
-		return video.startTime <= timestampMs
-			&& getReviewVideoEndTime(video) >= timestampMs;
+		const videoTimeSeconds = synchronization.getVideoTimeForAbsoluteLogTimestamp(
+			timestampMs,
+			video,
+		);
+		return Number.isFinite(videoTimeSeconds)
+			&& videoTimeSeconds >= 0
+			&& (video.duration <= 0 || videoTimeSeconds <= video.duration / 1000);
 	}
 
 	function getVideoForFightTimestamp(
@@ -139,9 +168,8 @@ export function useReviewPlaybackCoordinator(options: ReviewPlaybackCoordinatorO
 		}
 
 		if (intent.kind === 'video-time') {
-			const video = reviewsStore.videoList.find(candidate => candidate.id === intent.videoID)
-				|| reviewsStore.selectedVideoInfo;
-			if (!video || video.id !== intent.videoID) {
+			const video = reviewsStore.videoList.find(candidate => candidate.id === intent.videoID);
+			if (!video) {
 				return { phase: 'unavailable' as const, message: 'The selected stream is no longer available' };
 			}
 			const videoDurationSeconds = video.duration > 0
@@ -215,7 +243,10 @@ export function useReviewPlaybackCoordinator(options: ReviewPlaybackCoordinatorO
 			if (!context.isCurrent()) return { phase: 'unavailable' as const };
 		}
 
-		const videoTimeSeconds = synchronization.getVideoTimeForAbsoluteLogTimestamp(targetMarkerTimestampMs);
+		const videoTimeSeconds = synchronization.getVideoTimeForAbsoluteLogTimestamp(
+			targetMarkerTimestampMs,
+			targetVideo,
+		);
 		const videoDurationSeconds = targetVideo.duration > 0
 			? targetVideo.duration / 1000
 			: Number.POSITIVE_INFINITY;
@@ -425,12 +456,14 @@ export function useReviewPlaybackCoordinator(options: ReviewPlaybackCoordinatorO
 		dispatchPlayerSeek,
 		failSynchronizationSeek: synchronization.failActiveSeek,
 		isSyncPrototypeCapturing: synchronization.isCapturing,
+		manualSyncOffsetSeconds: synchronization.manualOffsetSeconds,
 		rememberCurrentFightTime,
 		requestSelectedVideoPlayback,
 		requestVideoTimeSeek,
 		resetSynchronizationForPlayerChange: synchronization.onPlayerBeforeChange,
 		seekToFightTimestamp,
 		seekToPullTimestamp,
+		setManualSyncOffset,
 		syncPrototypeStatus: synchronization.status,
 		syncPrototypeStatusTone: synchronization.statusTone,
 		updatePendingSyncMarkerSeekPlaybackRate: synchronization.updatePlaybackRate,

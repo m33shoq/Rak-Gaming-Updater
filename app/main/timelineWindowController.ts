@@ -270,7 +270,7 @@ export default class TimelineWindowController {
 			icon: this.options.icon,
 			frame: false,
 			titleBarStyle: 'hidden',
-			backgroundColor: '#0b1019',
+			backgroundColor: store.get('darkMode') === false ? '#f1f5f9' : '#0b1019',
 			resizable: true,
 			minimizable: false,
 			maximizable: true,

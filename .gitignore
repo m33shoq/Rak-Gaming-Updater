@@ -5,6 +5,13 @@ releases/
 changelog.txt
 scripts/*
 !scripts/replay.test.mjs
+!scripts/reviewFights.test.mjs
+!scripts/reviewReports.test.mjs
+!scripts/run-wcl-query.mjs
 !scripts/reviewVideoSelection.test.mjs
+!scripts/timelineWindow.test.mjs
+!scripts/reviewBossCastActions.test.mjs
+!scripts/wclReportUrl.test.mjs
 !scripts/build_replay_maps.py
+/tmp/
 .vscode

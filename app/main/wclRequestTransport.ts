@@ -24,6 +24,7 @@ type WclSocketResponse = {
 	fightCooldownEvents?: unknown;
 	bossCastData?: unknown;
 	replayData?: unknown;
+	queryData?: unknown;
 };
 
 type WclRequestOptions<T> = {
@@ -221,13 +222,14 @@ export default class WclRequestTransport {
 		const requestEpoch = this.fightReplayCacheEpoch;
 		const request = this.request({
 			eventName: SOCKET_EVENTS.WCL_REQUEST_FIGHT_REPLAY,
-			payload: { reportCode, fightID },
+			payload: { reportCode, fightID, force },
 			readData: response => {
 				const replay = response.replayData as FightReplayData | undefined;
 				return replay
 				&& typeof response.replayData === 'object'
 				&& !Array.isArray(response.replayData)
 				&& replay.version === REVIEW_REPLAY_VERSION
+				&& typeof replay.enrichmentComplete === 'boolean'
 				&& Array.isArray(replay.actors)
 				&& Array.isArray(replay.casts)
 				&& Array.isArray(replay.uiMapIDs)
@@ -241,7 +243,11 @@ export default class WclRequestTransport {
 		});
 		this.fightReplayRequests.set(cacheKey, request);
 		void request.then(result => {
-			if (result.success !== true || requestEpoch !== this.fightReplayCacheEpoch) return;
+			if (
+				result.success !== true
+				|| !result.data.enrichmentComplete
+				|| requestEpoch !== this.fightReplayCacheEpoch
+			) return;
 			this.fightReplayCache.delete(cacheKey);
 			this.fightReplayCache.set(cacheKey, { cachedAt: Date.now(), data: result.data });
 			while (this.fightReplayCache.size > FIGHT_REPLAY_CACHE_LIMIT) {
@@ -253,6 +259,22 @@ export default class WclRequestTransport {
 			}
 		});
 		return request;
+	}
+
+	requestDevelopmentQuery<T = unknown>(
+		query: string,
+		variables: Record<string, unknown> = {},
+	): Promise<WclRequestResult<T>> {
+		return this.request({
+			eventName: SOCKET_EVENTS.WCL_DEV_QUERY,
+			payload: { query, variables },
+			readData: response => response.queryData === undefined
+				? undefined
+				: response.queryData as T,
+			requestLabel: 'WCL development query',
+			timeoutMs: 120_000,
+			logContext: { queryBytes: Buffer.byteLength(query, 'utf8') },
+		});
 	}
 
 	private request<T>({

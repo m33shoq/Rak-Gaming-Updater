@@ -3,7 +3,10 @@ import { computed, onBeforeUnmount, onMounted, ref, type Ref } from 'vue';
 
 import { IPC_EVENTS } from '@/events';
 import { useIpcOn } from '@/renderer/composables/useIpcOn';
+import { isExcludedPlayerHotkeyTarget } from '@/renderer/reviewPlayerHotkeys';
+import { hasReviewSeekReachedTarget } from '@/renderer/reviewSeekCoordinator';
 import type YTPlayer from '@/renderer/yt-player';
+import type { ReviewPlayerHotkeyInput } from '@/timelineWindow';
 
 const DEFAULT_SEEK_SECONDS = 5;
 const SHIFT_SEEK_SECONDS = 3;
@@ -19,16 +22,6 @@ const SEEK_INDICATOR_MIN_VISIBLE_MS = 500;
 const SEEK_HOLD_INITIAL_INTERVAL_MS = 350;
 const SEEK_HOLD_FASTEST_INTERVAL_MS = 60;
 const SEEK_HOLD_ACCELERATION_MS = 3500;
-
-type PlayerHotkeyPayload = {
-	key: string;
-	code: string;
-	altKey: boolean;
-	ctrlKey: boolean;
-	metaKey: boolean;
-	repeat: boolean;
-	shiftKey: boolean;
-};
 
 type PlayerMouseDownPayload = {
 	clickCount: number;
@@ -55,25 +48,6 @@ function formatSeekDelta(seconds: number): string {
 		return `${hours}:${minutes.toString().padStart(2, '0')}:${remainingSeconds.toString().padStart(2, '0')}`;
 	}
 	return `${minutes}:${remainingSeconds.toString().padStart(2, '0')}`;
-}
-
-function isExcludedHotkeyTarget(target: EventTarget | null): boolean {
-	if (!(target instanceof HTMLElement)) return false;
-	if (target.isContentEditable) return true;
-
-	return Boolean(target.closest([
-		'input',
-		'textarea',
-		'select',
-		'button',
-		'a[href]',
-		'summary',
-		'[contenteditable="true"]',
-		'[role="button"]',
-		'[role="menuitem"]',
-		'[role="option"]',
-		'[role="slider"]',
-	].join(', ')));
 }
 
 export function useReviewPlayerHotkeys(options: ReviewPlayerHotkeyOptions) {
@@ -206,7 +180,7 @@ export function useReviewPlayerHotkeys(options: ReviewPlayerHotkeyOptions) {
 	}
 
 	function getArrowSeekDelta(
-		input: Pick<PlayerHotkeyPayload, 'ctrlKey' | 'metaKey' | 'shiftKey' | 'altKey'>,
+		input: Pick<ReviewPlayerHotkeyInput, 'ctrlKey' | 'metaKey' | 'shiftKey' | 'altKey'>,
 	): number {
 		if (input.ctrlKey || input.metaKey) return CTRL_SEEK_SECONDS;
 		if (input.shiftKey) return SHIFT_SEEK_SECONDS;
@@ -219,10 +193,6 @@ export function useReviewPlayerHotkeys(options: ReviewPlayerHotkeyOptions) {
 		return Math.max(0, Math.min(seconds, duration > 0 ? duration : Number.POSITIVE_INFINITY));
 	}
 
-	function getSeekConfirmationTolerance(fromSeconds: number, targetSeconds: number): number {
-		return Math.min(0.35, Math.max(0.012, Math.abs(targetSeconds - fromSeconds) * 0.15));
-	}
-
 	function isDispatchedSeekComplete(currentTime: number): boolean {
 		const state = seekState;
 		if (
@@ -233,9 +203,8 @@ export function useReviewPlayerHotkeys(options: ReviewPlayerHotkeyOptions) {
 
 		const fromSeconds = state.dispatchedFromSeconds;
 		const targetSeconds = state.dispatchedTargetSeconds;
-		const tolerance = getSeekConfirmationTolerance(fromSeconds, targetSeconds);
+		if (!hasReviewSeekReachedTarget(fromSeconds, targetSeconds, currentTime)) return false;
 		if (targetSeconds > fromSeconds) {
-			if (currentTime < targetSeconds - tolerance) return false;
 			if (!state.wasPlayingAtDispatch || state.dispatchedAt === null) return true;
 
 			// Crossing a forward target is not proof that YouTube accepted the seek: for
@@ -247,8 +216,7 @@ export function useReviewPlayerHotkeys(options: ReviewPlayerHotkeyOptions) {
 				+ 0.2;
 			return currentTime > naturallyReachableTime;
 		}
-		if (targetSeconds < fromSeconds) return currentTime <= targetSeconds + tolerance;
-		return Math.abs(currentTime - targetSeconds) <= tolerance;
+		return true;
 	}
 
 	function dispatchQueuedSeek(): void {
@@ -356,7 +324,7 @@ export function useReviewPlayerHotkeys(options: ReviewPlayerHotkeyOptions) {
 		return true;
 	}
 
-	function getQueuedSeekHotkeySignature(input: PlayerHotkeyPayload | KeyboardEvent): string {
+	function getQueuedSeekHotkeySignature(input: ReviewPlayerHotkeyInput | KeyboardEvent): string {
 		return [
 			input.code,
 			input.altKey ? 'alt' : '',
@@ -366,7 +334,7 @@ export function useReviewPlayerHotkeys(options: ReviewPlayerHotkeyOptions) {
 		].join(':');
 	}
 
-	function shouldApplyQueuedSeekHotkey(input: PlayerHotkeyPayload | KeyboardEvent): boolean {
+	function shouldApplyQueuedSeekHotkey(input: ReviewPlayerHotkeyInput | KeyboardEvent): boolean {
 		const now = performance.now();
 		const signature = getQueuedSeekHotkeySignature(input);
 		if (!input.repeat || seekHoldState?.signature !== signature) {
@@ -411,7 +379,7 @@ export function useReviewPlayerHotkeys(options: ReviewPlayerHotkeyOptions) {
 		}
 	}
 
-	function handlePlayerHotkey(input: PlayerHotkeyPayload | KeyboardEvent): boolean {
+	function handlePlayerHotkey(input: ReviewPlayerHotkeyInput | KeyboardEvent): boolean {
 		if (!options.player.value || !options.hasSelectedVideo()) return false;
 		options.revealControls();
 
@@ -489,11 +457,11 @@ export function useReviewPlayerHotkeys(options: ReviewPlayerHotkeyOptions) {
 			event.stopPropagation();
 			return;
 		}
-		if (isExcludedHotkeyTarget(event.target)) return;
+		if (isExcludedPlayerHotkeyTarget(event.target)) return;
 		handlePlayerHotkey(event);
 	}
 
-	useIpcOn(IPC_EVENTS.YOUTUBE_PLAYER_HOTKEY_CALLBACK, (_event, input: PlayerHotkeyPayload) => {
+	useIpcOn(IPC_EVENTS.YOUTUBE_PLAYER_HOTKEY_CALLBACK, (_event, input: ReviewPlayerHotkeyInput) => {
 		if (!isPlayerHotkeyContext()) return;
 		handlePlayerHotkey(input);
 	});
@@ -512,6 +480,7 @@ export function useReviewPlayerHotkeys(options: ReviewPlayerHotkeyOptions) {
 	return {
 		clampSeekTarget,
 		clearQueuedSeek,
+		handlePlayerHotkey,
 		onPlayerDoubleClick,
 		onPlayerTimeUpdate,
 		queuedSeekDeltaLabel,

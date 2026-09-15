@@ -2,9 +2,14 @@ import log from 'electron-log/renderer';
 import { onBeforeUnmount, onMounted, watch, type ComputedRef, type Ref } from 'vue';
 
 import { IPC_EVENTS } from '@/events';
+import { buildPullNumberByFightID } from '@/reviewFights';
 import { useReviewsStore } from '@/renderer/store/ReviewsStore';
 import type { ReviewSeekSource } from '@/renderer/reviewSeekCoordinator';
-import type { ReviewTimelineWindowAction, ReviewTimelineWindowContext } from '@/timelineWindow';
+import type {
+	ReviewPlayerHotkeyInput,
+	ReviewTimelineWindowAction,
+	ReviewTimelineWindowContext,
+} from '@/timelineWindow';
 
 type ReviewTimelineWindowBridgeOptions = {
 	cursorPercent: ComputedRef<number>;
@@ -14,6 +19,7 @@ type ReviewTimelineWindowBridgeOptions = {
 	seekFight: (timestampSeconds: number, source: ReviewSeekSource) => void;
 	seekPull: (fightID: number, timestampSeconds: number, source: ReviewSeekSource) => void;
 	togglePlayback: () => void;
+	handlePlayerHotkey: (input: ReviewPlayerHotkeyInput) => boolean;
 };
 
 export function useReviewTimelineWindowBridge(options: ReviewTimelineWindowBridgeOptions) {
@@ -49,6 +55,7 @@ export function useReviewTimelineWindowBridge(options: ReviewTimelineWindowBridg
 		const reportDetails = reviewsStore.getReportDetails;
 		const fight = reviewsStore.getSelectedFight;
 		if (!reportCode || !fightID || !reportDetails || !fight) return null;
+		const pullNumber = buildPullNumberByFightID(reportDetails.fights).get(fight.id) || fight.id;
 
 		const context: ReviewTimelineWindowContext = {
 			reportCode,
@@ -64,7 +71,7 @@ export function useReviewTimelineWindowBridge(options: ReviewTimelineWindowBridg
 			cursorPercent: options.cursorPercent.value,
 			playing: options.isPlaying.value,
 			viewMode: reviewsStore.timelineViewMode,
-			title: `${fight.name} · Fight #${fight.id}`,
+			title: `${fight.name} · Pull #${pullNumber}`,
 		};
 
 		// Pinia wraps nested report data in Vue proxies. Build a plain snapshot before
@@ -125,6 +132,11 @@ export function useReviewTimelineWindowBridge(options: ReviewTimelineWindowBridg
 			case 'toggle-playback':
 				if (!options.isPlayerReady()) return false;
 				options.togglePlayback();
+				return true;
+			case 'player-hotkey':
+				// Keyboard input is transient. Consume it even if the player is not
+				// currently ready so it cannot unexpectedly replay after a later load.
+				options.handlePlayerHotkey(action.input);
 				return true;
 			case 'view-mode':
 				reviewsStore.timelineViewMode = action.viewMode;

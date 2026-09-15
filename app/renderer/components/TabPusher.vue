@@ -96,7 +96,7 @@ function isIndeterminate(upload: FileUploadState) {
 								{{ upload.displayName }}
 							</span>
 							<div
-								class="relative h-1.5 w-full overflow-hidden rounded-full bg-slate-700"
+								class="relative h-1.5 w-full overflow-hidden rounded-full bg-slate-200 dark:bg-slate-700"
 								role="progressbar"
 								:aria-valuenow="upload.percent ?? undefined"
 								aria-valuemin="0"
@@ -117,23 +117,23 @@ function isIndeterminate(upload: FileUploadState) {
 									:style="{ width: `${upload.percent}%` }"
 								/>
 							</div>
-							<span class="max-w-full truncate text-xs font-normal dark:text-zinc-400 text-zinc-300" :title="upload.relativePath">
+							<span class="max-w-full truncate text-xs font-normal text-slate-600 dark:text-zinc-400" :title="upload.relativePath">
 								{{ upload.relativePath }}
 							</span>
 						</div>
 						<div class="line-item-element flex w-52 flex-col items-end text-sm">
 							<span :class="{
-								'text-emerald-400': upload.status === 'completed',
-								'text-red-400': upload.status === 'error',
-								'text-sky-300': upload.status !== 'completed' && upload.status !== 'error',
+								'text-emerald-700 dark:text-emerald-400': upload.status === 'completed',
+								'text-red-700 dark:text-red-400': upload.status === 'error',
+								'text-sky-700 dark:text-sky-300': upload.status !== 'completed' && upload.status !== 'error',
 							}">
 								{{ $t(`pusher.upload.${upload.status}`) }}
 								<template v-if="upload.percent !== null"> · {{ upload.percent.toFixed(1) }}%</template>
 							</span>
-							<span v-if="upload.error" class="max-w-full truncate text-xs font-normal text-red-400" :title="upload.error">
+							<span v-if="upload.error" class="max-w-full truncate text-xs font-normal text-red-700 dark:text-red-400" :title="upload.error">
 								{{ upload.error }}
 							</span>
-							<span v-else-if="upload.total > 0" class="font-mono text-xs font-normal text-zinc-400 tabular-nums">
+							<span v-else-if="upload.total > 0" class="font-mono text-xs font-normal tabular-nums text-slate-600 dark:text-zinc-400">
 								<template v-if="upload.percent === null">{{ formatBytes(upload.total) }}</template>
 								<template v-else>{{ formatBytes(upload.transferred) }} / {{ formatBytes(upload.total) }}</template>
 							</span>
@@ -155,7 +155,7 @@ function isIndeterminate(upload: FileUploadState) {
 							<span class="scroll-list-item-main-text">
 								{{ fileData.displayName }}
 							</span>
-							<span class="scroll-list-item-secondary-text text-sm dark:text-zinc-400 text-zinc-300 font-normal">
+							<span class="scroll-list-item-secondary-text text-sm font-normal text-slate-600 dark:text-zinc-400">
 								{{ fileData.relativePath }}
 							</span>
 						</div>

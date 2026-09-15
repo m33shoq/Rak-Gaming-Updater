@@ -22,11 +22,13 @@ const props = defineProps<ButtonProps>()
 		min-h-8
 		font-semibold
 		text-white
-		disabled:bg-primary-faded-light
+		disabled:bg-slate-300
 		dark:disabled:bg-primary-faded-dark
-		disabled:text-gray-300
+		disabled:text-slate-600
+		dark:disabled:text-gray-300
 		disabled:pointer-events-none
-		hover:bg-indigo-400
+		hover:bg-blue-700
+		dark:hover:bg-indigo-400
 		text-center
 		justify-center
 		transition-all
@@ -41,6 +43,5 @@ const props = defineProps<ButtonProps>()
 <style scoped>
 
 </style>
-
 
 
