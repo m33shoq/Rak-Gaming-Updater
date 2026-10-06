@@ -123,6 +123,12 @@ export const useReviewsStore = defineStore('Reviews', () => {
 		selectedFightID,
 		selectedFight: getSelectedFight,
 	});
+	// Custom URL reports are the only reports pinned for the current session.
+	// Keep this origin distinct from whether the report also appears in the fetched list.
+	const selectedReportIsCustom = computed(() => {
+		const reportCode = selectedReportCode.value;
+		return Boolean(reportCode && isReportPinnedForSession(reportCode));
+	});
 	const {
 		consumePendingDirectVideoSeekSeconds,
 		ensureSelectedVideoIsAvailable: ensureSelectedVideoIsAvailableFromSelection,
@@ -136,6 +142,7 @@ export const useReviewsStore = defineStore('Reviews', () => {
 		youtubeVideoInfo,
 		refreshYoutubeVideoInfo,
 		selectedReportCode,
+		selectedReportIsCustom,
 		selectedReport: getSelectedReport,
 		reportDetails,
 		selectedFightID,

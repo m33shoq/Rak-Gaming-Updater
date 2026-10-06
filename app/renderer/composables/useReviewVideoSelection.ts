@@ -2,7 +2,11 @@ import log from 'electron-log/renderer';
 import { computed, nextTick, ref, watch, type ComputedRef, type Ref } from 'vue';
 
 import type { ReviewReportListItem } from '@/reviewReports';
-import { reconcileReviewVideoSelection, reviewVideoOverlapsWindow } from '@/reviewVideoSelection';
+import {
+	reconcileReviewVideoSelection,
+	reviewVideoOverlapsWindow,
+	shouldConstrainReviewVideoSelection,
+} from '@/reviewVideoSelection';
 
 type YoutubeVideoInfo = {
 	byId?: Record<string, YouTubeVideo>;
@@ -12,6 +16,7 @@ type ReviewVideoSelectionOptions = {
 	youtubeVideoInfo: Ref<YoutubeVideoInfo>;
 	refreshYoutubeVideoInfo: () => Promise<unknown>;
 	selectedReportCode: Ref<string | null>;
+	selectedReportIsCustom: ComputedRef<boolean>;
 	selectedReport: ComputedRef<ReviewReportListItem | null>;
 	reportDetails: Ref<reportDetails | null>;
 	selectedFightID: Ref<number | null>;
@@ -23,6 +28,10 @@ export function useReviewVideoSelection(options: ReviewVideoSelectionOptions) {
 	const pendingDirectVideoSeekSeconds = ref<number | null>(null);
 
 	const getSelectedVideoId = computed(() => selectedVideoInfo.value?.id || null);
+	const selectionIsTimeConstrained = computed(() => shouldConstrainReviewVideoSelection(
+		options.selectedReportCode.value,
+		options.selectedReportIsCustom.value,
+	));
 
 	function setSelectedVideoInfo(video: YouTubeVideo | null): void {
 		selectedVideoInfo.value = video;
@@ -52,7 +61,7 @@ export function useReviewVideoSelection(options: ReviewVideoSelectionOptions) {
 		const videos = Object.values(options.youtubeVideoInfo.value.byId || {});
 
 		return videos.filter(video => (
-			!options.selectedReportCode.value
+			!selectionIsTimeConstrained.value
 			|| !Number.isFinite(reportStart)
 			|| !Number.isFinite(reportEnd)
 			|| reviewVideoOverlapsWindow(video, reportStart!, reportEnd!, now)
@@ -60,6 +69,7 @@ export function useReviewVideoSelection(options: ReviewVideoSelectionOptions) {
 	});
 
 	const videoList = computed<YouTubeVideo[]>(() => {
+		if (!selectionIsTimeConstrained.value) return reportVideoList.value;
 		const fightWindow = getSelectedFightAbsoluteWindow();
 		if (!fightWindow) return reportVideoList.value;
 
@@ -73,7 +83,7 @@ export function useReviewVideoSelection(options: ReviewVideoSelectionOptions) {
 		const nextSelection = reconcileReviewVideoSelection(
 			selectedVideoInfo.value,
 			videoList.value,
-			Boolean(reportCode),
+			shouldConstrainReviewVideoSelection(reportCode, options.selectedReportIsCustom.value),
 		);
 		if (nextSelection !== selectedVideoInfo.value) setSelectedVideoInfo(nextSelection);
 	}
@@ -83,6 +93,9 @@ export function useReviewVideoSelection(options: ReviewVideoSelectionOptions) {
 	}, { flush: 'sync' });
 
 	function videoMatchesCurrentSelection(video: YouTubeVideo): boolean {
+		if (!selectionIsTimeConstrained.value) {
+			return videoList.value.some(candidate => candidate.id === video.id);
+		}
 		const fightWindow = getSelectedFightAbsoluteWindow();
 		if (fightWindow) {
 			return reviewVideoOverlapsWindow(video, fightWindow.start, fightWindow.end);

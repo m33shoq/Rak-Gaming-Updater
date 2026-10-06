@@ -32,3 +32,9 @@ test('constrained selection follows the available report or fight videos', () =>
 	assert.equal(selection.reconcileReviewVideoSelection(oldVideo, [], true), null);
 	assert.equal(selection.reconcileReviewVideoSelection(oldVideo, [], false), oldVideo);
 });
+
+test('only ordinary selected reports constrain videos by report or fight time', () => {
+	assert.equal(selection.shouldConstrainReviewVideoSelection('ordinary', false), true);
+	assert.equal(selection.shouldConstrainReviewVideoSelection('custom', true), false);
+	assert.equal(selection.shouldConstrainReviewVideoSelection(null, false), false);
+});

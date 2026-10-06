@@ -4,6 +4,13 @@ export interface ReviewVideoTimeInfo {
 	duration: number;
 }
 
+export function shouldConstrainReviewVideoSelection(
+	reportCode: string | null,
+	selectedReportIsCustom: boolean,
+): boolean {
+	return Boolean(reportCode) && !selectedReportIsCustom;
+}
+
 export function reconcileReviewVideoSelection<T extends { id: string }>(
 	selectedVideo: T | null,
 	availableVideos: readonly T[],
