@@ -31,8 +31,12 @@ from urllib.request import Request, urlopen
 from PIL import Image
 
 
-SOURCE_BUILD = "12.1.0.69587"
-DEFAULT_UI_MAP_IDS = (2606, 2607, 2608, 2609, 2610, 2632)
+SOURCE_BUILD = "12.1.5.70391"
+DEFAULT_UI_MAP_IDS = (
+    2606, 2607, 2608, 2609, 2610,  # The Venomous Abyss
+    2632,  # The Tidebound Grotto
+    2669, 2670,  # The Unbinding of Kith'ix
+)
 DEFAULT_LEVELS = (1, 2, 4, 8)
 OUTPUT_TILE_PIXELS = 1024
 WEBP_QUALITY = 90

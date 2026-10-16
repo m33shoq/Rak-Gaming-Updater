@@ -7,6 +7,7 @@ import vashnikArt from '@/assets/review-encounters/3455.webp';
 import nekzaliArt from '@/assets/review-encounters/3470.webp';
 import ulatekArt from '@/assets/review-encounters/3492.webp';
 import lostExplorersArt from '@/assets/review-encounters/3497.webp';
+import kithixArt from '@/assets/review-encounters/3513.webp';
 
 // Maintenance workflow and source provenance: docs/reviews-maintenance.md
 const REVIEW_ENCOUNTER_ART: Readonly<Record<number, string>> = {
@@ -19,6 +20,7 @@ const REVIEW_ENCOUNTER_ART: Readonly<Record<number, string>> = {
 	3470: nekzaliArt,
 	3492: ulatekArt,
 	3497: lostExplorersArt,
+	3513: kithixArt,
 };
 
 export function getReviewEncounterArt(encounterID: number | null | undefined): string | undefined {

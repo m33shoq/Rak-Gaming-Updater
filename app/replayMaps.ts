@@ -177,7 +177,7 @@ interface ReplayMapManifest {
  * tile dimensions casually; fewer files also means much larger unavoidable
  * per-tile GPU allocations.
  *
- * Current data/assets snapshot: Retail 12.1.0.69587.
+ * Current data/assets snapshot: Retail 12.1.5.70391.
  */
 
 const manifest = replayMapManifest as ReplayMapManifest;

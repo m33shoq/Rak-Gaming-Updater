@@ -1,6 +1,6 @@
 {
 	"version": 3,
-	"sourceBuild": "12.1.0.69587",
+	"sourceBuild": "12.1.5.70391",
 	"tilePixels": 1024,
 	"maps": [
 		{
@@ -229,6 +229,92 @@
 				"top": 4610.419921875,
 				"right": 12325.0,
 				"bottom": 4939.580078125
+			},
+			"levels": [
+				{
+					"scale": 1,
+					"pixelWidth": 1002,
+					"pixelHeight": 668,
+					"columns": 1,
+					"rows": 1
+				},
+				{
+					"scale": 2,
+					"pixelWidth": 2004,
+					"pixelHeight": 1336,
+					"columns": 2,
+					"rows": 2
+				},
+				{
+					"scale": 4,
+					"pixelWidth": 4008,
+					"pixelHeight": 2672,
+					"columns": 4,
+					"rows": 3
+				},
+				{
+					"scale": 8,
+					"pixelWidth": 8016,
+					"pixelHeight": 5344,
+					"columns": 8,
+					"rows": 6
+				}
+			]
+		},
+		{
+			"uiMapID": 2669,
+			"worldMapID": 3095,
+			"name": "The Unbinding of Kith'ix",
+			"artID": 2204,
+			"coordinateTransform": "flipY",
+			"bounds": {
+				"left": -375.0,
+				"top": 1510.4169921875,
+				"right": 393.75,
+				"bottom": 2022.9169921875
+			},
+			"levels": [
+				{
+					"scale": 1,
+					"pixelWidth": 1002,
+					"pixelHeight": 668,
+					"columns": 1,
+					"rows": 1
+				},
+				{
+					"scale": 2,
+					"pixelWidth": 2004,
+					"pixelHeight": 1336,
+					"columns": 2,
+					"rows": 2
+				},
+				{
+					"scale": 4,
+					"pixelWidth": 4008,
+					"pixelHeight": 2672,
+					"columns": 4,
+					"rows": 3
+				},
+				{
+					"scale": 8,
+					"pixelWidth": 8016,
+					"pixelHeight": 5344,
+					"columns": 8,
+					"rows": 6
+				}
+			]
+		},
+		{
+			"uiMapID": 2670,
+			"worldMapID": 3095,
+			"name": "The Unbinding of Kith'ix",
+			"artID": 2205,
+			"coordinateTransform": "flipY",
+			"bounds": {
+				"left": -260.0,
+				"top": 1279.1666259766,
+				"right": 440.0,
+				"bottom": 1745.8333740234
 			},
 			"levels": [
 				{
@@ -10024,6 +10110,19 @@
 				"top": -2462.5,
 				"right": 3031.25,
 				"bottom": -810.416015625
+			}
+		},
+		{
+			"uiMapID": 2605,
+			"worldMapID": 3071,
+			"areaID": 16948,
+			"name": "Silvermoon City",
+			"coordinateTransform": "flipY",
+			"bounds": {
+				"left": 3335.419921875,
+				"top": 7902.080078125,
+				"right": 6141.669921875,
+				"bottom": 9772.919921875
 			}
 		},
 		{

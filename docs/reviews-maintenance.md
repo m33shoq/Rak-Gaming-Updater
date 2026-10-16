@@ -61,6 +61,51 @@ generic result is incomplete or misleading.
 | Encounter art | Text-only header fallback. | Add one local Journal portrait for every encounter. |
 | Encounter alerts and special replay mechanics | None. | Add only when a mechanic has a useful, evidence-backed representation. |
 
+## 12.1.5 data snapshot (2026-10-15)
+
+The pinned Retail build is **12.1.5.70391**, verified against the `wow` product in
+[Wago's build metadata](https://wago.tools/api/builds). This refresh covers the
+[12.1.5 content update](https://worldofwarcraft.blizzard.com/en-us/news/24304162)
+in both repositories.
+
+- Rebuilt all eight bundled raid floors from the same build. The six existing
+  Venomous Abyss/Tidebound Grotto floors retain identical art and bounds.
+- Added both Unbinding of Kith'ix floors, UiMap **2669** and **2670**, sharing
+  terrain Map **3095**. Their art IDs are **2204** and **2205**. Bounds and `flipY`
+  come from that build's `UiMapAssignment`; no encounter offsets are applied.
+- Regenerated the full fallback index, including the new unambiguous Silvermoon
+  City assignment. Ambiguous/partial assignments remain excluded.
+- Added Kith'ix's official 128 x 64 transparent Journal portrait for WCL encounter
+  **3513** (Journal encounter **2896**).
+- Audited the server cooldown catalog against `SpellName` from the pinned build and
+  [Lorrgs commit d306d455](https://github.com/gitarrg/lorrgs/tree/d306d4551e1d0106fc89a1d544e4e5f2df218a10/lorgs/data).
+  Explosive Shot (**212431**), Secret Technique (**280719**), and Goremaw's Bite
+  (**426591**) are selectable DPS cooldowns, disabled by default like their Lorrgs
+  `show=false` definitions. Lightfused Mana Potion (**1236648**) uses the existing
+  name-based consumable normalization in Utility. The cooldown cache version is
+  now **24**.
+
+The catalog retains older spells for historical reports. Lorrgs display-only
+`query=false` entries and its untracked resurrection definitions need no new
+cooldown entry; resurrects already use the base fight event stream. The Hunt keeps
+its verified cast IDs **370965** and **1246167**, rather than the damage ID **370966**.
+The 12.1.5 tuning/talent changes do not require cooldown-duration updates because
+Reviews displays observed events rather than predicting cooldowns.
+
+A [public Heroic Kith'ix kill](https://www.warcraftlogs.com/reports/H3ZkGC1qhfTxrDa4?fight=20)
+confirms encounter **3513**, difficulty **4**, floor **2669**, and two WCL-provided
+phases, "Darkness' Domain" and "Last Light". WCL currently groups this encounter
+under zone **53**, The Venomous Abyss, so a separate hardcoded zone is unnecessary.
+All 1,834 captured position samples from the opening and final phase lie within
+floor 2669's generated bounds; the complete final-phase cast window was checked.
+The same report contains 20 Explosive Shot casts under ID **212431**.
+The generic boss timeline, phases, and replay remain responsible for the new
+encounter. No evidence-backed special alert or replay overlay was required by this
+data refresh, and the replay protocol remains unchanged.
+
+Full interactive acceptance in attached/detached views still follows the manual
+matrix below; source-asset and report-data checks do not replace that UI pass.
+
 ## New raid master checklist
 
 ### 1. Collect representative logs
@@ -549,6 +594,7 @@ Then inspect the fight dropdown with real data and verify:
 | 3470 | Nek'zali the Soulcoiler | `https://wow.zamimg.com/images/wow/journal/ui-ej-boss-priestess.png` |
 | 3492 | Ula'tek | `https://wow.zamimg.com/images/wow/journal/ui-ej-boss-ulatek.png` |
 | 3497 | The Lost Explorers | `https://wow.zamimg.com/images/wow/journal/ui-ej-boss-tortollans.png` |
+| 3513 | Kith'ix | [Retail 12.1.5.70391 CASC FileDataID 8214195](https://wago.tools/api/casc/8214195?version=12.1.5.70391), resolved from `JournalEncounterCreature` row 6213 / Journal encounter 2896; converted from BLP to lossless WebP with Pillow, preserving 128 x 64 RGBA. |
 
 ## Adding other curated Reviews data
 
