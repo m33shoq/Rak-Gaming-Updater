@@ -483,7 +483,7 @@ export function useReviewFightData(options: ReviewFightDataOptions) {
 	): Promise<FightReplayData | null> {
 		const cacheKey = getFightCooldownCacheKey(reportCode, fightID);
 		const cached = savedFightReplays.value[cacheKey];
-		if (!force && cached && isFresh(fightReplayCachedAt.value, cacheKey)) return cached;
+		if (!force && cached?.version === REVIEW_REPLAY_VERSION && isFresh(fightReplayCachedAt.value, cacheKey)) return cached;
 
 		const pending = fightReplayPromises.get(cacheKey);
 		if (pending) return pending;

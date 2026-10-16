@@ -1,4 +1,4 @@
-export const REVIEW_REPLAY_VERSION = 21 as const;
+export const REVIEW_REPLAY_VERSION = 22 as const;
 
 export interface ReplayPosition {
 	timestamp: number;

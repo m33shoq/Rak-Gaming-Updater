@@ -5,6 +5,10 @@ import ReviewReplayMapBackground from '@/renderer/components/ReviewReplayMapBack
 import { useReviewTimelinePlayback } from '@/renderer/composables/useReviewTimelinePlayback';
 import { useReplayViewport } from '@/renderer/composables/useReplayViewport';
 import {
+	getReplayExtensionActors,
+	getReplayExtensionBoundsPoints,
+	getReplayExtensionControls,
+	getReplayExtensionLegend,
 	getReplayExtensionRenderer,
 	sampleReplayExtensionActorPosition,
 } from '@/renderer/replay/replayExtensions';
@@ -44,8 +48,12 @@ const scrubbing = ref(false);
 const selectedActorKey = ref<string | null>(null);
 const showNames = ref(true);
 const showMap = ref(true);
+const hiddenExtensionLayers = ref<Set<string>>(new Set());
 const visibleKinds = ref<Set<ReplayActorKind>>(new Set(['player', 'boss', 'add', 'mechanic']));
 const replayCanvas = ref<SVGSVGElement | null>(null);
+const replayActors = computed(() => replay.value ? getReplayExtensionActors(replay.value) : []);
+const extensionControls = computed(() => getReplayExtensionControls(replay.value?.encounterID || 0));
+const extensionLegend = computed(() => getReplayExtensionLegend(replay.value?.encounterID || 0));
 
 const actorKindOptions = computed<ReadonlyArray<{ kind: ReplayActorKind; label: string }>>(() => [
 	{ kind: 'player', label: 'Players' },
@@ -73,8 +81,8 @@ watch(() => playback.cursorPercent.value, () => {
 	if (!scrubbing.value) previewTimestamp.value = null;
 });
 
-async function loadReplay(): Promise<void> {
-	await reviewsStore.ensureFightReplay(props.reportCode, props.fightID);
+async function loadReplay(force = false): Promise<void> {
+	await reviewsStore.ensureFightReplay(props.reportCode, props.fightID, force);
 }
 
 onMounted(() => {
@@ -120,7 +128,7 @@ function maxPositionAge(actor: ReplayActor): number {
 	return Number.POSITIVE_INFINITY;
 }
 
-const rawSampledActors = computed(() => (replay.value?.actors || []).flatMap(actor => {
+const rawSampledActors = computed(() => replayActors.value.flatMap(actor => {
 	if (!visibleKinds.value.has(actor.kind)) return [];
 	const active = isReplayActorActive(actor, timestamp.value);
 	const dead = isReplayPlayerDead(actor, timestamp.value, replay.value?.duration || 0);
@@ -163,7 +171,7 @@ const primaryMapID = computed(() => {
 	}
 
 	if (counts.size === 0) {
-		for (const actor of replay.value?.actors || []) {
+		for (const actor of replayActors.value) {
 			if (!visibleKinds.value.has(actor.kind)) continue;
 			for (const position of actor.positions) {
 				counts.set(position.mapID, (counts.get(position.mapID) || 0) + 1);
@@ -196,7 +204,7 @@ const extensionRenderer = computed(() => (
 	replay.value ? getReplayExtensionRenderer(replay.value.encounterID) : undefined
 ));
 
-const allPoints = computed(() => (replay.value?.actors || []).flatMap(actor => (
+const allPoints = computed(() => [...replayActors.value.flatMap(actor => (
 	visibleKinds.value.has(actor.kind)
 		? actor.positions
 			.filter(position => position.mapID === primaryMapID.value)
@@ -207,7 +215,12 @@ const allPoints = computed(() => (replay.value?.actors || []).flatMap(actor => (
 				return { x: point.x, y: point.y };
 			})
 		: []
-)));
+)), ...(replay.value ? getReplayExtensionBoundsPoints(replay.value) : [])
+	.filter(position => position.mapID === primaryMapID.value || (
+		mapDefinition.value && (position.mapID === mapDefinition.value.uiMapID
+			|| position.mapID === mapDefinition.value.worldMapID)
+	))
+	.map(position => mapDefinition.value ? projectReplayMapPosition(mapDefinition.value, position) : position)]);
 
 const focusPoints = computed(() => {
 	const selected = visibleActors.value.find(entry => entry.actor.key === selectedActorKey.value);
@@ -265,11 +278,18 @@ function actorOptionLabel(actor: ReplayActor): string {
 }
 
 const actorGroups = computed(() => ({
-	players: (replay.value?.actors.filter(actor => actor.kind === 'player') || []).sort(compareActors),
-	bosses: (replay.value?.actors.filter(actor => actor.kind === 'boss') || []).sort(compareActors),
-	adds: (replay.value?.actors.filter(actor => actor.kind === 'add') || []).sort(compareActors),
-	mechanics: (replay.value?.actors.filter(actor => actor.kind === 'mechanic') || []).sort(compareActors),
+	players: replayActors.value.filter(actor => actor.kind === 'player').sort(compareActors),
+	bosses: replayActors.value.filter(actor => actor.kind === 'boss').sort(compareActors),
+	adds: replayActors.value.filter(actor => actor.kind === 'add').sort(compareActors),
+	mechanics: replayActors.value.filter(actor => actor.kind === 'mechanic').sort(compareActors),
 }));
+
+function toggleExtensionLayer(id: string): void {
+	const next = new Set(hiddenExtensionLayers.value);
+	if (next.has(id)) next.delete(id);
+	else next.add(id);
+	hiddenExtensionLayers.value = next;
+}
 
 function toggleKind(kind: ReplayActorKind): void {
 	const next = new Set(visibleKinds.value);
@@ -316,7 +336,7 @@ function formatTime(timestampMs: number): string {
 		<div v-if="loading" class="replay-state" role="status">Loading fight replay...</div>
 		<div v-else-if="error" class="replay-state replay-error" role="alert">
 			<span>{{ error }}</span>
-			<button type="button" @click="loadReplay">Retry</button>
+			<button type="button" @click="loadReplay()">Retry</button>
 		</div>
 		<div v-else-if="replay && replay.actors.length === 0" class="replay-state">
 			No observed positions are available for this pull.
@@ -324,7 +344,7 @@ function formatTime(timestampMs: number): string {
 		<template v-else-if="replay">
 			<div class="replay-stage">
 				<div class="stage-heading">
-					<span>Observed positions</span>
+					<span>{{ extensionRenderer ? 'Positions & encounter mechanics' : 'Observed positions' }}</span>
 					<span>{{ visibleActors.length }} actors / {{ gridSpacing }} yd grid</span>
 				</div>
 
@@ -372,6 +392,9 @@ function formatTime(timestampMs: number): string {
 						:timestamp="timestamp"
 						:unit="unit"
 						:actor-positions="visibleActorPositions"
+						:map-id="primaryMapID"
+						:map-definition="mapDefinition"
+						:hidden-layers="hiddenExtensionLayers"
 					/>
 					<ReviewReplayActor
 						v-for="entry in visibleActors"
@@ -397,7 +420,11 @@ function formatTime(timestampMs: number): string {
 					<span><i class="add"></i> Add</span>
 					<span v-if="actorGroups.mechanics.length"><i class="mechanic"></i> Mechanic</span>
 					<span class="legend-note">Observed positions are briefly interpolated. Cast bars use replay time.</span>
+					<span v-if="!replay.enrichmentComplete" class="legend-note">
+						Some encounter position data is unavailable. Reload replay to retry.
+					</span>
 				</div>
+				<component :is="extensionLegend" v-if="extensionLegend" :replay="replay" />
 			</div>
 
 			<div class="replay-control-deck">
@@ -417,6 +444,15 @@ function formatTime(timestampMs: number): string {
 					<span class="replay-duration">{{ formatTime(replay.duration) }}</span>
 				</div>
 
+				<div v-if="extensionControls.length" class="replay-encounter-controls">
+					<span class="control-label">Encounter</span>
+					<div class="control-group replay-visibility" aria-label="Encounter overlays">
+						<button v-for="control in extensionControls" :key="control.id" type="button"
+							:aria-pressed="!hiddenExtensionLayers.has(control.id)" @click="toggleExtensionLayer(control.id)">
+							{{ control.label }}
+						</button>
+					</div>
+				</div>
 				<div class="replay-command-row">
 					<div class="replay-command-side replay-command-side-left">
 						<label class="control-group replay-focus">
@@ -504,7 +540,7 @@ function formatTime(timestampMs: number): string {
 							<span>{{ Math.round(viewport.zoom.value * 100) }}%</span>
 							<button type="button" aria-label="Zoom in" @click="viewport.zoomBy(1.25)">+</button>
 						</div>
-						<button type="button" class="reload" title="Reload replay" aria-label="Reload replay" @click="loadReplay">
+						<button type="button" class="reload" title="Reload replay" aria-label="Reload replay" @click="loadReplay(true)">
 							&#8635;
 						</button>
 					</div>
@@ -641,6 +677,15 @@ function formatTime(timestampMs: number): string {
 	align-items: center;
 	gap: 10px;
 	padding: 4px 10px;
+}
+
+.replay-encounter-controls {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 8px;
+	border-bottom: 1px solid var(--replay-border-subtle);
+	padding: 5px 10px;
 }
 
 .replay-command-side,
@@ -830,8 +875,12 @@ function formatTime(timestampMs: number): string {
 }
 
 .stage-legend {
+	height: auto;
+	min-height: 24px;
+	flex-wrap: wrap;
 	justify-content: flex-start;
-	gap: 14px;
+	gap: 4px 14px;
+	padding-block: 5px;
 	border-top: 1px solid rgb(113 113 122 / 22%);
 	border-bottom: 0;
 	letter-spacing: 0;

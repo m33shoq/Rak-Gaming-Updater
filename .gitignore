@@ -5,6 +5,7 @@ releases/
 changelog.txt
 scripts/*
 !scripts/replay.test.mjs
+!scripts/vashnikReplay.test.mjs
 !scripts/reviewFights.test.mjs
 !scripts/reviewReports.test.mjs
 !scripts/run-wcl-query.mjs

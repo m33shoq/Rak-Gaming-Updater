@@ -354,6 +354,98 @@ The generic replay contract and server maintainer notes live in
 registered server-side in `src/data/reviewReplayExtensions.ts` and renderer-side in
 `app/renderer/replay/replayExtensions.ts`.
 
+#### Vashnik (3455)
+
+The Vashnik extension provides three independently switchable layers: the
+recommended Mythic line, Plague Froth and its wave fronts, and Malignant Totems.
+The reference is five positions, 10 yd apart, starting at WCL (290, 432.5), at
+38 degrees below the positive WCL x axis. Positions are projected through the
+active floor transform, including UiMap 2608's Y reflection. Numbers identify
+reference positions; they do not claim to recover historical world-marker icons.
+
+Server `reviewReplayExtensions/vashnik.ts` collects aura 1281913, summon 1306820,
+and totem NPC 269430 lifetimes. The nominal Froth timer is six seconds. The timer
+uses the expected expiry rather than counting down to a future player death or
+the end of a truncated pull. A recorded normal removal freezes the release
+origin; stale/missing positions do not create a wave at a guessed player location.
+
+One optional `All` stream collects player-owned coordinates from casts, damage,
+healing, resource changes and drains. A separate disjoint `All` stream requests
+coordinates owned by totem NPC 269430. Both query source/target ownership explicitly;
+`resourceActor` remains authoritative locally. A player hit by a totem does not
+supply the totem's coordinate. Totem observations are resolved directly from either
+endpoint and instance, even before the NPC's first cast.
+
+Every replay stream supplies explicit fight start/end bounds on every page. On
+the measured endpoint, omitting endTime returned an empty second page after about
+10,000 events and silently missed later observations. Follow advancing cursors to
+terminal null, including empty advancing pages; repeated/backward cursors are
+incomplete results. Player enrichment has an independent 30-page cap, measured
+against full fights needing 10–11 pages; other optional streams retain five pages.
+Any optional failure marks enrichment incomplete, keeps the base replay, skips
+caching, and permits retry. Do not reintroduce the six overlapping aura queries:
+the exact target-Healing probe returned identical data with real, absent and
+impossible aura arguments. Aura arguments were not a validated time scope.
+
+Totem reconstruction combines summon/death times, four fixed-axis wave rays,
+observed NPC coordinates where available, and a compact aggregate spawn prior
+from the public-report research. The prior lives in `vashnikSpawnPrior.ts`; it
+contains weights, not reports, player identities, or credentials. The assumptions
+are a 1 yd candidate lattice, 3 yd effective wave half-width, 3 yd initial gap,
+5 yd starting offset, 12 yd/s travel, and a 15 s wave display window. These are
+approximate geometry, not collision data. One deterministic plausible location is
+selected; the display must never imply that location or its attributed wave was
+uniquely recovered from WCL. Overlay metadata separates observed, timing-constrained,
+and prior-only positions, includes real coordinate timestamps, and records the
+wave model version. Wave origins identify the nearby observation time and its
+signed offset from expiry; they are approximate release positions. A modeled wave
+assignment is explicitly inferred even when a totem's coordinate/death is logged.
+
+Dashed diamonds are inferred positions, solid diamonds have a logged coordinate,
+and faded `?` diamonds have only a spatial-prior fallback. Orange/purple distinguish
+fire/shadow sources. Totems disappear on logged death, not on a simulated overlap;
+without a death event they remain through their known lifetime/fight end. Seeking
+backward restores them without rerolling the inferred location. Custom totem glyphs
+replace generic duplicate NPC glyphs in the renderer. Their positions and the
+reference line participate in Whole pull framing.
+
+`VashnikReplayLegend.vue` supplies the encounter legend through the renderer
+registry. It opens expanded and can be collapsed to recover map space. Visual
+examples explain reference spacing, Froth countdown colors, direction arrows,
+traveling wave fronts, source colors, and observed/timing-inferred/prior-only
+totem positions. The footer explains logged-death removal and model estimates.
+Entries wrap into fewer columns in narrow panels; the legend content scrolls
+within a bounded height. The reference-line entry appears only when that replay
+contains the five-point reference.
+
+Replay version 22 invalidates old replay caches. Server and app must be released
+together. The renderer also checks the cached version before reusing a fresh entry,
+and Reload replay forces a new request.
+
+Focused checks: server `vashnik.test.ts`, replay loader/processor tests, client
+`node --test scripts/replay.test.mjs scripts/vashnikReplay.test.mjs`, both type checks,
+and builds. Corrected full-pull checks on a 341 s private kill and a 462 s public
+wipe used 14 and 15 WCL pages respectively, retaining 75,320 and 85,694 player
+position records (including distinct same-timestamp points). All 95 observed normal
+releases obtained anchors; the oldest anchors were 239 and 123 ms. Processing took
+approximately 0.43–0.61 s locally; serialized replay sizes were 8.42 and 9.62 MB
+(gzip equivalents 0.90 and 1.03 MB). These supersede the earlier unbounded-query
+13/14-page measurements and are payload sizes, not production transfer timings.
+Browser checks cover all layer controls, map alignment, debuff timers, wave motion,
+logged-death removal, rewind, solid/inferred/approximate glyphs, and forced reload.
+
+The precision comparison used the exact v21 research window before editing v22:
+v22 already retained all 12,986 available player samples, with 0.585 yd p95 error
+against withheld WCL observations. Consolidation preserves those samples using
+four player/mechanic pages plus one new NPC-only page, versus nine old requests.
+This is not independently measured game accuracy.
+Auditing all 1,490 placement-study origins changed 19 points (one by 2.89 yd), and
+the broader NPC audit found no extra totem coordinates beyond the original 29.
+Refitting all three placement models changed the line's predicted gain by less
+than 0.013 totems. The 38-degree, 10-yard line remains a model recommendation.
+Workspace reproduction and limitations: `analysis/vashnik/precision-review.md`;
+audited priors: `precision-refit/round2-models`; raw reports stay outside Git.
+
 When a mechanic genuinely benefits from replay visualization:
 
 - prove which WCL events define spawn, assignment, movement, success, failure, death,
@@ -370,10 +462,11 @@ When a mechanic genuinely benefits from replay visualization:
 - measure WCL page count, payload size, server processing time, client transfer time,
   and render responsiveness on the longest pull.
 
-Do not fetch all damage/healing events as a default precision strategy. Optional
-streams currently have a small independent page budget, and base replay has its own
-budget. Broaden either only after measuring representative pulls and confirming quota
-impact.
+Do not fetch unfiltered damage/healing as a default precision strategy. Consolidate
+position feeds using verified resource ownership, preserve required mechanic and
+lifecycle events, and measure full-fight pages before changing budgets. Vashnik's
+measured optional player feed is capped at 30 pages; other optional streams default
+to five, and base replay has a separate shared budget.
 
 If the serialized replay contract changes, update matching server/client types and
 increment `REVIEW_REPLAY_VERSION` in both
@@ -410,6 +503,7 @@ node scripts/reviewBossCastActions.test.mjs
 node scripts/reviewPhaseTransitions.test.mjs
 node scripts/reviewReports.test.mjs
 node scripts/replay.test.mjs
+node scripts/vashnikReplay.test.mjs
 node scripts/reviewSynchronization.test.mjs
 node scripts/reviewVideoSelection.test.mjs
 node scripts/timelineWindow.test.mjs
