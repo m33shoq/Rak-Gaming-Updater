@@ -6,8 +6,8 @@ import { vashnikReferencePoints } from '@/renderer/replay/vashnikReplay';
 const props = defineProps<{ replay: FightReplayData }>();
 const entries = computed(() => [
 	{
-		key: 'line', label: 'Recommended line',
-		description: 'Numbered circles mark five suggested positions, 10 yd apart.',
+		key: 'line', label: 'Experimental reference line',
+		description: 'Numbered circles mark five trial positions, 10 yd apart, for comparing player alignment.',
 	},
 	{
 		key: 'froth', label: 'Plague Froth countdown',
@@ -19,7 +19,7 @@ const entries = computed(() => [
 	},
 	{
 		key: 'wave', label: 'Traveling wave fronts',
-		description: 'Green bars show modeled waves moving outward after the debuff expires.',
+		description: 'Green bars show modeled waves after Froth releases, including releases when a carrier dies early.',
 	},
 	{
 		key: 'sources', label: 'Totem source colors',
@@ -30,8 +30,8 @@ const entries = computed(() => [
 		description: 'A solid diamond marks a coordinate recorded for that totem in WCL.',
 	},
 	{
-		key: 'inferred', label: 'Position inferred from timing',
-		description: 'A dashed diamond shows one plausible location consistent with wave timing.',
+		key: 'inferred', label: 'Inferred totem position',
+		description: 'Timing or survival narrows the possibilities. A dashed diamond shows one sampled location.',
 	},
 	{
 		key: 'prior', label: 'Position from spawn distribution',
@@ -87,7 +87,7 @@ const entries = computed(() => [
 			</ul>
 			<p class="legend-note">
 				Totems disappear at their logged death time. Without a recorded death, they remain through their known lifetime.
-				The recommended line, wave paths and inferred positions are model estimates.
+				The reference line is experimental. Wave paths and inferred positions are model estimates.
 			</p>
 		</div>
 	</details>

@@ -45,7 +45,7 @@ const replayExtensions: Readonly<Partial<Record<number, ReplayExtensionDefinitio
 	3455: {
 		renderer: VashnikReplayOverlay,
 		controls: [
-			{ id: 'vashnik-line', label: 'Recommended line' },
+			{ id: 'vashnik-line', label: 'Experimental reference line' },
 			{ id: 'vashnik-froth', label: 'Froth & waves' },
 			{ id: 'vashnik-totems', label: 'Totems' },
 		],

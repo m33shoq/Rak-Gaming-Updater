@@ -357,7 +357,7 @@ registered server-side in `src/data/reviewReplayExtensions.ts` and renderer-side
 #### Vashnik (3455)
 
 The Vashnik extension provides three independently switchable layers: the
-recommended Mythic line, Plague Froth and its wave fronts, and Malignant Totems.
+experimental Mythic reference line, Plague Froth and its wave fronts, and Malignant Totems.
 The reference is five positions, 10 yd apart, starting at WCL (290, 432.5), at
 38 degrees below the positive WCL x axis. Positions are projected through the
 active floor transform, including UiMap 2608's Y reflection. Numbers identify
@@ -366,8 +366,15 @@ reference positions; they do not claim to recover historical world-marker icons.
 Server `reviewReplayExtensions/vashnik.ts` collects aura 1281913, summon 1306820,
 and totem NPC 269430 lifetimes. The nominal Froth timer is six seconds. The timer
 uses the expected expiry rather than counting down to a future player death or
-the end of a truncated pull. A recorded normal removal freezes the release
-origin; stale/missing positions do not create a wave at a guessed player location.
+the end of a truncated pull. A duration-compatible removal or early removal
+within 250 ms of the same carrier's death freezes the release origin. V4/replay
+25 pairs death/removal in either order and deduplicates per aura. Death alone,
+unrelated early removal, and late cleanup after a previous death do not create
+a release. Origin selection stays on the Vashnik floor; stale/missing positions
+remain explicit and cannot create geometry at a guessed player location.
+Release metadata includes aura lifetime, removal/death association and origin
+provenance. Application inputs remain WCL-only; local-log scanning/importing was
+research-only and is not an application dependency.
 
 One optional `All` stream collects player-owned coordinates from casts, damage,
 healing, resource changes and drains. A separate disjoint `All` stream requests
@@ -389,17 +396,50 @@ impossible aura arguments. Aura arguments were not a validated time scope.
 
 Totem reconstruction combines summon/death times, four fixed-axis wave rays,
 observed NPC coordinates where available, and a compact aggregate spawn prior
-from the public-report research. The prior lives in `vashnikSpawnPrior.ts`; it
-contains weights, not reports, player identities, or credentials. The assumptions
+from the public-report research. The parent lives in `vashnikSpawnPrior.ts` and
+the summon-order fields in `vashnikOrderPrior.ts`; both contain aggregate weights,
+not reports, player identities, or credentials. The assumptions
 are a 1 yd candidate lattice, 3 yd effective wave half-width, 3 yd initial gap,
 5 yd starting offset, 12 yd/s travel, and a 15 s wave display window. These are
 approximate geometry, not collision data. One deterministic plausible location is
 selected; the display must never imply that location or its attributed wave was
 uniquely recovered from WCL. Overlay metadata separates observed, timing-constrained,
-and prior-only positions, includes real coordinate timestamps, and records the
+survival-constrained, and prior-only positions, includes real coordinate timestamps, and records the
 wave model version. Wave origins identify the nearby observation time and its
-signed offset from expiry; they are approximate release positions. A modeled wave
+signed offset from release; they are approximate release positions. A modeled wave
 assignment is explicitly inferred even when a totem's coordinate/death is logged.
+
+Replay version 24 separates likelihood weights from deterministic display sampling.
+`vashnikProbability.ts` normalizes log weights and samples one categorical
+quantile per NPC. Do not restore per-cell hashed Gumbel ranks: correlated ranks
+severely biased even a three-candidate distribution (an intended 50% candidate
+was selected 93% of the time). Do not impose the former 2 yd inferred-totem
+exclusion rule: two simultaneously surviving logged NPCs are sqrt(2) yd apart in
+WCL coordinates. Overlay metadata includes effective candidate count and the
+selected candidate's model probability; these are model summaries, not
+independently calibrated confidence levels. Sampling remains illustrative.
+The parent prior and collision parameters are unchanged. Smoothing improved a
+selective video density diagnostic but worsened held-out clear-count forecasts
+and the additional October 7 frame, so it was not promoted. Research and the
+spatial-accuracy benchmark: `analysis/vashnik/prediction-improvement/`.
+
+`vashnikSpawnOrder.ts` derives three equal rank groups from complete twelve-summon
+source bursts, using fractional membership for timestamp ties. Missing/partial
+bursts and unknown fountain sources fall back to the parent. Conditional priors
+were fitted on public reports only with report-level holdouts; regenerate the
+aggregate source with `analysis/vashnik/prediction-improvement/scripts/export_order_prior.py`.
+
+After a completed Malignance cast, the exact later death-to-wave model failed
+withheld NPC coordinates. `vashnikSurvival.ts` instead conditions through the
+first completion, with independent Gaussian origin-error sensitivity (0.5 yd plus
+7 yd/s times observation age in quadrature). These errors are assumptions, not
+calibrated confidence bounds. Keep the logged removal time unchanged and leave
+late wave attribution unresolved; do not invent an automatic-expiry or movement
+cause. Damage/DoT ticks do not prove a new cast, and source instances/lifetimes
+remain authoritative. This uses the existing required enemy-cast feed, adding no
+WCL position queries. Overlays record evidence cutoff, completed-cast timestamp,
+rank weights and whether exact death timing was used. Logged NPC coordinates
+still take priority over inference.
 
 Dashed diamonds are inferred positions, solid diamonds have a logged coordinate,
 and faded `?` diamonds have only a spatial-prior fallback. Orange/purple distinguish
@@ -412,15 +452,31 @@ reference line participate in Whole pull framing.
 `VashnikReplayLegend.vue` supplies the encounter legend through the renderer
 registry. It opens expanded and can be collapsed to recover map space. Visual
 examples explain reference spacing, Froth countdown colors, direction arrows,
-traveling wave fronts, source colors, and observed/timing-inferred/prior-only
+traveling wave fronts, source colors, and observed/timing/survival/prior-only
 totem positions. The footer explains logged-death removal and model estimates.
 Entries wrap into fewer columns in narrow panels; the legend content scrolls
 within a bounded height. The reference-line entry appears only when that replay
 contains the five-point reference.
 
-Replay version 22 invalidates old replay caches. Server and app must be released
+Replay version 26 invalidates old replay caches. Server and app must be released
 together. The renderer also checks the cached version before reusing a fresh entry,
 and Reload replay forces a new request.
+
+The October 19 review preserves NPC coordinates logged at the exact death
+timestamp even when a base-stream death precedes the position event. A newly
+summoned lifetime takes priority at an instance-reuse boundary; observations
+strictly after death are excluded. `deathTimingUsed` is true only for a position
+actually inferred using compatible death timing, not a logged coordinate or a
+prior-only fallback. The on-map text and payload label both call the 38-degree
+line experimental. The probability model remains v4; this is a lifecycle and
+provenance correction, without retuning its geometry or priors. Review evidence:
+`analysis/vashnik/review-session/README.md` in the workspace analysis directory.
+
+The replay service's completed and in-flight caches are scoped to the requesting
+socket and an opaque WCL-authorization fingerprint. Another socket or a changed
+authorization cannot reuse its private replay payload. This adds no WCL query;
+rotation can invalidate reuse. This scope applies to replay caches specifically,
+not the separate report metadata/actor/fight caches.
 
 Focused checks: server `vashnik.test.ts`, replay loader/processor tests, client
 `node --test scripts/replay.test.mjs scripts/vashnikReplay.test.mjs`, both type checks,
@@ -442,8 +498,11 @@ This is not independently measured game accuracy.
 Auditing all 1,490 placement-study origins changed 19 points (one by 2.89 yd), and
 the broader NPC audit found no extra totem coordinates beyond the original 29.
 Refitting all three placement models changed the line's predicted gain by less
-than 0.013 totems. The 38-degree, 10-yard line remains a model recommendation.
-Workspace reproduction and limitations: `analysis/vashnik/precision-review.md`;
+than 0.013 totems. That audit preceded the probability-model changes. The version
+24 multi-metric reassessment retains a modest modeled mean advantage for the
+38-degree, 10-yard reference, with mixed cleanup and tail results; it remains
+experimental rather than a demonstrated overall optimum.
+Workspace reproduction and limitations: `analysis/vashnik/reports/precision-review.md`;
 audited priors: `precision-refit/round2-models`; raw reports stay outside Git.
 
 When a mechanic genuinely benefits from replay visualization:

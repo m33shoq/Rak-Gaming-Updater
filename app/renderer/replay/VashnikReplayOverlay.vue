@@ -41,14 +41,18 @@ const totems = computed(() => activeVashnikOverlays(props.replay, VASHNIK_TOTEM_
 		if (!point) return [];
 		const inferred = overlay.data?.inferred !== false;
 		const priorOnly = overlay.data?.inference === 'prior-only';
+		const survival = overlay.data?.inference === 'survival';
 		const source = overlay.data?.source;
 		return [{
-			id: overlay.id, point, inferred, priorOnly,
+			id: overlay.id, point, inferred, priorOnly, survival,
 			color: source === 'fire' ? '#fb923c' : source === 'shadow' ? '#c4a1ff' : '#cbd5e1',
 			source: source === 'fire' ? 'Fire' : source === 'shadow' ? 'Shadow' : 'Unknown source',
 			candidates: vashnikNumber(overlay.data?.candidateCount, 0),
 			observedAt: typeof overlay.data?.positionObservedAt === 'number' ? (overlay.data.positionObservedAt / 1000).toFixed(1) : undefined,
 			deathConfirmed: overlay.data?.deathConfirmed === true,
+			evidenceThrough: (vashnikNumber(overlay.data?.positionEvidenceThrough, overlay.start) / 1000).toFixed(1),
+			latePhase: typeof overlay.data?.completedMalignanceAt === 'number',
+			waveAssigned: overlay.data?.waveAssignment === 'inferred',
 		}];
 	}));
 
@@ -85,7 +89,7 @@ function arrowHead(dx: number, dy: number): string {
 <template>
 	<g class="vashnik-overlay" pointer-events="none">
 		<g v-if="visible('vashnik-line') && reference.length === 5" class="vashnik-reference-line">
-			<title>Suggested line from the placement model · five positions 10 yd apart · not a uniquely proven optimum</title>
+			<title>Experimental reference line · five positions 10 yd apart · compare player alignment with this trial placement</title>
 			<polyline :points="referencePath" fill="none" stroke="#7dd3fc" :stroke-width="unit * 2"
 				:stroke-dasharray="`${unit * 7} ${unit * 4}`" stroke-opacity="0.8" />
 			<g v-for="(point, index) in reference" :key="index" :transform="`translate(${point.x} ${point.y})`">
@@ -94,7 +98,7 @@ function arrowHead(dx: number, dy: number): string {
 			</g>
 			<text :x="reference[0].x - unit * 16" :y="reference[0].y + unit * 4" :font-size="unit * 11" text-anchor="end"
 				fill="#7dd3fc" font-weight="700" stroke="#05080d" :stroke-width="unit * 3" paint-order="stroke">
-				Recommended · 10 yd
+				Experimental · 10 yd
 			</text>
 		</g>
 
@@ -102,7 +106,7 @@ function arrowHead(dx: number, dy: number): string {
 			<g v-for="totem in totems" :key="totem.id" :transform="`translate(${totem.point.x} ${totem.point.y})`"
 				class="vashnik-totem" :data-totem-id="totem.id" :data-inferred="totem.inferred" :opacity="totem.priorOnly ? 0.5 : 1"
 				pointer-events="visiblePainted">
-				<title>{{ totem.source }} Malignant Totem · {{ totem.inferred ? totem.priorOnly ? 'Approximate: spawn prior only; no matching wave timing' : `Inferred from wave timing; ${totem.candidates} candidate locations; displayed point is one plausible reconstruction` : `Logged NPC coordinate at ${totem.observedAt}s; applied retrospectively to this stationary totem` }} · {{ totem.deathConfirmed ? 'Removal time logged; wave assignment inferred' : 'No logged death; retained through known lifetime' }}</title>
+				<title>{{ totem.source }} Malignant Totem · {{ totem.inferred ? totem.priorOnly ? 'Approximate: spawn prior only; no matching wave timing' : totem.survival ? `Inferred from surviving waves through ${totem.evidenceThrough}s; displayed point is one sampled possibility` : `Inferred from wave timing; ${totem.candidates} candidate locations; displayed point is one sampled possibility` : `Logged NPC coordinate at ${totem.observedAt}s; applied retrospectively to this stationary totem` }} · {{ totem.deathConfirmed ? totem.latePhase ? 'Removal time logged; later wave attribution unresolved after Malignance' : totem.waveAssigned ? 'Removal time logged; wave assignment inferred' : 'Removal time logged; no compatible wave attribution' : 'No logged death; retained through known lifetime' }}</title>
 				<path :d="`M0 ${-unit * 10}L${unit * 9} 0 0 ${unit * 10} ${-unit * 9} 0Z`"
 					fill="#10151d" :stroke="totem.color" :stroke-width="unit * 1.6"
 					:stroke-dasharray="totem.inferred ? `${unit * 3} ${unit * 2}` : undefined" />
